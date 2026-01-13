@@ -64,6 +64,7 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
     elif cmd == "/config":
         settings = get_settings()
         console.print_info(f"Config file: {CONFIG_PATH}")
+        console.print_info(f"Agent name: {settings.agent.name}")
         console.print_info(f"Provider: {settings.model.provider}")
         console.print_info(f"Model: {settings.model.name}")
         if settings.mcp.enabled and settings.mcp.servers:

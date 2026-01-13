@@ -188,19 +188,51 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str
         settings = get_settings()
         current_response = ""  # Buffer for current model run
         final_response = ""  # Only the last model run's output
+        current_thinking = ""  # Buffer for thinking content
         shown_tool_calls: set[str] = set()
+        pending_tools: list[tuple[str, dict]] = []  # Collect parallel tool calls
         current_model_run: str | None = None  # Track current model run_id
+        thinking_shown = False  # Track if we've shown thinking indicator
         rich_console = console._console
 
         # Use Live display for streaming with markdown rendering
+        # transient=False keeps the final output visible (no need to reprint)
         live = Live(
             Text(""),
             console=rich_console,
             refresh_per_second=12,
-            transient=True,  # Clear when done so we can print final version
+            transient=False,
         )
 
         live.start()
+
+        def flush_pending_tools():
+            """Display any pending tool calls."""
+            nonlocal pending_tools
+            if not pending_tools:
+                return
+            live.stop()
+            if len(pending_tools) > 1:
+                console.print_parallel_tools(pending_tools)
+            else:
+                tool_name, tool_input = pending_tools[0]
+                console.print_tool_use(tool_name, tool_input)
+                # Show diff/content for file write operations
+                if tool_name == "edit_file":
+                    old_str = tool_input.get("old_string", "")
+                    new_str = tool_input.get("new_string", "")
+                    if old_str or new_str:
+                        console.print_edit_diff(old_str, new_str)
+                elif tool_name == "write_file":
+                    content = tool_input.get("content", "")
+                    if content:
+                        console.print_write_content(content, is_append=False)
+                elif tool_name == "append_file":
+                    content = tool_input.get("content", "")
+                    if content:
+                        console.print_write_content(content, is_append=True)
+            pending_tools = []
+            live.start()
 
         try:
             # Suppress stderr from MCP subprocesses during streaming
@@ -211,42 +243,33 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str
                 ):
                     event_type = event.get("event", "")
 
-                    # Handle tool start - this has complete args
+                    # Handle tool start - collect for parallel display
                     if event_type == "on_tool_start" and settings.output.show_tool_calls:
                         run_id = event.get("run_id", "")
                         if run_id and run_id not in shown_tool_calls:
                             shown_tool_calls.add(run_id)
                             tool_name = event.get("name", "unknown")
                             tool_input = event.get("data", {}).get("input", {})
+                            pending_tools.append((tool_name, tool_input))
 
-                            live.stop()
-                            console.print_tool_use(tool_name, tool_input)
-
-                            # Show diff/content for file write operations
-                            if tool_name == "edit_file":
-                                old_str = tool_input.get("old_string", "")
-                                new_str = tool_input.get("new_string", "")
-                                if old_str or new_str:
-                                    console.print_edit_diff(old_str, new_str)
-                            elif tool_name == "write_file":
-                                content = tool_input.get("content", "")
-                                if content:
-                                    console.print_write_content(content, is_append=False)
-                            elif tool_name == "append_file":
-                                content = tool_input.get("content", "")
-                                if content:
-                                    console.print_write_content(content, is_append=True)
-
-                            live.start()
+                    # Handle tool end - flush all pending tools when first one completes
+                    elif event_type == "on_tool_end":
+                        if pending_tools:
+                            flush_pending_tools()
 
                     # Handle new model run starting - reset buffer
                     elif event_type == "on_chat_model_start":
                         run_id = event.get("run_id", "")
                         if run_id != current_model_run:
+                            # Flush any pending tools first
+                            if pending_tools:
+                                flush_pending_tools()
                             # New model run - save previous and reset
                             if current_response:
                                 final_response = current_response
                             current_response = ""
+                            current_thinking = ""
+                            thinking_shown = False
                             current_model_run = run_id
                             live.update(Text(""))
 
@@ -254,8 +277,49 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str
                     elif event_type == "on_chat_model_stream":
                         chunk = event.get("data", {}).get("chunk")
                         if chunk:
+                            # Check for thinking content (Anthropic extended thinking)
                             content = getattr(chunk, "content", None)
-                            if content and isinstance(content, str):
+
+                            # Handle list content (Anthropic format with thinking blocks)
+                            if isinstance(content, list):
+                                for block in content:
+                                    if isinstance(block, dict):
+                                        block_type = block.get("type", "")
+                                        if block_type == "thinking":
+                                            thinking_text = block.get("thinking", "")
+                                            if thinking_text:
+                                                current_thinking += thinking_text
+                                                if not thinking_shown:
+                                                    live.stop()
+                                                    console.print_thinking_start()
+                                                    live.start()
+                                                    thinking_shown = True
+                                        elif block_type == "text":
+                                            text = block.get("text", "")
+                                            if text:
+                                                current_response += text
+                                                cleaned, _ = extract_code_blocks(current_response)
+                                                live.update(Text.from_markup(markdown_to_rich(cleaned)))
+                                    elif hasattr(block, "type"):
+                                        # Object-style content block
+                                        if block.type == "thinking":
+                                            thinking_text = getattr(block, "thinking", "")
+                                            if thinking_text:
+                                                current_thinking += thinking_text
+                                                if not thinking_shown:
+                                                    live.stop()
+                                                    console.print_thinking_start()
+                                                    live.start()
+                                                    thinking_shown = True
+                                        elif block.type == "text":
+                                            text = getattr(block, "text", "")
+                                            if text:
+                                                current_response += text
+                                                cleaned, _ = extract_code_blocks(current_response)
+                                                live.update(Text.from_markup(markdown_to_rich(cleaned)))
+
+                            # Handle string content (standard format)
+                            elif content and isinstance(content, str):
                                 current_response += content
                                 # Update live display with rich text (markup)
                                 cleaned, _ = extract_code_blocks(current_response)
@@ -267,10 +331,13 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str
         # Use the last model run's response (current_response has the final output)
         output = current_response if current_response else final_response
 
-        # Print final rendered rich text (markup)
-        cleaned, code_blocks = extract_code_blocks(output)
-        if cleaned.strip():
-            rich_console.print(Text.from_markup(markdown_to_rich(cleaned)))
+        # Show thinking summary if we had thinking content
+        if current_thinking:
+            console.print_thinking(current_thinking)
+
+        # Extract and print code blocks with syntax highlighting
+        # (text content is already displayed by the Live display)
+        _, code_blocks = extract_code_blocks(output)
         for lang, code in code_blocks:
             rich_console.print()
             console.print_code(code, language=lang)

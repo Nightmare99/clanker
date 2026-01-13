@@ -72,6 +72,18 @@ def _create_model(settings: Settings):
         # Anthropic requires max_tokens, set default if not provided
         if "max_tokens" not in optional_kwargs:
             optional_kwargs["max_tokens"] = 4096
+
+        # Enable extended thinking if configured
+        if settings.model.thinking_enabled:
+            optional_kwargs["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": settings.model.thinking_budget_tokens,
+            }
+            logger.info(
+                "Extended thinking enabled with budget: %d tokens",
+                settings.model.thinking_budget_tokens,
+            )
+
         return ChatAnthropic(
             model=model_name,
             api_key=api_key,

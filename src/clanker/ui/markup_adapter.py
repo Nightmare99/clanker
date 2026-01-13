@@ -17,9 +17,11 @@ CODE_FENCE_RE = re.compile(r"```(\w+)?\n(.*?)```", re.DOTALL)
 BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 ITALIC_RE = re.compile(r"\*(.+?)\*")
 INLINE_CODE_RE = re.compile(r"`([^`]+)`")
-H3_RE = re.compile(r"^###\s+(.*)", re.MULTILINE)
+H1_RE = re.compile(r"^#\s+(.*)", re.MULTILINE)
 H2_RE = re.compile(r"^##\s+(.*)", re.MULTILINE)
+H3_RE = re.compile(r"^###\s+(.*)", re.MULTILINE)
 LIST_RE = re.compile(r"^\s*[-*]\s+(.*)", re.MULTILINE)
+HR_RE = re.compile(r"^-{3,}$", re.MULTILINE)  # Horizontal rules (---, ----, etc.)
 
 
 def extract_code_blocks(text: str) -> Tuple[str, List[tuple[str, str]]]:
@@ -45,8 +47,13 @@ def extract_code_blocks(text: str) -> Tuple[str, List[tuple[str, str]]]:
 def markdown_to_rich(text: str) -> str:
     """Convert a small Markdown subset to Rich markup (no code blocks)."""
 
-    text = H3_RE.sub(r"[bold cyan]\1[/bold cyan]", text)
-    text = H2_RE.sub(r"[bold]\1[/bold]", text)
+    # Remove horizontal rules (---) completely
+    text = HR_RE.sub("", text)
+
+    # Process headings (order matters: H3 before H2 before H1 to avoid partial matches)
+    text = H3_RE.sub(r"[bold]\1[/bold]", text)
+    text = H2_RE.sub(r"[bold cyan]\1[/bold cyan]", text)
+    text = H1_RE.sub(r"[bold magenta]\1[/bold magenta]", text)
 
     text = BOLD_RE.sub(r"[bold]\1[/bold]", text)
     text = ITALIC_RE.sub(r"[italic]\1[/italic]", text)

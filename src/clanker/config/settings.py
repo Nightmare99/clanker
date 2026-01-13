@@ -25,6 +25,13 @@ class ModelSettings(BaseModel):
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, gt=0)
 
+    # Extended thinking (Anthropic only)
+    thinking_enabled: bool = False
+    thinking_budget_tokens: int = Field(default=10000, gt=0)
+
+    # Parallel tool calls
+    parallel_tool_calls: bool = True
+
     # Azure-specific settings
     azure: AzureSettings = Field(default_factory=AzureSettings)
 
@@ -87,6 +94,12 @@ class LoggingSettings(BaseModel):
     detailed_format: bool = True  # Include function/line info in logs
 
 
+class AgentSettings(BaseModel):
+    """Agent identity settings."""
+
+    name: str = "Clanker"
+
+
 class Settings(BaseSettings):
     """Main application settings."""
 
@@ -103,6 +116,7 @@ class Settings(BaseSettings):
     azure_openai_endpoint: str | None = Field(default=None, alias="AZURE_OPENAI_ENDPOINT")
 
     # Nested settings
+    agent: AgentSettings = Field(default_factory=AgentSettings)
     model: ModelSettings = Field(default_factory=ModelSettings)
     safety: SafetySettings = Field(default_factory=SafetySettings)
     output: OutputSettings = Field(default_factory=OutputSettings)
@@ -157,6 +171,11 @@ class Settings(BaseSettings):
 # Clanker Configuration
 # https://github.com/yourusername/clanker
 
+# Agent identity
+agent:
+  # Name used by the assistant across sessions
+  name: Clanker
+
 model:
   # Provider: azure, openai, anthropic, ollama
   provider: azure
@@ -168,6 +187,13 @@ model:
   # Some Azure models (o1, o3) only support default values
   # temperature: 0.7
   # max_tokens: 4096
+
+  # Extended thinking (Anthropic only - requires claude-3-5-sonnet or later)
+  # thinking_enabled: true
+  # thinking_budget_tokens: 10000
+
+  # Allow parallel tool calls (model dependent)
+  parallel_tool_calls: true
 
   # Azure OpenAI settings (required when provider is 'azure')
   # Set these environment variables:

@@ -242,6 +242,33 @@ class Console:
             remaining = len(lines) - max_lines
             self._console.print(Text(f"    ... ({remaining} more lines)", style="dim"))
 
+    def print_thinking(self, thinking: str) -> None:
+        """Print thinking/reasoning content."""
+        # Truncate for display
+        max_len = 500
+        display = thinking[:max_len] + "..." if len(thinking) > max_len else thinking
+
+        text = Text()
+        text.append("  💭 ", style="dim")
+        text.append(display, style="dim italic")
+        self._console.print(text)
+
+    def print_thinking_start(self) -> None:
+        """Print indicator that thinking has started."""
+        text = Text()
+        text.append("  💭 ", style="dim")
+        text.append("Thinking...", style="dim italic")
+        self._console.print(text)
+
+    def print_parallel_tools(self, tools: list[tuple[str, dict]]) -> None:
+        """Print multiple tool calls happening in parallel."""
+        text = Text()
+        text.append("  ⚡ ", style="yellow")
+        text.append(f"Running {len(tools)} tools in parallel:", style="dim")
+        self._console.print(text)
+        for tool_name, args in tools:
+            self.print_tool_use(tool_name, args)
+
     def print_error(self, message: str) -> None:
         """Print an error message."""
         self._console.print(Text(f"Error: {message}", style="error"))
@@ -265,8 +292,9 @@ class Console:
 
     def print_welcome(self) -> None:
         """Print welcome message."""
-        welcome = """
-[bold cyan]*BZZZT*[/bold cyan] [bold]CLANKER UNIT ACTIVATED[/bold] [bold cyan]*WHIRR*[/bold cyan]
+        agent_name = self._settings.agent.name
+        welcome = f"""
+[bold cyan]*BZZZT*[/bold cyan] [bold]{agent_name.upper()} UNIT ACTIVATED[/bold] [bold cyan]*WHIRR*[/bold cyan]
 
 [dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]
   Systems online. Circuits humming. Ready to build.
