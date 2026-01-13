@@ -1,0 +1,178 @@
+"""Settings management using Pydantic."""
+
+from functools import lru_cache
+from pathlib import Path
+from typing import Literal
+
+import yaml
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class AzureSettings(BaseModel):
+    """Azure OpenAI specific configuration."""
+
+    endpoint: str | None = None
+    deployment_name: str | None = None
+    api_version: str = "2024-02-15-preview"
+
+
+class ModelSettings(BaseModel):
+    """LLM model configuration."""
+
+    provider: Literal["openai", "anthropic", "azure", "ollama"] = "azure"
+    name: str = "gpt-4o"
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    max_tokens: int | None = Field(default=None, gt=0)
+
+    # Azure-specific settings
+    azure: AzureSettings = Field(default_factory=AzureSettings)
+
+
+class SafetySettings(BaseModel):
+    """Safety and security configuration."""
+
+    require_confirmation: bool = True
+    sandbox_commands: bool = True
+    max_file_size: int = Field(default=1_000_000, gt=0)  # 1MB
+    command_timeout: int = Field(default=120_000, gt=0)  # 2 minutes in ms
+
+
+class OutputSettings(BaseModel):
+    """Output formatting configuration."""
+
+    syntax_highlighting: bool = True
+    show_tool_calls: bool = True
+    stream_responses: bool = True
+
+
+class MemorySettings(BaseModel):
+    """Memory and persistence configuration."""
+
+    persist_sessions: bool = True
+    max_history_length: int = Field(default=100, gt=0)
+    storage_path: Path = Path.home() / ".clanker" / "sessions"
+
+
+class Settings(BaseSettings):
+    """Main application settings."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="CLANKER_",
+        env_nested_delimiter="__",
+        extra="ignore",
+    )
+
+    # API Keys (loaded from environment)
+    openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
+    azure_openai_api_key: str | None = Field(default=None, alias="AZURE_OPENAI_API_KEY")
+    azure_openai_endpoint: str | None = Field(default=None, alias="AZURE_OPENAI_ENDPOINT")
+
+    # Nested settings
+    model: ModelSettings = Field(default_factory=ModelSettings)
+    safety: SafetySettings = Field(default_factory=SafetySettings)
+    output: OutputSettings = Field(default_factory=OutputSettings)
+    memory: MemorySettings = Field(default_factory=MemorySettings)
+
+    @classmethod
+    def from_yaml(cls, path: Path, create_default: bool = True) -> "Settings":
+        """Load settings from a YAML file.
+
+        Args:
+            path: Path to the YAML config file.
+            create_default: If True, create a default config if file doesn't exist.
+
+        Returns:
+            Settings instance.
+        """
+        if not path.exists():
+            settings = cls()
+            if create_default:
+                settings.save_yaml_with_comments(path)
+            return settings
+
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+
+        return cls(**data)
+
+    def save_yaml(self, path: Path) -> None:
+        """Save settings to a YAML file."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        data = self.model_dump(
+            exclude={
+                "openai_api_key",
+                "anthropic_api_key",
+                "azure_openai_api_key",
+                "azure_openai_endpoint",
+            },
+            exclude_none=True,
+        )
+
+        with open(path, "w") as f:
+            yaml.safe_dump(data, f, default_flow_style=False)
+
+    def save_yaml_with_comments(self, path: Path) -> None:
+        """Save settings to a YAML file with helpful comments."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        config_content = """\
+# Clanker Configuration
+# https://github.com/yourusername/clanker
+
+model:
+  # Provider: azure, openai, anthropic, ollama
+  provider: azure
+
+  # Model name (used for non-Azure providers)
+  name: gpt-4o
+
+  # Optional: temperature and max_tokens (omit to use model defaults)
+  # Some Azure models (o1, o3) only support default values
+  # temperature: 0.7
+  # max_tokens: 4096
+
+  # Azure OpenAI settings (required when provider is 'azure')
+  # Set these environment variables:
+  #   AZURE_OPENAI_API_KEY
+  #   AZURE_OPENAI_ENDPOINT
+  #   AZURE_OPENAI_DEPLOYMENT_NAME
+  azure:
+    api_version: "2024-02-15-preview"
+    # deployment_name: your-deployment-name  # Or set via env var
+
+safety:
+  require_confirmation: true
+  sandbox_commands: true
+  max_file_size: 1000000
+  command_timeout: 120000
+
+output:
+  syntax_highlighting: true
+  show_tool_calls: true
+  stream_responses: true
+
+memory:
+  persist_sessions: true
+  max_history_length: 100
+"""
+        with open(path, "w") as f:
+            f.write(config_content)
+
+
+# Default config path
+CONFIG_PATH = Path.home() / ".clanker" / "config.yaml"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Get cached settings instance."""
+    return Settings.from_yaml(CONFIG_PATH)
+
+
+def reload_settings() -> Settings:
+    """Reload settings, clearing the cache."""
+    get_settings.cache_clear()
+    return get_settings()
