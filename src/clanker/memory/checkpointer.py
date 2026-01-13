@@ -77,4 +77,7 @@ class SessionManager:
 
     def get_config(self) -> dict:
         """Get the configuration for graph invocation."""
-        return {"configurable": {"thread_id": self.session_id}}
+        return {
+            "configurable": {"thread_id": self.session_id},
+            "recursion_limit": 100,
+        }
