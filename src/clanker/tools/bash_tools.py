@@ -8,7 +8,11 @@ from typing import Any
 from langchain.tools import tool
 
 from clanker.config import get_settings
+from clanker.logging import get_logger
 from clanker.utils.sandbox import is_command_safe, requires_confirmation
+
+# Module logger
+logger = get_logger("tools.bash")
 
 # Maximum output size to prevent memory issues
 MAX_OUTPUT_SIZE = 100_000  # 100KB
@@ -25,7 +29,10 @@ def bash(command: str, timeout: int | None = None) -> str:
     Returns:
         Command output (stdout and stderr combined) or error message.
     """
+    logger.info("Executing bash command: %s", command[:100] + "..." if len(command) > 100 else command)
+
     if not command or not command.strip():
+        logger.warning("Empty command received")
         return "Error: Command cannot be empty"
 
     settings = get_settings()
@@ -33,6 +40,7 @@ def bash(command: str, timeout: int | None = None) -> str:
     # Security check
     is_safe, reason = is_command_safe(command)
     if not is_safe:
+        logger.warning("Command blocked: %s - %s", command[:50], reason)
         return f"Error: Command blocked - {reason}"
 
     # Check if confirmation would be required (for now, just note it)
@@ -74,15 +82,20 @@ def bash(command: str, timeout: int | None = None) -> str:
         output = "".join(output_parts).strip()
 
         if result.returncode != 0:
+            logger.warning("Command exited with code %d: %s", result.returncode, command[:50])
             return f"Command exited with code {result.returncode}\n{output}"
 
+        logger.debug("Command completed successfully (output: %d bytes)", len(output))
         return output if output else "(no output)"
 
     except subprocess.TimeoutExpired:
+        logger.error("Command timed out after %d seconds: %s", timeout_seconds, command[:50])
         return f"Error: Command timed out after {timeout_seconds} seconds"
     except OSError as e:
+        logger.error("Error executing command: %s", e)
         return f"Error executing command: {e}"
     except Exception as e:
+        logger.exception("Unexpected error executing command: %s", e)
         return f"Error: {type(e).__name__}: {e}"
 
 

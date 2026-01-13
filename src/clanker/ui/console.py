@@ -1,10 +1,10 @@
 """Console output management using Rich."""
 
 from rich.console import Console as RichConsole
-from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.text import Text
+from rich.markup import escape
 from rich.theme import Theme
 
 from clanker.config import get_settings
@@ -38,10 +38,12 @@ class Console:
         """Print to console."""
         self._console.print(*args, **kwargs)
 
-    def print_markdown(self, text: str) -> None:
-        """Print markdown-formatted text."""
-        md = Markdown(text)
-        self._console.print(md)
+    def print_rich_text(self, text: str) -> None:
+        """Print rich-text (markup) formatted text (no Markdown parsing)."""
+        from clanker.ui.markup_adapter import markdown_to_rich
+
+        rich_text = Text.from_markup(markdown_to_rich(text))
+        self._console.print(rich_text)
 
     def print_code(self, code: str, language: str = "python") -> None:
         """Print syntax-highlighted code."""
@@ -57,8 +59,8 @@ class Console:
         self._console.print(message)
 
     def print_assistant_message(self, message: str) -> None:
-        """Print an assistant message."""
-        self.print_markdown(message)
+        """Print an assistant message using rich text markup."""
+        self.print_rich_text(message)
 
     def print_tool_call(self, tool_name: str, args: dict | None = None) -> None:
         """Print a tool call indicator (detailed version)."""
@@ -100,20 +102,36 @@ class Console:
 
         # Format based on tool type for user-friendly output
         if tool_name == "read_file":
-            path = self._shorten_path(args.get("file_path", "file"))
-            text.append(f"Read {path}", style="tool")
+            path = args.get("file_path", "")
+            if path:
+                text.append("Read ", style="tool")
+                text.append(path, style="cyan")
+            else:
+                text.append("Read file", style="tool")
 
         elif tool_name == "write_file":
-            path = self._shorten_path(args.get("file_path", "file"))
-            text.append(f"Write {path}", style="tool")
+            path = args.get("file_path", "")
+            if path:
+                text.append("Write ", style="tool")
+                text.append(path, style="cyan")
+            else:
+                text.append("Write file", style="tool")
 
         elif tool_name == "edit_file":
-            path = self._shorten_path(args.get("file_path", "file"))
-            text.append(f"Edit {path}", style="tool")
+            path = args.get("file_path", "")
+            if path:
+                text.append("Edit ", style="tool")
+                text.append(path, style="cyan")
+            else:
+                text.append("Edit file", style="tool")
 
         elif tool_name == "append_file":
-            path = self._shorten_path(args.get("file_path", "file"))
-            text.append(f"Append {path}", style="tool")
+            path = args.get("file_path", "")
+            if path:
+                text.append("Append ", style="tool")
+                text.append(path, style="cyan")
+            else:
+                text.append("Append file", style="tool")
 
         elif tool_name == "bash":
             cmd = self._truncate(args.get("command", ""), 60)
@@ -121,18 +139,26 @@ class Console:
 
         elif tool_name == "glob_search":
             pattern = args.get("pattern", "*")
-            path = args.get("path", ".")
-            text.append(f"Find: {pattern}", style="tool")
-            if path != ".":
-                text.append(f" in {self._shorten_path(path)}", style="dim")
+            path = args.get("path", "")
+            text.append("Find ", style="tool")
+            text.append(pattern, style="cyan")
+            if path and path != ".":
+                text.append(" in ", style="dim")
+                text.append(path, style="cyan")
 
         elif tool_name == "grep_search":
-            pattern = self._truncate(args.get("pattern", ""), 30)
-            text.append(f"Search: {pattern}", style="tool")
+            pattern = args.get("pattern", "")
+            path = args.get("path", "")
+            text.append("Search ", style="tool")
+            text.append(self._truncate(pattern, 40), style="cyan")
+            if path and path != ".":
+                text.append(" in ", style="dim")
+                text.append(path, style="cyan")
 
         elif tool_name == "list_directory":
-            path = self._shorten_path(args.get("path", "."))
-            text.append(f"List: {path}", style="tool")
+            path = args.get("path", ".")
+            text.append("List ", style="tool")
+            text.append(path, style="cyan")
 
         else:
             # Handle MCP tools and other unknown tools
@@ -171,6 +197,50 @@ class Console:
 
         display = result[:truncate] + "..." if len(result) > truncate else result
         self._console.print(Text(display, style="dim"))
+
+    def print_edit_diff(self, old_string: str, new_string: str) -> None:
+        """Print a diff showing what was changed in an edit operation."""
+        if not self._settings.output.show_tool_calls:
+            return
+
+        # Truncate long strings for display
+        max_len = 200
+        old_display = old_string if len(old_string) <= max_len else old_string[:max_len] + "..."
+        new_display = new_string if len(new_string) <= max_len else new_string[:max_len] + "..."
+
+        text = Text()
+        text.append("    - ", style="red")
+        text.append(escape(old_display), style="red")
+        self._console.print(text)
+
+        text = Text()
+        text.append("    + ", style="green")
+        text.append(escape(new_display), style="green")
+        self._console.print(text)
+
+    def print_write_content(self, content: str, is_append: bool = False) -> None:
+        """Print a preview of content being written to a file."""
+        if not self._settings.output.show_tool_calls:
+            return
+
+        # Show first few lines of content
+        lines = content.split("\n")
+        max_lines = 5
+        max_line_len = 80
+
+        prefix = "    >> " if is_append else "    + "
+        style = "cyan" if is_append else "green"
+
+        for i, line in enumerate(lines[:max_lines]):
+            display_line = line if len(line) <= max_line_len else line[:max_line_len] + "..."
+            text = Text()
+            text.append(prefix, style="dim")
+            text.append(escape(display_line), style=style)
+            self._console.print(text)
+
+        if len(lines) > max_lines:
+            remaining = len(lines) - max_lines
+            self._console.print(Text(f"    ... ({remaining} more lines)", style="dim"))
 
     def print_error(self, message: str) -> None:
         """Print an error message."""
@@ -216,6 +286,7 @@ Type your message to start. Commands:
   /model    Show or change the current model
   /config   Show configuration info
   /mcp      Show MCP server status
+  /logs     Show logging status and log files
   /exit     Exit Clanker
 
 [bold]Tips:[/bold]

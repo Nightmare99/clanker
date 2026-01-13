@@ -1,15 +1,16 @@
 """Streaming output handler for real-time responses."""
 
+import json
 import sys
 from typing import Any
 
-from langchain_core.messages import AIMessageChunk, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from rich.console import Console as RichConsole
 from rich.live import Live
-from rich.markdown import Markdown
 from rich.text import Text
 
 from clanker.config import get_settings
+from clanker.ui.markup_adapter import extract_code_blocks, markdown_to_rich
 
 
 class StreamHandler:
@@ -47,8 +48,9 @@ class StreamHandler:
         self._buffer += chunk
 
         if self._live:
-            # Update live display with current buffer
-            self._live.update(Text(self._buffer))
+            # Update live display with Rich markup text (no code blocks)
+            cleaned, _ = extract_code_blocks(self._buffer)
+            self._live.update(Text.from_markup(markdown_to_rich(cleaned)))
         elif self._settings.output.stream_responses:
             # Fallback: direct print without Live
             sys.stdout.write(chunk)
@@ -64,9 +66,23 @@ class StreamHandler:
             self._live.stop()
             self._live = None
 
-            # Print the final markdown-rendered output
-            if self._buffer.strip():
-                self._console.print(Markdown(self._buffer))
+            # Print final output: text + extracted code blocks
+            cleaned, code_blocks = extract_code_blocks(self._buffer)
+            if cleaned.strip():
+                self._console.print(Text.from_markup(markdown_to_rich(cleaned)))
+            for lang, code in code_blocks:
+                self._console.print()
+                # Delegate syntax highlighting to Console
+                try:
+                    # Console wrapper provides print_code
+                    from clanker.ui.console import Console
+
+                    if isinstance(self._console, Console):
+                        self._console.print_code(code, language=lang)
+                    else:
+                        self._console.print(code)
+                except Exception:
+                    self._console.print(code)
 
         return self._buffer
 
@@ -153,6 +169,8 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str
         settings = get_settings()
         full_response = ""
         shown_tool_calls: set[str] = set()
+        # Accumulate tool calls by ID (args may stream in pieces)
+        pending_tool_calls: dict[str, dict] = {}
         rich_console = console._console
 
         # Use Live display for streaming with markdown rendering
@@ -169,38 +187,91 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str
             async for msg, metadata in graph.astream(
                 state, config=config, stream_mode="messages"
             ):
-                # Skip human messages (user input) and tool messages (tool results)
-                if isinstance(msg, (HumanMessage, ToolMessage)):
+                # Skip human messages (user input)
+                if isinstance(msg, HumanMessage):
                     continue
 
-                # Handle AI message chunks
-                if isinstance(msg, AIMessageChunk):
-                    # Check for tool calls first
-                    if msg.tool_calls and settings.output.show_tool_calls:
+                # When we see a ToolMessage, display the tool call info
+                # At this point we have complete args from the accumulated tool_calls
+                if isinstance(msg, ToolMessage) and settings.output.show_tool_calls:
+                    tool_call_id = msg.tool_call_id
+                    if tool_call_id and tool_call_id not in shown_tool_calls:
+                        shown_tool_calls.add(tool_call_id)
+                        # Get the accumulated tool call info
+                        tool_info = pending_tool_calls.get(tool_call_id, {})
+                        tool_name = tool_info.get("name", "unknown")
+                        tool_args = tool_info.get("args", {})
+
+                        # Parse args if it's a string (JSON)
+                        if isinstance(tool_args, str):
+                            try:
+                                tool_args = json.loads(tool_args) if tool_args else {}
+                            except json.JSONDecodeError:
+                                tool_args = {}
+
+                        live.stop()
+                        console.print_tool_use(tool_name, tool_args)
+
+                        # Show diff/content for file write operations
+                        if tool_name == "edit_file":
+                            old_str = tool_args.get("old_string", "")
+                            new_str = tool_args.get("new_string", "")
+                            if old_str or new_str:
+                                console.print_edit_diff(old_str, new_str)
+                        elif tool_name == "write_file":
+                            content = tool_args.get("content", "")
+                            if content:
+                                console.print_write_content(content, is_append=False)
+                        elif tool_name == "append_file":
+                            content = tool_args.get("content", "")
+                            if content:
+                                console.print_write_content(content, is_append=True)
+
+                        live.start()
+                    continue
+
+                # Handle AI message chunks - accumulate tool calls
+                if isinstance(msg, (AIMessageChunk, AIMessage)):
+                    # Accumulate tool calls (args may come in pieces)
+                    if msg.tool_calls:
                         for tool_call in msg.tool_calls:
                             tool_id = tool_call.get("id", "")
-                            if tool_id and tool_id not in shown_tool_calls:
-                                shown_tool_calls.add(tool_id)
-                                # Stop live, print tool use, restart live
-                                live.stop()
-                                console.print_tool_use(
-                                    tool_call.get("name", "unknown"),
-                                    tool_call.get("args", {}),
-                                )
-                                live.start()
+                            if tool_id:
+                                if tool_id not in pending_tool_calls:
+                                    pending_tool_calls[tool_id] = {
+                                        "name": tool_call.get("name", ""),
+                                        "args": tool_call.get("args", {}),
+                                    }
+                                else:
+                                    # Update with any new info
+                                    if tool_call.get("name"):
+                                        pending_tool_calls[tool_id]["name"] = tool_call["name"]
+                                    # Merge args
+                                    existing_args = pending_tool_calls[tool_id]["args"]
+                                    new_args = tool_call.get("args", {})
+                                    if isinstance(existing_args, dict) and isinstance(new_args, dict):
+                                        existing_args.update(new_args)
+                                    elif isinstance(new_args, str) and new_args:
+                                        # Args came as string, replace
+                                        pending_tool_calls[tool_id]["args"] = new_args
 
                     # Stream AI content (text response)
                     if msg.content and isinstance(msg.content, str):
                         full_response += msg.content
-                        # Update live display with markdown rendering
-                        live.update(Markdown(full_response))
+                        # Update live display with rich text (markup)
+                        cleaned, _ = extract_code_blocks(full_response)
+                        live.update(Text.from_markup(markdown_to_rich(cleaned)))
 
         finally:
             live.stop()
 
-        # Print final rendered markdown
-        if full_response.strip():
-            rich_console.print(Markdown(full_response))
+        # Print final rendered rich text (markup)
+        cleaned, code_blocks = extract_code_blocks(full_response)
+        if cleaned.strip():
+            rich_console.print(Text.from_markup(markdown_to_rich(cleaned)))
+        for lang, code in code_blocks:
+            rich_console.print()
+            console.print_code(code, language=lang)
 
         return full_response
 

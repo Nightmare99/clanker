@@ -12,12 +12,16 @@ from prompt_toolkit.history import FileHistory
 from clanker import __version__
 from clanker.agent import create_agent_graph
 from clanker.config import CONFIG_PATH, Settings, get_settings, reload_settings
+from clanker.logging import get_logger, setup_logging
 from clanker.memory.checkpointer import SessionManager
 from clanker.ui.console import Console
 from clanker.ui.streaming import stream_agent_response_sync
 
 # Load environment variables
 load_dotenv()
+
+# Module logger (initialized after setup_logging is called)
+logger = get_logger("cli")
 
 
 def handle_command(command: str, console: Console, session_manager: SessionManager) -> bool:
@@ -32,8 +36,10 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
         True if should continue, False if should exit.
     """
     cmd = command.strip().lower()
+    logger.debug("Handling command: %s", cmd)
 
     if cmd in ("/exit", "/quit", "/q"):
+        logger.info("User requested exit")
         console.print_info("Goodbye!")
         return False
 
@@ -43,6 +49,7 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
     elif cmd == "/clear":
         console.clear()
         session_manager.new_session()
+        logger.info("Conversation cleared, new session started")
         console.print_info("Conversation cleared.")
 
     elif cmd.startswith("/model"):
@@ -80,6 +87,30 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
                 if detail:
                     console.print(f"    {detail[:60]}{'...' if len(detail) > 60 else ''}")
 
+    elif cmd == "/logs":
+        from clanker.logging import get_log_path
+        settings = get_settings()
+        if not settings.logging.enabled:
+            console.print_info("Logging is disabled")
+        else:
+            log_path = get_log_path()
+            if log_path and log_path.exists():
+                console.print_info(f"Log file: {log_path}")
+                console.print_info(f"Log level: {settings.logging.level}")
+                console.print_info(f"Max file size: {settings.logging.max_file_size_mb} MB")
+                console.print_info(f"Backup count: {settings.logging.backup_count}")
+                # Show log directory contents
+                log_dir = log_path.parent
+                log_files = sorted(log_dir.glob("clanker.log*"))
+                if log_files:
+                    console.print_info(f"\nLog files in {log_dir}:")
+                    for f in log_files:
+                        size_kb = f.stat().st_size / 1024
+                        console.print(f"  {f.name} ({size_kb:.1f} KB)")
+            else:
+                console.print_info(f"Log directory: {settings.logging.log_dir}")
+                console.print_info("No log file created yet")
+
     else:
         console.print_warning(f"Unknown command: {command}")
         console.print_info("Type /help for available commands.")
@@ -94,13 +125,20 @@ def run_interactive(console: Console, settings: Settings) -> None:
         console: Console instance for output.
         settings: Application settings.
     """
+    logger.info("Starting interactive mode")
+
     # Setup session
     session_manager = SessionManager()
+    logger.debug("Session manager initialized: session_id=%s", session_manager.session_id)
 
     # Create agent
     try:
+        logger.info("Creating agent graph with provider=%s, model=%s",
+                   settings.model.provider, settings.model.name)
         graph = create_agent_graph(settings, checkpointer=session_manager.checkpointer)
+        logger.info("Agent graph created successfully")
     except ValueError as e:
+        logger.error("Failed to create agent: %s", e)
         console.print_error(str(e))
         console.print_info("Please set your API key in the environment or config file.")
         sys.exit(1)
@@ -135,6 +173,7 @@ def run_interactive(console: Console, settings: Settings) -> None:
             }
 
             # Run agent
+            logger.info("Processing user message: %s", user_input[:100] + "..." if len(user_input) > 100 else user_input)
             console.rule()
             try:
                 stream_agent_response_sync(
@@ -143,7 +182,9 @@ def run_interactive(console: Console, settings: Settings) -> None:
                     session_manager.get_config(),
                     console,
                 )
+                logger.debug("Agent response completed successfully")
             except Exception as e:
+                logger.exception("Agent error occurred: %s", e)
                 console.print_error(f"Agent error: {e}")
 
             console.rule()
@@ -248,9 +289,24 @@ def main(
     # Load settings (creates default config if missing)
     settings = get_settings()
 
+    # Initialize logging based on settings
+    if settings.logging.enabled:
+        setup_logging(
+            log_dir=settings.logging.log_dir,
+            level=settings.logging.level,
+            max_bytes=settings.logging.max_file_size_mb * 1024 * 1024,
+            backup_count=settings.logging.backup_count,
+            console_output=settings.logging.console_output,
+            detailed_format=settings.logging.detailed_format,
+        )
+        logger.info("Clanker v%s starting", __version__)
+        logger.info("Config loaded from: %s", CONFIG_PATH)
+        logger.debug("Settings: provider=%s, model=%s", settings.model.provider, settings.model.name)
+
     if not config_existed:
         console.print_info(f"Created default config at: {CONFIG_PATH}")
         console.print_info("Configure your provider settings there or via environment variables.\n")
+        logger.info("Created default config at: %s", CONFIG_PATH)
 
     # Override settings from CLI args
     if provider:

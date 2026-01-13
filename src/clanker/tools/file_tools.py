@@ -1,13 +1,17 @@
 """File operation tools for reading, writing, and editing files."""
 
-from pathlib import Path
 from itertools import islice
+from pathlib import Path
 
 from langchain.tools import tool
 
 from clanker.config import get_settings
+from clanker.logging import get_logger
 from clanker.utils.sandbox import is_path_safe
 from clanker.utils.validators import validate_file_path
+
+# Module logger
+logger = get_logger("tools.file")
 
 # Constants
 MAX_LINES_DEFAULT = 2000
@@ -27,14 +31,18 @@ def _validate_path(path: str, *, for_write: bool = False) -> Path:
 @tool
 def read_file(file_path: str, offset: int = 0, limit: int = MAX_LINES_DEFAULT) -> dict:
     """Read contents of a file with line numbers."""
+    logger.info("Reading file: %s (offset=%d, limit=%d)", file_path, offset, limit)
     try:
         path = _validate_path(file_path)
     except ValueError as e:
+        logger.warning("Path validation failed for %s: %s", file_path, e)
         return {"ok": False, "error": str(e)}
 
     if not path.exists():
+        logger.warning("File not found: %s", file_path)
         return {"ok": False, "error": "File not found", "path": file_path}
     if not path.is_file():
+        logger.warning("Not a file: %s", file_path)
         return {"ok": False, "error": "Not a file", "path": file_path}
 
     settings = get_settings()
@@ -67,62 +75,78 @@ def read_file(file_path: str, offset: int = 0, limit: int = MAX_LINES_DEFAULT) -
 @tool
 def write_file(file_path: str, content: str) -> dict:
     """Write content to a file, creating it if it doesn't exist."""
+    logger.info("Writing file: %s (%d bytes)", file_path, len(content))
     try:
         path = _validate_path(file_path, for_write=True)
     except ValueError as e:
+        logger.warning("Path validation failed for write %s: %s", file_path, e)
         return {"ok": False, "error": str(e)}
 
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
+        logger.info("Successfully wrote %d bytes to %s", len(content), file_path)
         return {"ok": True, "path": file_path, "bytes": len(content)}
     except OSError as e:
+        logger.error("Error writing file %s: %s", file_path, e)
         return {"ok": False, "error": f"Error writing file: {e}"}
 
 
 @tool
 def append_file(file_path: str, content: str) -> dict:
     """Append content to a file, creating it if it doesn't exist."""
+    logger.info("Appending to file: %s (%d bytes)", file_path, len(content))
     try:
         path = _validate_path(file_path, for_write=True)
     except ValueError as e:
+        logger.warning("Path validation failed for append %s: %s", file_path, e)
         return {"ok": False, "error": str(e)}
 
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
             f.write(content)
+        logger.info("Successfully appended %d bytes to %s", len(content), file_path)
         return {"ok": True, "path": file_path, "bytes": len(content)}
     except OSError as e:
+        logger.error("Error appending to file %s: %s", file_path, e)
         return {"ok": False, "error": f"Error appending file: {e}"}
 
 
 @tool
 def edit_file(file_path: str, old_string: str, new_string: str, preview: bool = False) -> dict:
     """Replace a string in a file with a new string."""
+    logger.info("Editing file: %s (preview=%s)", file_path, preview)
+    logger.debug("Edit: replacing %d chars with %d chars", len(old_string), len(new_string))
     try:
         path = _validate_path(file_path, for_write=True)
     except ValueError as e:
+        logger.warning("Path validation failed for edit %s: %s", file_path, e)
         return {"ok": False, "error": str(e)}
 
     if not path.exists():
+        logger.warning("File not found for edit: %s", file_path)
         return {"ok": False, "error": "File not found", "path": file_path}
 
     try:
         content = path.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
+        logger.error("Error reading file for edit %s: %s", file_path, e)
         return {"ok": False, "error": f"Error reading file: {e}"}
 
     count = content.count(old_string)
     if count == 0:
+        logger.warning("String not found in %s", file_path)
         return {"ok": False, "error": "String not found"}
     if count > 1:
+        logger.warning("String found %d times in %s (must be unique)", count, file_path)
         return {"ok": False, "error": f"String found {count} times"}
 
     new_content = content.replace(old_string, new_string, 1)
 
     if preview:
+        logger.debug("Preview mode - no changes written")
         return {
             "ok": True,
             "preview": True,
@@ -132,8 +156,10 @@ def edit_file(file_path: str, old_string: str, new_string: str, preview: bool = 
 
     try:
         path.write_text(new_content, encoding="utf-8")
+        logger.info("Successfully edited %s", file_path)
         return {"ok": True, "path": file_path}
     except OSError as e:
+        logger.error("Error writing edited file %s: %s", file_path, e)
         return {"ok": False, "error": f"Error writing file: {e}"}
 
 

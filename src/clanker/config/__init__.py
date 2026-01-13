@@ -2,6 +2,7 @@
 
 from clanker.config.settings import (
     CONFIG_PATH,
+    LoggingSettings,
     MCPServerConfig,
     MCPSettings,
     Settings,
@@ -11,6 +12,7 @@ from clanker.config.settings import (
 
 __all__ = [
     "CONFIG_PATH",
+    "LoggingSettings",
     "MCPServerConfig",
     "MCPSettings",
     "Settings",

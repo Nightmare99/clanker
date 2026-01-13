@@ -13,8 +13,12 @@ from langgraph.prebuilt import ToolNode
 from clanker.agent.prompts import get_system_prompt
 from clanker.agent.state import AgentState
 from clanker.config import Settings, get_settings
+from clanker.logging import get_logger
 from clanker.mcp import load_mcp_tools
 from clanker.tools import ALL_TOOLS
+
+# Module logger
+logger = get_logger("agent")
 
 # Maximum tool calls per turn to prevent infinite loops
 MAX_TOOL_CALLS = 20
@@ -30,16 +34,19 @@ def _get_all_tools(settings: Settings) -> list:
         Combined list of built-in and MCP tools.
     """
     tools = list(ALL_TOOLS)
+    logger.debug("Loaded %d built-in tools", len(tools))
 
     # Load MCP tools if enabled
     if settings.mcp.enabled:
         try:
             mcp_tools = load_mcp_tools(settings)
             tools.extend(mcp_tools)
-        except Exception:
+            logger.info("Loaded %d MCP tools", len(mcp_tools))
+        except Exception as e:
             # Don't fail if MCP loading fails - just use built-in tools
-            pass
+            logger.warning("Failed to load MCP tools: %s", e)
 
+    logger.debug("Total tools available: %d", len(tools))
     return tools
 
 
@@ -47,13 +54,16 @@ def _create_model(settings: Settings):
     """Create the appropriate LLM based on settings."""
     provider = settings.model.provider
     model_name = settings.model.name
+    logger.info("Creating model: provider=%s, model=%s", provider, model_name)
 
     # Build optional kwargs - only include if explicitly set
     optional_kwargs = {}
     if settings.model.temperature is not None:
         optional_kwargs["temperature"] = settings.model.temperature
+        logger.debug("Using temperature: %s", settings.model.temperature)
     if settings.model.max_tokens is not None:
         optional_kwargs["max_tokens"] = settings.model.max_tokens
+        logger.debug("Using max_tokens: %s", settings.model.max_tokens)
 
     if provider == "anthropic":
         api_key = settings.anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")

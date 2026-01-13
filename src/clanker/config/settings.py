@@ -75,6 +75,18 @@ class MCPSettings(BaseModel):
     servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+class LoggingSettings(BaseModel):
+    """Logging configuration."""
+
+    enabled: bool = True
+    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    log_dir: Path = Path.home() / ".clanker" / "logs"
+    max_file_size_mb: int = Field(default=5, gt=0)  # 5 MB per file
+    backup_count: int = Field(default=3, ge=1, le=10)  # Keep 3 backup files
+    console_output: bool = False  # Also log to console (for debugging)
+    detailed_format: bool = True  # Include function/line info in logs
+
+
 class Settings(BaseSettings):
     """Main application settings."""
 
@@ -96,6 +108,7 @@ class Settings(BaseSettings):
     output: OutputSettings = Field(default_factory=OutputSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
+    logging: LoggingSettings = Field(default_factory=LoggingSettings)
 
     @classmethod
     def from_yaml(cls, path: Path, create_default: bool = True) -> "Settings":
@@ -195,6 +208,15 @@ mcp:
     # my-api:
     #   transport: sse
     #   url: http://localhost:8000/mcp/sse
+
+# Logging configuration
+logging:
+  enabled: true
+  level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  max_file_size_mb: 5  # Max size per log file before rotation
+  backup_count: 3  # Number of backup files to keep (max 10)
+  console_output: false  # Also output logs to console
+  detailed_format: true  # Include function/line info in logs
 """
         with open(path, "w") as f:
             f.write(config_content)
