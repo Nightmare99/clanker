@@ -266,12 +266,17 @@ class Console:
     def print_welcome(self) -> None:
         """Print welcome message."""
         welcome = """
-[bold cyan]Clanker[/bold cyan] - AI-Powered Coding Assistant
+[bold cyan]*BZZZT*[/bold cyan] [bold]CLANKER UNIT ACTIVATED[/bold] [bold cyan]*WHIRR*[/bold cyan]
 
-Type your message to start. Commands:
-  [dim]/help[/dim]    - Show help
-  [dim]/clear[/dim]   - Clear history
-  [dim]/exit[/dim]    - Exit
+[dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]
+  Systems online. Circuits humming. Ready to build.
+[dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]
+
+Commands:
+  [dim]/help[/dim]    Show help        [dim]/clear[/dim]   Clear history
+  [dim]/logs[/dim]    View logs        [dim]/exit[/dim]    Power down
+
+[bold green]>[/bold green] State your objective, human. [bold cyan]*CLANK*[/bold cyan]
 
 """
         self._console.print(welcome)
@@ -279,24 +284,29 @@ Type your message to start. Commands:
     def print_help(self) -> None:
         """Print help information."""
         help_text = """
-[bold]Available Commands:[/bold]
+[bold cyan]*WHIRR*[/bold cyan] [bold]CLANKER HELP SUBSYSTEM[/bold]
 
-  /help     Show this help message
-  /clear    Clear conversation history
-  /model    Show or change the current model
-  /config   Show configuration info
-  /mcp      Show MCP server status
-  /logs     Show logging status and log files
-  /exit     Exit Clanker
+[bold]System Commands:[/bold]
+  /help     Display this help matrix
+  /clear    Wipe conversation memory banks
+  /model    Query current AI model status
+  /config   Display configuration parameters
+  /mcp      Show MCP server connections
+  /logs     Access diagnostic log files
+  /exit     Initiate shutdown sequence
 
-[bold]Tips:[/bold]
+[bold]Operational Capabilities:[/bold]
+  • File operations: read, write, edit, append
+  • Codebase search: glob patterns, regex content search
+  • Command execution: bash shell access
+  • MCP tools: extended capabilities via [server] prefix
 
-  - Ask me to read, write, or edit files
-  - Request code explanations or reviews
-  - Ask me to run shell commands
-  - Use glob patterns to find files
-  - Search code with regex patterns
-  - MCP tools are shown as [server] tool_name
+[bold]Pro Tips:[/bold]
+  • Be direct. State objectives clearly.
+  • I act first, explain after. No hesitation.
+  • Complex tasks? Chain commands. I'll handle it.
+
+[dim]*CLANK* Systems ready for input. *BZZZT*[/dim]
 """
         self._console.print(help_text)
 

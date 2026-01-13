@@ -40,7 +40,7 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
 
     if cmd in ("/exit", "/quit", "/q"):
         logger.info("User requested exit")
-        console.print_info("Goodbye!")
+        console.print("[bold cyan]*BZZZT*[/bold cyan] Shutdown sequence initiated. Until next time, human. [bold cyan]*WHIRR... click*[/bold cyan]")
         return False
 
     elif cmd == "/help":
@@ -50,7 +50,7 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
         console.clear()
         session_manager.new_session()
         logger.info("Conversation cleared, new session started")
-        console.print_info("Conversation cleared.")
+        console.print("[bold cyan]*WHIRR*[/bold cyan] Memory banks wiped. Fresh slate initialized. [bold cyan]*CLANK*[/bold cyan]")
 
     elif cmd.startswith("/model"):
         parts = cmd.split(maxsplit=1)
@@ -194,7 +194,7 @@ def run_interactive(console: Console, settings: Settings) -> None:
             continue
 
         except EOFError:
-            console.print_info("\nGoodbye!")
+            console.print("\n[bold cyan]*BZZZT*[/bold cyan] Signal lost. Powering down. [bold cyan]*click*[/bold cyan]")
             break
 
 
