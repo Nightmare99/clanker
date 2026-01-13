@@ -6,12 +6,14 @@ from clanker.tools.file_tools import (
     edit_file,
     list_directory,
     read_file,
+    read_project_instructions,
     write_file,
 )
 from clanker.tools.search_tools import glob_search, grep_search
 
 # All available tools
 ALL_TOOLS = [
+    read_project_instructions,
     read_file,
     write_file,
     append_file,
@@ -24,6 +26,7 @@ ALL_TOOLS = [
 
 __all__ = [
     "ALL_TOOLS",
+    "read_project_instructions",
     "read_file",
     "write_file",
     "append_file",

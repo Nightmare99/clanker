@@ -198,3 +198,38 @@ def list_directory(path: str = ".") -> dict:
             items.append({"type": "error", "name": entry.name})
 
     return {"ok": True, "path": str(dir_path), "items": items}
+
+
+@tool
+def read_project_instructions(working_directory: str) -> dict:
+    """Read project-specific agent instructions from AGENTS.md.
+
+    Call this at the start of each conversation to load project-specific
+    instructions, coding conventions, and rules that must be followed.
+
+    Args:
+        working_directory: The project's working directory to check for AGENTS.md
+    """
+    logger.info("Checking for AGENTS.md in: %s", working_directory)
+    agents_path = Path(working_directory) / "AGENTS.md"
+
+    if not agents_path.exists():
+        logger.debug("No AGENTS.md found in %s", working_directory)
+        return {
+            "ok": True,
+            "found": False,
+            "message": "No AGENTS.md file found. No project-specific instructions to follow.",
+        }
+
+    try:
+        content = agents_path.read_text(encoding="utf-8", errors="replace")
+        logger.info("Loaded AGENTS.md (%d bytes)", len(content))
+        return {
+            "ok": True,
+            "found": True,
+            "content": content,
+            "message": "Project instructions loaded. Follow these rules for this project.",
+        }
+    except OSError as e:
+        logger.error("Error reading AGENTS.md: %s", e)
+        return {"ok": False, "error": f"Error reading AGENTS.md: {e}"}

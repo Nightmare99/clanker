@@ -1,6 +1,6 @@
 """UI components for Clanker."""
 
 from clanker.ui.console import Console
-from clanker.ui.streaming import StreamHandler
+from clanker.ui.streaming import stream_agent_response_sync
 
-__all__ = ["Console", "StreamHandler"]
+__all__ = ["Console", "stream_agent_response_sync"]
