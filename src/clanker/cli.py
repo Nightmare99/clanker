@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
+from prompt_toolkit.completion import Completer, Completion
 
 from clanker import __version__
 from clanker.agent import create_agent_graph
@@ -118,6 +119,30 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
     return True
 
 
+class CommandCompleter(Completer):
+    """Autocomplete for slash commands."""
+
+    COMMANDS = [
+        "/help",
+        "/exit",
+        "/quit",
+        "/q",
+        "/clear",
+        "/model",
+        "/config",
+        "/mcp",
+        "/logs",
+    ]
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        if not text.startswith("/"):
+            return
+        for cmd in self.COMMANDS:
+            if cmd.startswith(text):
+                yield Completion(cmd, start_position=-len(text))
+
+
 def run_interactive(console: Console, settings: Settings) -> None:
     """Run the interactive REPL loop.
 
@@ -146,7 +171,11 @@ def run_interactive(console: Console, settings: Settings) -> None:
     # Setup prompt history
     history_path = settings.memory.storage_path / "history"
     history_path.parent.mkdir(parents=True, exist_ok=True)
-    prompt_session: PromptSession = PromptSession(history=FileHistory(str(history_path)))
+    prompt_session: PromptSession = PromptSession(
+        history=FileHistory(str(history_path)),
+        completer=CommandCompleter(),
+        complete_while_typing=True,
+    )
 
     console.print_welcome()
 
