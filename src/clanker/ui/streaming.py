@@ -132,6 +132,7 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str
     """Synchronous version of stream_agent_response.
 
     Uses stream_mode="messages" for fine-grained control over output.
+    Renders markdown using Rich's Live display.
 
     Args:
         graph: The compiled LangGraph agent.
@@ -145,32 +146,51 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str
     settings = get_settings()
     full_response = ""
     shown_tool_calls: set[str] = set()
+    rich_console = console._console
 
-    for msg, metadata in graph.stream(state, config=config, stream_mode="messages"):
-        # Skip human messages (user input) and tool messages (tool results)
-        if isinstance(msg, (HumanMessage, ToolMessage)):
-            continue
+    # Use Live display for streaming with markdown rendering
+    live = Live(
+        Text(""),
+        console=rich_console,
+        refresh_per_second=12,
+        transient=True,  # Clear when done so we can print final version
+    )
 
-        # Handle AI message chunks
-        if isinstance(msg, AIMessageChunk):
-            # Check for tool calls first
-            if msg.tool_calls and settings.output.show_tool_calls:
-                for tool_call in msg.tool_calls:
-                    tool_id = tool_call.get("id", "")
-                    if tool_id and tool_id not in shown_tool_calls:
-                        shown_tool_calls.add(tool_id)
-                        console.print_tool_use(
-                            tool_call.get("name", "unknown"),
-                            tool_call.get("args", {}),
-                        )
+    live.start()
 
-            # Stream AI content (text response)
-            if msg.content and isinstance(msg.content, str):
-                sys.stdout.write(msg.content)
-                sys.stdout.flush()
-                full_response += msg.content
+    try:
+        for msg, metadata in graph.stream(state, config=config, stream_mode="messages"):
+            # Skip human messages (user input) and tool messages (tool results)
+            if isinstance(msg, (HumanMessage, ToolMessage)):
+                continue
 
-    if full_response:
-        print()  # Newline after streaming
+            # Handle AI message chunks
+            if isinstance(msg, AIMessageChunk):
+                # Check for tool calls first
+                if msg.tool_calls and settings.output.show_tool_calls:
+                    for tool_call in msg.tool_calls:
+                        tool_id = tool_call.get("id", "")
+                        if tool_id and tool_id not in shown_tool_calls:
+                            shown_tool_calls.add(tool_id)
+                            # Stop live, print tool use, restart live
+                            live.stop()
+                            console.print_tool_use(
+                                tool_call.get("name", "unknown"),
+                                tool_call.get("args", {}),
+                            )
+                            live.start()
+
+                # Stream AI content (text response)
+                if msg.content and isinstance(msg.content, str):
+                    full_response += msg.content
+                    # Update live display with markdown rendering
+                    live.update(Markdown(full_response))
+
+    finally:
+        live.stop()
+
+    # Print final rendered markdown
+    if full_response.strip():
+        rich_console.print(Markdown(full_response))
 
     return full_response
