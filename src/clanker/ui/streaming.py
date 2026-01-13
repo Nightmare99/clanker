@@ -6,7 +6,6 @@ import sys
 from contextlib import contextmanager
 from typing import Any
 
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from rich.console import Console as RichConsole
 from rich.live import Live
 from rich.text import Text
@@ -189,8 +188,6 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str
         settings = get_settings()
         full_response = ""
         shown_tool_calls: set[str] = set()
-        # Accumulate tool calls by ID (args may stream in pieces)
-        pending_tool_calls: dict[str, dict] = {}
         rich_console = console._console
 
         # Use Live display for streaming with markdown rendering
@@ -206,83 +203,50 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str
         try:
             # Suppress stderr from MCP subprocesses during streaming
             with _suppress_subprocess_stderr():
-                async for msg, metadata in graph.astream(
-                    state, config=config, stream_mode="messages"
+                # Use astream_events for complete tool call information
+                async for event in graph.astream_events(
+                    state, config=config, version="v2"
                 ):
-                    # Skip human messages (user input)
-                    if isinstance(msg, HumanMessage):
-                        continue
+                    event_type = event.get("event", "")
 
-                    # When we see a ToolMessage, display the tool call info
-                    # At this point we have complete args from the accumulated tool_calls
-                    if isinstance(msg, ToolMessage) and settings.output.show_tool_calls:
-                        tool_call_id = msg.tool_call_id
-                        if tool_call_id and tool_call_id not in shown_tool_calls:
-                            shown_tool_calls.add(tool_call_id)
-                            # Get the accumulated tool call info
-                            tool_info = pending_tool_calls.get(tool_call_id, {})
-                            tool_name = tool_info.get("name", "unknown")
-                            tool_args = tool_info.get("args", {})
-
-                            # Parse args if it's a string (JSON)
-                            if isinstance(tool_args, str):
-                                try:
-                                    tool_args = json.loads(tool_args) if tool_args else {}
-                                except json.JSONDecodeError:
-                                    tool_args = {}
+                    # Handle tool start - this has complete args
+                    if event_type == "on_tool_start" and settings.output.show_tool_calls:
+                        run_id = event.get("run_id", "")
+                        if run_id and run_id not in shown_tool_calls:
+                            shown_tool_calls.add(run_id)
+                            tool_name = event.get("name", "unknown")
+                            tool_input = event.get("data", {}).get("input", {})
 
                             live.stop()
-                            console.print_tool_use(tool_name, tool_args)
+                            console.print_tool_use(tool_name, tool_input)
 
                             # Show diff/content for file write operations
                             if tool_name == "edit_file":
-                                old_str = tool_args.get("old_string", "")
-                                new_str = tool_args.get("new_string", "")
+                                old_str = tool_input.get("old_string", "")
+                                new_str = tool_input.get("new_string", "")
                                 if old_str or new_str:
                                     console.print_edit_diff(old_str, new_str)
                             elif tool_name == "write_file":
-                                content = tool_args.get("content", "")
+                                content = tool_input.get("content", "")
                                 if content:
                                     console.print_write_content(content, is_append=False)
                             elif tool_name == "append_file":
-                                content = tool_args.get("content", "")
+                                content = tool_input.get("content", "")
                                 if content:
                                     console.print_write_content(content, is_append=True)
 
                             live.start()
-                        continue
 
-                    # Handle AI message chunks - accumulate tool calls
-                    if isinstance(msg, (AIMessageChunk, AIMessage)):
-                        # Accumulate tool calls (args may come in pieces)
-                        if msg.tool_calls:
-                            for tool_call in msg.tool_calls:
-                                tool_id = tool_call.get("id", "")
-                                if tool_id:
-                                    if tool_id not in pending_tool_calls:
-                                        pending_tool_calls[tool_id] = {
-                                            "name": tool_call.get("name", ""),
-                                            "args": tool_call.get("args", {}),
-                                        }
-                                    else:
-                                        # Update with any new info
-                                        if tool_call.get("name"):
-                                            pending_tool_calls[tool_id]["name"] = tool_call["name"]
-                                        # Merge args
-                                        existing_args = pending_tool_calls[tool_id]["args"]
-                                        new_args = tool_call.get("args", {})
-                                        if isinstance(existing_args, dict) and isinstance(new_args, dict):
-                                            existing_args.update(new_args)
-                                        elif isinstance(new_args, str) and new_args:
-                                            # Args came as string, replace
-                                            pending_tool_calls[tool_id]["args"] = new_args
-
-                        # Stream AI content (text response)
-                        if msg.content and isinstance(msg.content, str):
-                            full_response += msg.content
-                            # Update live display with rich text (markup)
-                            cleaned, _ = extract_code_blocks(full_response)
-                            live.update(Text.from_markup(markdown_to_rich(cleaned)))
+                    # Handle streaming text from the LLM
+                    elif event_type == "on_chat_model_stream":
+                        chunk = event.get("data", {}).get("chunk")
+                        if chunk:
+                            content = getattr(chunk, "content", None)
+                            if content and isinstance(content, str):
+                                full_response += content
+                                # Update live display with rich text (markup)
+                                cleaned, _ = extract_code_blocks(full_response)
+                                live.update(Text.from_markup(markdown_to_rich(cleaned)))
 
         finally:
             live.stop()
