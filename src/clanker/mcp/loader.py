@@ -1,12 +1,40 @@
 """MCP server loader and manager."""
 
 import asyncio
-from contextlib import asynccontextmanager
+import os
+import sys
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any
 
 from langchain_core.tools import BaseTool
 
 from clanker.config import Settings, get_settings
+from clanker.logging import get_logger
+
+# Module logger
+logger = get_logger("mcp")
+
+
+@contextmanager
+def _suppress_stderr():
+    """Temporarily suppress stderr output (from MCP server subprocesses).
+
+    This redirects at the file descriptor level to catch subprocess output.
+    """
+    # Save the original stderr file descriptor
+    original_stderr_fd = sys.stderr.fileno()
+    saved_stderr_fd = os.dup(original_stderr_fd)
+
+    try:
+        # Open devnull and redirect stderr to it
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, original_stderr_fd)
+        os.close(devnull)
+        yield
+    finally:
+        # Restore original stderr
+        os.dup2(saved_stderr_fd, original_stderr_fd)
+        os.close(saved_stderr_fd)
 
 
 class MCPManager:
@@ -147,9 +175,12 @@ def load_mcp_tools(settings: Settings | None = None) -> list[BaseTool]:
         return []
 
     try:
-        return asyncio.run(manager.load_tools())
-    except Exception:
-        # Return empty list if MCP loading fails (don't break the app)
+        # Suppress stderr from MCP server subprocesses (startup messages, warnings)
+        with _suppress_stderr():
+            return asyncio.run(manager.load_tools())
+    except Exception as e:
+        # Log the error but don't break the app
+        logger.warning("Failed to load MCP tools: %s", e)
         return []
 
 
