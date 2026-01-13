@@ -1,6 +1,7 @@
 """File operation tools for reading, writing, and editing files."""
 
 from pathlib import Path
+from itertools import islice
 
 from langchain.tools import tool
 
@@ -13,197 +14,161 @@ MAX_LINES_DEFAULT = 2000
 MAX_LINE_LENGTH = 2000
 
 
+def _validate_path(path: str, *, for_write: bool = False) -> Path:
+    """Validate and optionally safety-check a filesystem path."""
+    p = validate_file_path(path)
+    if for_write:
+        ok, reason = is_path_safe(str(p), for_write=True)
+        if not ok:
+            raise ValueError(reason)
+    return p
+
+
 @tool
-def read_file(file_path: str, offset: int = 0, limit: int = MAX_LINES_DEFAULT) -> str:
-    """Read contents of a file with line numbers.
-
-    Args:
-        file_path: Absolute path to the file to read.
-        offset: Line number to start reading from (0-indexed).
-        limit: Maximum number of lines to read.
-
-    Returns:
-        File contents with line numbers, or an error message.
-    """
+def read_file(file_path: str, offset: int = 0, limit: int = MAX_LINES_DEFAULT) -> dict:
+    """Read contents of a file with line numbers."""
     try:
-        path = validate_file_path(file_path)
+        path = _validate_path(file_path)
     except ValueError as e:
-        return f"Error: {e}"
+        return {"ok": False, "error": str(e)}
 
     if not path.exists():
-        return f"Error: File not found: {file_path}"
-
+        return {"ok": False, "error": "File not found", "path": file_path}
     if not path.is_file():
-        return f"Error: Not a file: {file_path}"
+        return {"ok": False, "error": "Not a file", "path": file_path}
 
     settings = get_settings()
     if path.stat().st_size > settings.safety.max_file_size:
-        return f"Error: File too large (>{settings.safety.max_file_size} bytes)"
+        return {"ok": False, "error": "File too large", "path": file_path}
 
+    lines_out = []
+    total_read = 0
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
+            for idx, line in enumerate(islice(f, offset, offset + limit), start=offset + 1):
+                total_read += 1
+                if len(line) > MAX_LINE_LENGTH:
+                    line = line[: MAX_LINE_LENGTH - 3] + "..."
+                lines_out.append(f"{idx:6}\t{line.rstrip()}" )
     except OSError as e:
-        return f"Error reading file: {e}"
+        return {"ok": False, "error": f"Error reading file: {e}"}
 
-    # Apply offset and limit
-    selected_lines = lines[offset : offset + limit]
+    if not lines_out:
+        return {"ok": True, "content": "(no lines at this offset)"}
 
-    # Format with line numbers (1-indexed for display)
-    result_lines = []
-    for i, line in enumerate(selected_lines, start=offset + 1):
-        # Truncate long lines
-        if len(line) > MAX_LINE_LENGTH:
-            line = line[: MAX_LINE_LENGTH - 3] + "...\n"
-        result_lines.append(f"{i:6}\t{line.rstrip()}")
-
-    if not result_lines:
-        return "File is empty."
-
-    result = "\n".join(result_lines)
-
-    # Add indicator if truncated
-    if offset + limit < len(lines):
-        remaining = len(lines) - (offset + limit)
-        result += f"\n\n... ({remaining} more lines)"
-
-    return result
+    return {
+        "ok": True,
+        "content": "\n".join(lines_out),
+        "offset": offset,
+        "lines": total_read,
+    }
 
 
 @tool
-def write_file(file_path: str, content: str) -> str:
-    """Write content to a file, creating it if it doesn't exist.
-
-    Args:
-        file_path: Absolute path to the file to write.
-        content: Content to write to the file.
-
-    Returns:
-        Success message or error description.
-    """
+def write_file(file_path: str, content: str) -> dict:
+    """Write content to a file, creating it if it doesn't exist."""
     try:
-        path = validate_file_path(file_path)
+        path = _validate_path(file_path, for_write=True)
     except ValueError as e:
-        return f"Error: {e}"
-
-    is_safe, reason = is_path_safe(str(path), for_write=True)
-    if not is_safe:
-        return f"Error: {reason}"
+        return {"ok": False, "error": str(e)}
 
     try:
-        # Create parent directories if needed
         path.parent.mkdir(parents=True, exist_ok=True)
-
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
-
-        return f"Successfully wrote {len(content)} characters to {file_path}"
+        return {"ok": True, "path": file_path, "bytes": len(content)}
     except OSError as e:
-        return f"Error writing file: {e}"
+        return {"ok": False, "error": f"Error writing file: {e}"}
 
 
 @tool
-def edit_file(file_path: str, old_string: str, new_string: str) -> str:
-    """Replace a string in a file with a new string.
-
-    The old_string must be unique in the file to avoid ambiguous edits.
-
-    Args:
-        file_path: Absolute path to the file to edit.
-        old_string: The exact text to find and replace.
-        new_string: The text to replace it with.
-
-    Returns:
-        Success message or error description.
-    """
+def append_file(file_path: str, content: str) -> dict:
+    """Append content to a file, creating it if it doesn't exist."""
     try:
-        path = validate_file_path(file_path)
+        path = _validate_path(file_path, for_write=True)
     except ValueError as e:
-        return f"Error: {e}"
+        return {"ok": False, "error": str(e)}
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(content)
+        return {"ok": True, "path": file_path, "bytes": len(content)}
+    except OSError as e:
+        return {"ok": False, "error": f"Error appending file: {e}"}
+
+
+@tool
+def edit_file(file_path: str, old_string: str, new_string: str, preview: bool = False) -> dict:
+    """Replace a string in a file with a new string."""
+    try:
+        path = _validate_path(file_path, for_write=True)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
 
     if not path.exists():
-        return f"Error: File not found: {file_path}"
-
-    is_safe, reason = is_path_safe(str(path), for_write=True)
-    if not is_safe:
-        return f"Error: {reason}"
+        return {"ok": False, "error": "File not found", "path": file_path}
 
     try:
-        with open(path, encoding="utf-8") as f:
-            content = f.read()
+        content = path.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
-        return f"Error reading file: {e}"
+        return {"ok": False, "error": f"Error reading file: {e}"}
 
-    # Check uniqueness
     count = content.count(old_string)
     if count == 0:
-        return f"Error: String not found in file: '{old_string[:100]}...'"
+        return {"ok": False, "error": "String not found"}
     if count > 1:
-        return f"Error: String found {count} times. Provide more context for unique match."
+        return {"ok": False, "error": f"String found {count} times"}
 
-    # Perform replacement
     new_content = content.replace(old_string, new_string, 1)
 
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(new_content)
+    if preview:
+        return {
+            "ok": True,
+            "preview": True,
+            "before": old_string,
+            "after": new_string,
+        }
 
-        return f"Successfully edited {file_path}"
+    try:
+        path.write_text(new_content, encoding="utf-8")
+        return {"ok": True, "path": file_path}
     except OSError as e:
-        return f"Error writing file: {e}"
+        return {"ok": False, "error": f"Error writing file: {e}"}
 
 
 @tool
-def list_directory(path: str = ".") -> str:
-    """List contents of a directory.
-
-    Args:
-        path: Path to the directory to list. Defaults to current directory.
-
-    Returns:
-        Directory listing with file types and sizes.
-    """
+def list_directory(path: str = ".") -> dict:
+    """List contents of a directory."""
     try:
-        dir_path = validate_file_path(path)
+        dir_path = _validate_path(path)
     except ValueError as e:
-        return f"Error: {e}"
+        return {"ok": False, "error": str(e)}
 
     if not dir_path.exists():
-        return f"Error: Directory not found: {path}"
-
+        return {"ok": False, "error": "Directory not found", "path": path}
     if not dir_path.is_dir():
-        return f"Error: Not a directory: {path}"
+        return {"ok": False, "error": "Not a directory", "path": path}
 
     try:
         entries = sorted(dir_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
     except OSError as e:
-        return f"Error listing directory: {e}"
+        return {"ok": False, "error": f"Error listing directory: {e}"}
 
-    if not entries:
-        return "Directory is empty."
-
-    lines = []
+    items = []
     for entry in entries:
         try:
             if entry.is_dir():
-                lines.append(f"  [DIR]  {entry.name}/")
+                items.append({"type": "dir", "name": entry.name})
             elif entry.is_symlink():
-                target = entry.resolve()
-                lines.append(f"  [LINK] {entry.name} -> {target}")
+                items.append({"type": "symlink", "name": entry.name})
             else:
-                size = entry.stat().st_size
-                size_str = _format_size(size)
-                lines.append(f"  {size_str:>8}  {entry.name}")
+                items.append({
+                    "type": "file",
+                    "name": entry.name,
+                    "size": entry.stat().st_size,
+                })
         except OSError:
-            lines.append(f"  [ERROR] {entry.name}")
+            items.append({"type": "error", "name": entry.name})
 
-    return f"{dir_path}:\n" + "\n".join(lines)
-
-
-def _format_size(size: int) -> str:
-    """Format file size in human-readable format."""
-    for unit in ["B", "KB", "MB", "GB"]:
-        if size < 1024:
-            return f"{size:.0f}{unit}" if unit == "B" else f"{size:.1f}{unit}"
-        size /= 1024
-    return f"{size:.1f}TB"
+    return {"ok": True, "path": str(dir_path), "items": items}

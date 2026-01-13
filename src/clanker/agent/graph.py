@@ -13,10 +13,34 @@ from langgraph.prebuilt import ToolNode
 from clanker.agent.prompts import get_system_prompt
 from clanker.agent.state import AgentState
 from clanker.config import Settings, get_settings
+from clanker.mcp import load_mcp_tools
 from clanker.tools import ALL_TOOLS
 
 # Maximum tool calls per turn to prevent infinite loops
 MAX_TOOL_CALLS = 20
+
+
+def _get_all_tools(settings: Settings) -> list:
+    """Get all tools including MCP tools.
+
+    Args:
+        settings: Application settings.
+
+    Returns:
+        Combined list of built-in and MCP tools.
+    """
+    tools = list(ALL_TOOLS)
+
+    # Load MCP tools if enabled
+    if settings.mcp.enabled:
+        try:
+            mcp_tools = load_mcp_tools(settings)
+            tools.extend(mcp_tools)
+        except Exception:
+            # Don't fail if MCP loading fails - just use built-in tools
+            pass
+
+    return tools
 
 
 def _create_model(settings: Settings):
@@ -137,12 +161,15 @@ def create_agent_graph(
     """
     settings = settings or get_settings()
 
+    # Get all tools (built-in + MCP)
+    all_tools = _get_all_tools(settings)
+
     # Create model and bind tools
     model = _create_model(settings)
-    model_with_tools = model.bind_tools(ALL_TOOLS)
+    model_with_tools = model.bind_tools(all_tools)
 
     # Create tool node
-    tool_node = ToolNode(ALL_TOOLS)
+    tool_node = ToolNode(all_tools)
 
     # Build the graph
     workflow = StateGraph(AgentState)
@@ -191,10 +218,11 @@ def create_simple_agent(
 
     settings = settings or get_settings()
     model = _create_model(settings)
+    all_tools = _get_all_tools(settings)
 
     return create_react_agent(
         model,
-        ALL_TOOLS,
+        all_tools,
         prompt=get_system_prompt(),
         checkpointer=checkpointer,
     )

@@ -141,6 +141,7 @@ Inside the interactive session:
 | `/clear` | Clear conversation history |
 | `/model` | Show current model |
 | `/config` | Show configuration |
+| `/mcp` | Show MCP server status |
 | `/exit` | Exit Clanker |
 
 ## Available Tools
@@ -151,11 +152,66 @@ The agent has access to these tools:
 |------|-------------|
 | `read_file` | Read file contents with line numbers |
 | `write_file` | Create or overwrite files |
+| `append_file` | Append content to files |
 | `edit_file` | Make targeted string replacements |
 | `list_directory` | List directory contents |
 | `bash` | Execute shell commands |
 | `glob_search` | Find files by pattern |
 | `grep_search` | Search file contents with regex |
+
+## MCP Servers
+
+Clanker supports [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers, allowing you to extend the agent with external tools.
+
+### Configuring MCP Servers
+
+Add MCP servers to your `~/.clanker/config.yaml`:
+
+```yaml
+mcp:
+  enabled: true
+  servers:
+    # Filesystem server (stdio transport)
+    filesystem:
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
+
+    # Custom server with environment variables
+    my-server:
+      transport: stdio
+      command: python
+      args: ["/path/to/my_mcp_server.py"]
+      env:
+        API_KEY: "your-api-key"
+
+    # SSE transport (for remote servers)
+    remote-api:
+      transport: sse
+      url: http://localhost:8000/mcp/sse
+```
+
+### Supported Transports
+
+| Transport | Description |
+|-----------|-------------|
+| `stdio` | Launches server as subprocess, communicates via stdin/stdout |
+| `sse` | Connects to server via Server-Sent Events (HTTP) |
+
+### MCP Tool Display
+
+MCP tools are displayed with their server name prefix:
+```
+  > [filesystem] read_file: /path/to/file.txt
+  > [my-server] custom_tool: query
+```
+
+### Popular MCP Servers
+
+- `@modelcontextprotocol/server-filesystem` - File system access
+- `@modelcontextprotocol/server-github` - GitHub integration
+- `@modelcontextprotocol/server-postgres` - PostgreSQL database
+- `@modelcontextprotocol/server-slack` - Slack integration
 
 ## Examples
 

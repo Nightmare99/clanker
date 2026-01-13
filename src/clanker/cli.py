@@ -58,6 +58,27 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
         console.print_info(f"Config file: {CONFIG_PATH}")
         console.print_info(f"Provider: {settings.model.provider}")
         console.print_info(f"Model: {settings.model.name}")
+        if settings.mcp.enabled and settings.mcp.servers:
+            enabled = [n for n, s in settings.mcp.servers.items() if s.enabled]
+            console.print_info(f"MCP servers: {len(enabled)} enabled")
+
+    elif cmd == "/mcp":
+        settings = get_settings()
+        if not settings.mcp.enabled:
+            console.print_info("MCP is disabled")
+        elif not settings.mcp.servers:
+            console.print_info("No MCP servers configured")
+        else:
+            console.print_info("MCP Servers:")
+            for name, server in settings.mcp.servers.items():
+                status = "enabled" if server.enabled else "disabled"
+                if server.transport == "stdio":
+                    detail = f"{server.command} {' '.join(server.args)}"
+                else:
+                    detail = server.url or ""
+                console.print_info(f"  {name}: [{server.transport}] {status}")
+                if detail:
+                    console.print(f"    {detail[:60]}{'...' if len(detail) > 60 else ''}")
 
     else:
         console.print_warning(f"Unknown command: {command}")

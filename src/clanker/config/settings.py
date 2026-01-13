@@ -54,6 +54,27 @@ class MemorySettings(BaseModel):
     storage_path: Path = Path.home() / ".clanker" / "sessions"
 
 
+class MCPServerConfig(BaseModel):
+    """Configuration for a single MCP server."""
+
+    transport: Literal["stdio", "sse"] = "stdio"
+    # For stdio transport
+    command: str | None = None
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    # For SSE transport
+    url: str | None = None
+    # Whether this server is enabled
+    enabled: bool = True
+
+
+class MCPSettings(BaseModel):
+    """MCP (Model Context Protocol) settings."""
+
+    enabled: bool = True
+    servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
+
+
 class Settings(BaseSettings):
     """Main application settings."""
 
@@ -74,6 +95,7 @@ class Settings(BaseSettings):
     safety: SafetySettings = Field(default_factory=SafetySettings)
     output: OutputSettings = Field(default_factory=OutputSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
+    mcp: MCPSettings = Field(default_factory=MCPSettings)
 
     @classmethod
     def from_yaml(cls, path: Path, create_default: bool = True) -> "Settings":
@@ -157,6 +179,22 @@ output:
 memory:
   persist_sessions: true
   max_history_length: 100
+
+# MCP (Model Context Protocol) Servers
+# Add external tool servers here
+mcp:
+  enabled: true
+  servers: {}
+    # Example stdio server:
+    # filesystem:
+    #   transport: stdio
+    #   command: npx
+    #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]
+    #
+    # Example SSE server:
+    # my-api:
+    #   transport: sse
+    #   url: http://localhost:8000/mcp/sse
 """
         with open(path, "w") as f:
             f.write(config_content)

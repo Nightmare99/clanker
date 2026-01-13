@@ -111,6 +111,10 @@ class Console:
             path = self._shorten_path(args.get("file_path", "file"))
             text.append(f"Edit {path}", style="tool")
 
+        elif tool_name == "append_file":
+            path = self._shorten_path(args.get("file_path", "file"))
+            text.append(f"Append {path}", style="tool")
+
         elif tool_name == "bash":
             cmd = self._truncate(args.get("command", ""), 60)
             text.append(f"Run: {cmd}", style="tool")
@@ -131,11 +135,32 @@ class Console:
             text.append(f"List: {path}", style="tool")
 
         else:
-            # Generic fallback - show tool name and first arg value
-            text.append(tool_name, style="tool")
+            # Handle MCP tools and other unknown tools
+            # MCP tools often have format "server__tool" or "mcp_server_tool"
+            display_name = tool_name
+
+            # Check if it looks like an MCP tool (contains double underscore or mcp prefix)
+            if "__" in tool_name:
+                parts = tool_name.split("__", 1)
+                server_name = parts[0]
+                actual_tool = parts[1] if len(parts) > 1 else tool_name
+                text.append(f"[{server_name}] ", style="cyan")
+                display_name = actual_tool
+
+            text.append(display_name, style="tool")
+
+            # Show first meaningful arg value
             if args:
-                first_val = str(list(args.values())[0])
-                text.append(f": {self._truncate(first_val, 40)}", style="dim")
+                # Try to find a meaningful arg to display
+                display_val = None
+                for key in ["query", "path", "url", "input", "text", "command", "name"]:
+                    if key in args:
+                        display_val = str(args[key])
+                        break
+                if display_val is None and args:
+                    display_val = str(list(args.values())[0])
+                if display_val:
+                    text.append(f": {self._truncate(display_val, 40)}", style="dim")
 
         self._console.print(text)
 
@@ -189,6 +214,8 @@ Type your message to start. Commands:
   /help     Show this help message
   /clear    Clear conversation history
   /model    Show or change the current model
+  /config   Show configuration info
+  /mcp      Show MCP server status
   /exit     Exit Clanker
 
 [bold]Tips:[/bold]
@@ -198,6 +225,7 @@ Type your message to start. Commands:
   - Ask me to run shell commands
   - Use glob patterns to find files
   - Search code with regex patterns
+  - MCP tools are shown as [server] tool_name
 """
         self._console.print(help_text)
 
