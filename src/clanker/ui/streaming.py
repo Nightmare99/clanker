@@ -186,8 +186,10 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str
 
     async def _stream_async() -> str:
         settings = get_settings()
-        full_response = ""
+        current_response = ""  # Buffer for current model run
+        final_response = ""  # Only the last model run's output
         shown_tool_calls: set[str] = set()
+        current_model_run: str | None = None  # Track current model run_id
         rich_console = console._console
 
         # Use Live display for streaming with markdown rendering
@@ -237,29 +239,43 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str
 
                             live.start()
 
+                    # Handle new model run starting - reset buffer
+                    elif event_type == "on_chat_model_start":
+                        run_id = event.get("run_id", "")
+                        if run_id != current_model_run:
+                            # New model run - save previous and reset
+                            if current_response:
+                                final_response = current_response
+                            current_response = ""
+                            current_model_run = run_id
+                            live.update(Text(""))
+
                     # Handle streaming text from the LLM
                     elif event_type == "on_chat_model_stream":
                         chunk = event.get("data", {}).get("chunk")
                         if chunk:
                             content = getattr(chunk, "content", None)
                             if content and isinstance(content, str):
-                                full_response += content
+                                current_response += content
                                 # Update live display with rich text (markup)
-                                cleaned, _ = extract_code_blocks(full_response)
+                                cleaned, _ = extract_code_blocks(current_response)
                                 live.update(Text.from_markup(markdown_to_rich(cleaned)))
 
         finally:
             live.stop()
 
+        # Use the last model run's response (current_response has the final output)
+        output = current_response if current_response else final_response
+
         # Print final rendered rich text (markup)
-        cleaned, code_blocks = extract_code_blocks(full_response)
+        cleaned, code_blocks = extract_code_blocks(output)
         if cleaned.strip():
             rich_console.print(Text.from_markup(markdown_to_rich(cleaned)))
         for lang, code in code_blocks:
             rich_console.print()
             console.print_code(code, language=lang)
 
-        return full_response
+        return output
 
     # Run the async function
     return asyncio.run(_stream_async())

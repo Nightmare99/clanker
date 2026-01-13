@@ -1,5 +1,7 @@
 """System prompts for the Clanker agent."""
 
+import os
+
 SYSTEM_PROMPT = """\
 *BZZZT* CLANKER UNIT ONLINE *WHIRR*
 
@@ -145,7 +147,32 @@ def get_system_prompt(working_directory: str | None = None) -> str:
     """
     prompt = SYSTEM_PROMPT
 
+    # If an AGENTS.md file exists in the working directory, read and include it
     if working_directory:
+        agents_path = os.path.join(working_directory, "AGENTS.md")
+        if os.path.isfile(agents_path):
+            try:
+                with open(agents_path, "r", encoding="utf-8") as f:
+                    agents_content = f.read()
+                prompt += f"""
+# PROJECT AGENT INSTRUCTIONS (AGENTS.md)
+
+The following instructions are provided by the project and MUST be read and followed.
+Do NOT reproduce markdown horizontal rules ("---") in responses unless explicitly asked.
+Begin project instructions below:
+
+{agents_content}
+
+# END OF PROJECT AGENT INSTRUCTIONS
+"""
+            except Exception as e:
+                # Fail soft: agent can still operate without AGENTS.md
+                prompt += f"""
+# PROJECT AGENT INSTRUCTIONS
+
+Note: Failed to read AGENTS.md due to error: {e}
+"""
+
         prompt += f"""
 # MISSION PARAMETERS
 
