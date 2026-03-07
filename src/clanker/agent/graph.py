@@ -50,7 +50,7 @@ def _get_all_tools(settings: Settings) -> list:
     return tools
 
 
-def _create_model(settings: Settings):
+def create_model(settings: Settings):
     """Create the appropriate LLM based on settings."""
     provider = settings.model.provider
     model_name = settings.model.name
@@ -244,7 +244,7 @@ def create_agent_graph(
     all_tools = _get_all_tools(settings)
 
     # Create model and bind tools
-    model = _create_model(settings)
+    model = create_model(settings)
     model_with_tools = model.bind_tools(all_tools)
 
     # Create tool node
@@ -296,7 +296,7 @@ def create_simple_agent(
     from langgraph.prebuilt import create_react_agent
 
     settings = settings or get_settings()
-    model = _create_model(settings)
+    model = create_model(settings)
     all_tools = _get_all_tools(settings)
 
     return create_react_agent(

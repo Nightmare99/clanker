@@ -9,16 +9,17 @@ warnings.filterwarnings("ignore", message="Core Pydantic V1 functionality")
 
 import click
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.completion import Completer, Completion
 
 from clanker import __version__
-from clanker.agent import create_agent_graph
+from clanker.agent import create_agent_graph, create_model
 from clanker.config import CONFIG_PATH, Settings, get_settings, reload_settings
 from clanker.config.setup_wizard import run_setup_wizard
 from clanker.logging import get_logger, setup_logging
+from clanker.context.compaction import compact_context_sync, should_compact
 from clanker.memory.checkpointer import SessionManager
 from clanker.memory.memories import get_memory_store
 from clanker.ui.console import Console
@@ -242,11 +243,13 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
 
     logger.debug("Session manager initialized: session_id=%s", session_manager.session_id)
 
-    # Create agent
+    # Create agent and model
     try:
         logger.info("Creating agent graph with provider=%s, model=%s",
                    settings.model.provider, settings.model.name)
         graph = create_agent_graph(settings, checkpointer=session_manager.checkpointer)
+        # Create model for compaction (without tools)
+        compaction_model = create_model(settings)
         logger.info("Agent graph created successfully")
     except ValueError as e:
         logger.error("Failed to create agent: %s", e)
@@ -315,11 +318,24 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
             user_msg = HumanMessage(content=user_input)
             conversation_messages.append(user_msg)
 
-            # Prepare state
-            state = {
-                "messages": [user_msg],
-                "working_directory": working_dir,
-            }
+            # Prepare state - include full context if we've compacted
+            # (compacted messages include summary + recent messages)
+            has_summary = any(
+                isinstance(m, SystemMessage) and "[CONVERSATION SUMMARY" in str(m.content)
+                for m in conversation_messages
+            )
+            if has_summary:
+                # Include all messages (summary + recent + new)
+                state = {
+                    "messages": conversation_messages,
+                    "working_directory": working_dir,
+                }
+            else:
+                # Normal flow - just the new message (checkpointer handles history)
+                state = {
+                    "messages": [user_msg],
+                    "working_directory": working_dir,
+                }
 
             # Run agent
             logger.info("Processing user message: %s", user_input[:100] + "..." if len(user_input) > 100 else user_input)
@@ -334,19 +350,20 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
 
                 # Track tokens
                 if result.input_tokens > 0 or result.output_tokens > 0:
-                    usage = token_tracker.add_turn(
+                    token_tracker.add_turn(
                         result.input_tokens,
                         result.output_tokens,
                         result.cache_read_tokens,
                         result.cache_creation_tokens,
                     )
-                    console.print_token_usage(
-                        result.input_tokens,
-                        result.output_tokens,
-                        token_tracker.context_used_percent,
-                        result.cache_read_tokens,
-                        result.cache_creation_tokens,
-                    )
+                    if settings.output.show_token_usage:
+                        console.print_token_usage(
+                            result.input_tokens,
+                            result.output_tokens,
+                            token_tracker.context_used_percent,
+                            result.cache_read_tokens,
+                            result.cache_creation_tokens,
+                        )
 
                 # Track AI response
                 if result.response:
@@ -354,6 +371,31 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
                     conversation_messages.append(AIMessage(content=result.response))
                     # Auto-save after each exchange
                     session_manager.save_conversation_snapshot(conversation_messages)
+
+                # Check if context compaction is needed
+                if should_compact(token_tracker.context_used_percent):
+                    logger.info("Context compaction triggered at %.1f%% usage",
+                               token_tracker.context_used_percent)
+                    compacted_messages, was_compacted = compact_context_sync(
+                        conversation_messages,
+                        compaction_model,
+                        token_tracker.context_used_percent,
+                        console,
+                    )
+                    if was_compacted:
+                        conversation_messages = compacted_messages
+                        # Start a new session/thread with compacted context
+                        session_manager.new_session()
+                        # Reset token tracker since we've compacted
+                        # Estimate new context usage (rough approximation)
+                        estimated_tokens = sum(
+                            len(m.content) // 4 if isinstance(m.content, str) else 100
+                            for m in conversation_messages
+                        )
+                        token_tracker = SessionTokenTracker(model_name=settings.model.name)
+                        token_tracker.total_tokens = estimated_tokens
+                        token_tracker.total_input = estimated_tokens
+                        logger.info("Context compacted, new session started, estimated tokens: %d", estimated_tokens)
 
                 logger.debug("Agent response completed successfully")
             except Exception as e:
@@ -414,13 +456,14 @@ def run_single_prompt(prompt: str, console: Console, settings: Settings) -> None
                 result.cache_read_tokens,
                 result.cache_creation_tokens,
             )
-            console.print_token_usage(
-                result.input_tokens,
-                result.output_tokens,
-                token_tracker.context_used_percent,
-                result.cache_read_tokens,
-                result.cache_creation_tokens,
-            )
+            if settings.output.show_token_usage:
+                console.print_token_usage(
+                    result.input_tokens,
+                    result.output_tokens,
+                    token_tracker.context_used_percent,
+                    result.cache_read_tokens,
+                    result.cache_creation_tokens,
+                )
     except Exception as e:
         console.print_error(f"Agent error: {e}")
         sys.exit(1)

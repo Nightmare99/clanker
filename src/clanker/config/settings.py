@@ -63,6 +63,16 @@ class OutputSettings(BaseModel):
     syntax_highlighting: bool = True
     show_tool_calls: bool = True
     stream_responses: bool = True
+    show_token_usage: bool = True
+
+
+class ContextSettings(BaseModel):
+    """Context management configuration."""
+
+    # Auto-compact when context usage exceeds this percentage
+    compaction_threshold: float = Field(default=95.0, ge=50.0, le=99.0)
+    # Number of recent conversation turns to keep after compaction
+    keep_recent_turns: int = Field(default=4, ge=1, le=20)
 
 
 class MemorySettings(BaseModel):
@@ -136,6 +146,7 @@ class Settings(BaseSettings):
     safety: SafetySettings = Field(default_factory=SafetySettings)
     output: OutputSettings = Field(default_factory=OutputSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
+    context: ContextSettings = Field(default_factory=ContextSettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
 
@@ -240,6 +251,12 @@ output:
   syntax_highlighting: true
   show_tool_calls: true
   stream_responses: true
+  show_token_usage: true  # Show token count and context remaining after each response
+
+# Context window management
+context:
+  compaction_threshold: 95.0  # Auto-compact when context usage exceeds this % (50-99)
+  keep_recent_turns: 4  # Keep last N conversation turns after compaction
 
 memory:
   persist_sessions: true
