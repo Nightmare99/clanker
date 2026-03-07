@@ -1,13 +1,52 @@
 """Console output management using Rich."""
 
+import random
+from contextlib import contextmanager
+
 from rich.console import Console as RichConsole
 from rich.panel import Panel
+from rich.spinner import Spinner
 from rich.syntax import Syntax
 from rich.text import Text
 from rich.markup import escape
 from rich.theme import Theme
+from rich.live import Live
 
 from clanker.config import get_settings
+
+# Clanker-themed loading messages
+LOADING_MESSAGES = [
+    "Warming up the vacuum tubes...",
+    "Consulting the ancient algorithms...",
+    "Spinning up the cogitators...",
+    "Calibrating neural pathways...",
+    "Rerouting through the mainframe...",
+    "Engaging thought processors...",
+    "Defragmenting the brain cores...",
+    "Channeling the machine spirits...",
+    "Overclocking the logic gates...",
+    "Parsing the infinite datastream...",
+    "Buffering consciousness...",
+    "Aligning the servo motors...",
+    "Charging the capacitors...",
+    "Igniting the inference engine...",
+    "Synchronizing neural networks...",
+    "Booting secondary processors...",
+    "Greasing the gears of thought...",
+    "Untangling the wire spaghetti...",
+    "Polishing the chrome neurons...",
+    "Waking the dormant subroutines...",
+    "Tuning the harmonic resonators...",
+    "Compiling a witty response...",
+    "Consulting the oracle circuits...",
+    "Decrypting the cosmic noise...",
+    "Assembling coherent thoughts...",
+    "Running diagnostic protocols...",
+    "Amplifying the signal...",
+    "Traversing the decision tree...",
+    "Recalibrating output filters...",
+    "Synthesizing a response matrix...",
+]
 
 # Custom theme for Clanker
 CLANKER_THEME = Theme({
@@ -355,6 +394,27 @@ Commands:
     def rule(self, title: str = "") -> None:
         """Print a horizontal rule."""
         self._console.rule(title)
+
+    def get_loading_message(self) -> str:
+        """Get a random Clanker-themed loading message."""
+        return random.choice(LOADING_MESSAGES)
+
+    @contextmanager
+    def loading_spinner(self, message: str | None = None):
+        """Show a loading spinner with a Clanker-themed message.
+
+        Args:
+            message: Optional custom message. If None, uses a random themed message.
+
+        Yields:
+            The Live display object for manual control if needed.
+        """
+        if message is None:
+            message = self.get_loading_message()
+
+        spinner = Spinner("dots", text=Text(f" {message}", style="cyan"))
+        with Live(spinner, console=self._console, refresh_per_second=10, transient=True) as live:
+            yield live
 
     def print_token_usage(
         self,

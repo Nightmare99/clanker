@@ -90,15 +90,40 @@ class VectorMemoryStore:
     def _ensure_embedder(self):
         """Ensure the sentence transformer model is loaded."""
         if self._embedder is None:
+            import os
+            import sys
             from sentence_transformers import SentenceTransformer
-            # Use a small, fast model that runs locally
-            self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
+
+            # Suppress model loading output at file descriptor level
+            # (catches tqdm progress bars that write directly to fd)
+            try:
+                stdout_fd = sys.stdout.fileno()
+                stderr_fd = sys.stderr.fileno()
+                saved_stdout = os.dup(stdout_fd)
+                saved_stderr = os.dup(stderr_fd)
+
+                devnull = os.open(os.devnull, os.O_WRONLY)
+                os.dup2(devnull, stdout_fd)
+                os.dup2(devnull, stderr_fd)
+                os.close(devnull)
+
+                try:
+                    self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
+                finally:
+                    os.dup2(saved_stdout, stdout_fd)
+                    os.dup2(saved_stderr, stderr_fd)
+                    os.close(saved_stdout)
+                    os.close(saved_stderr)
+            except (OSError, ValueError):
+                # If we can't redirect (e.g., no real stdout), just load normally
+                self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
+
         return self._embedder
 
     def _embed(self, texts: list[str]) -> np.ndarray:
         """Generate embeddings for texts."""
         embedder = self._ensure_embedder()
-        return embedder.encode(texts, convert_to_numpy=True)
+        return embedder.encode(texts, convert_to_numpy=True, show_progress_bar=False)
 
     def _load(self) -> None:
         """Load memories and index from disk."""

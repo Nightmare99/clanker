@@ -67,6 +67,10 @@ def stream_agent_response_sync(
     import asyncio
 
     async def _stream_async() -> StreamResult:
+        from rich.live import Live
+        from rich.spinner import Spinner
+        from rich.text import Text
+
         from clanker.agent import create_agent_graph_async
 
         # Create graph inside async context so MCP client is in same event loop
@@ -79,12 +83,32 @@ def stream_agent_response_sync(
         thinking_shown = False
         rich_console = console._console
 
+        # Loading state
+        loading_live: Live | None = None
+        first_content_received = False
+
         # Token tracking
         total_input_tokens = 0
         total_output_tokens = 0
         cache_read_tokens = 0
         cache_creation_tokens = 0
         model_name = ""
+
+        def start_loading():
+            """Start the loading spinner."""
+            nonlocal loading_live
+            if loading_live is None:
+                message = console.get_loading_message()
+                spinner = Spinner("dots", text=Text(f" {message}", style="cyan"))
+                loading_live = Live(spinner, console=rich_console, refresh_per_second=10, transient=True)
+                loading_live.start()
+
+        def stop_loading():
+            """Stop the loading spinner."""
+            nonlocal loading_live
+            if loading_live is not None:
+                loading_live.stop()
+                loading_live = None
 
         def show_tool(tool_name: str, tool_input: dict):
             """Display a single tool call with details."""
@@ -115,6 +139,9 @@ def stream_agent_response_sync(
             pending_tools = []
 
         try:
+            # Start loading spinner
+            start_loading()
+
             with _suppress_subprocess_stderr():
                 async for event in graph.astream_events(
                     state, config=config, version="v2"
@@ -122,18 +149,22 @@ def stream_agent_response_sync(
                     event_type = event.get("event", "")
 
                     # Collect tool calls
-                    if event_type == "on_tool_start" and settings.output.show_tool_calls:
-                        run_id = event.get("run_id", "")
-                        if run_id and run_id not in shown_tool_calls:
-                            shown_tool_calls.add(run_id)
-                            tool_name = event.get("name", "unknown")
-                            tool_input = event.get("data", {}).get("input", {})
-                            pending_tools.append((tool_name, tool_input))
+                    if event_type == "on_tool_start":
+                        stop_loading()  # Stop loading when tools start
+                        if settings.output.show_tool_calls:
+                            run_id = event.get("run_id", "")
+                            if run_id and run_id not in shown_tool_calls:
+                                shown_tool_calls.add(run_id)
+                                tool_name = event.get("name", "unknown")
+                                tool_input = event.get("data", {}).get("input", {})
+                                pending_tools.append((tool_name, tool_input))
 
                     # Flush tools when execution completes
                     elif event_type == "on_tool_end":
                         if pending_tools:
                             flush_pending_tools()
+                        # Restart loading while waiting for next model response
+                        start_loading()
 
                     # New model run - reset for final response only
                     elif event_type == "on_chat_model_start":
@@ -144,6 +175,7 @@ def stream_agent_response_sync(
                             current_response = ""
                             current_thinking = ""
                             thinking_shown = False
+                            first_content_received = False
                             current_model_run = run_id
 
                     # Stream text from LLM
@@ -151,6 +183,11 @@ def stream_agent_response_sync(
                         chunk = event.get("data", {}).get("chunk")
                         if chunk:
                             content = getattr(chunk, "content", None)
+
+                            # Stop loading on first content
+                            if content and not first_content_received:
+                                stop_loading()
+                                first_content_received = True
 
                             # Handle Anthropic list content (with thinking blocks)
                             if isinstance(content, list):
@@ -211,7 +248,7 @@ def stream_agent_response_sync(
                                     total_output_tokens += usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
 
         finally:
-            pass
+            stop_loading()  # Ensure loading spinner is stopped
 
         # Print final response as plain text
         if current_response.strip():
