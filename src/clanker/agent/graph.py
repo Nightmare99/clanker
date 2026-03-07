@@ -14,7 +14,7 @@ from clanker.agent.prompts import get_system_prompt
 from clanker.agent.state import AgentState
 from clanker.config import Settings, get_settings
 from clanker.logging import get_logger
-from clanker.mcp import load_mcp_tools
+from clanker.mcp import load_mcp_tools, load_mcp_tools_async
 from clanker.tools import ALL_TOOLS
 
 # Module logger
@@ -275,6 +275,75 @@ def create_agent_graph(
 
     # Compile with optional checkpointer
     return workflow.compile(checkpointer=checkpointer)
+
+
+async def create_agent_graph_async(
+    settings: Settings | None = None,
+    checkpointer: BaseCheckpointSaver | None = None,
+):
+    """Create the agent graph with async MCP tool loading.
+
+    This version properly loads MCP tools in the async context, ensuring
+    the MCP client is created in the same event loop where tools will be invoked.
+
+    Args:
+        settings: Optional settings override.
+        checkpointer: Optional checkpointer for persistence.
+
+    Returns:
+        Tuple of (compiled_graph, mcp_client). Keep mcp_client alive while using graph.
+    """
+    settings = settings or get_settings()
+
+    # Get built-in tools
+    tools = list(ALL_TOOLS)
+    logger.debug("Loaded %d built-in tools", len(tools))
+
+    # Load MCP tools asynchronously
+    mcp_client = None
+    if settings.mcp.enabled:
+        try:
+            mcp_client, mcp_tools = await load_mcp_tools_async(settings)
+            tools.extend(mcp_tools)
+            logger.info("Loaded %d MCP tools", len(mcp_tools))
+        except Exception as e:
+            logger.warning("Failed to load MCP tools: %s", e)
+
+    logger.debug("Total tools available: %d", len(tools))
+
+    # Create model and bind tools
+    model = create_model(settings)
+    model_with_tools = model.bind_tools(tools)
+
+    # Create tool node
+    tool_node = ToolNode(tools)
+
+    # Build the graph
+    workflow = StateGraph(AgentState)
+
+    # Add nodes
+    workflow.add_node("agent", lambda state: _agent_node(state, model_with_tools))
+    workflow.add_node("tools", tool_node)
+
+    # Set entry point
+    workflow.set_entry_point("agent")
+
+    # Add conditional edges
+    workflow.add_conditional_edges(
+        "agent",
+        _should_continue,
+        {
+            "tools": "tools",
+            "end": END,
+        },
+    )
+
+    # Tools always go back to agent
+    workflow.add_edge("tools", "agent")
+
+    # Compile with optional checkpointer
+    compiled = workflow.compile(checkpointer=checkpointer)
+    return compiled, mcp_client
 
 
 def create_simple_agent(

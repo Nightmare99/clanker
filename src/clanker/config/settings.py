@@ -188,6 +188,18 @@ class Settings(BaseSettings):
             exclude_none=True,
         )
 
+        # Convert Path objects to strings for YAML serialization
+        def convert_paths(obj):
+            if isinstance(obj, dict):
+                return {k: convert_paths(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_paths(v) for v in obj]
+            elif isinstance(obj, Path):
+                return str(obj)
+            return obj
+
+        data = convert_paths(data)
+
         with open(path, "w") as f:
             yaml.safe_dump(data, f, default_flow_style=False)
 

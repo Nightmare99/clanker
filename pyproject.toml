@@ -23,6 +23,8 @@ classifiers = [
     "Topic :: Software Development",
 ]
 dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn>=0.27.0",
     "langchain>=0.3.0",
     "langgraph>=0.2.0",
     "langgraph-checkpoint-sqlite>=2.0.0",
@@ -38,7 +40,6 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0.0",
-    "nest-asyncio>=1.6.0",
 ]
 
 [project.optional-dependencies]

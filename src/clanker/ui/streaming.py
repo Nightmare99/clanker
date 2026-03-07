@@ -5,7 +5,7 @@ import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from clanker.config import get_settings
+from clanker.config import Settings
 
 
 @dataclass
@@ -42,14 +42,21 @@ def _suppress_subprocess_stderr():
         os.close(saved_stderr_fd)
 
 
-def stream_agent_response_sync(graph, state: dict, config: dict, console) -> StreamResult:
+def stream_agent_response_sync(
+    settings: Settings,
+    checkpointer,
+    state: dict,
+    config: dict,
+    console,
+) -> StreamResult:
     """Synchronous wrapper for async stream_agent_response.
 
-    Uses asyncio to execute the async streaming function.
-    This ensures MCP tools (which are async-only) work correctly.
+    Creates the agent graph inside the async context to ensure MCP tools
+    are created in the same event loop where they'll be invoked.
 
     Args:
-        graph: The compiled LangGraph agent.
+        settings: Application settings.
+        checkpointer: Checkpointer for persistence.
         state: Initial state for the agent.
         config: Configuration dict with thread_id.
         console: Console instance for output.
@@ -58,13 +65,12 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> Str
         StreamResult with response text and token usage.
     """
     import asyncio
-    import nest_asyncio
-
-    # Allow nested event loops (needed when called from sync context with existing loop)
-    nest_asyncio.apply()
 
     async def _stream_async() -> StreamResult:
-        settings = get_settings()
+        from clanker.agent import create_agent_graph_async
+
+        # Create graph inside async context so MCP client is in same event loop
+        graph, mcp_client = await create_agent_graph_async(settings, checkpointer)
         current_response = ""  # Buffer for current model run
         current_thinking = ""  # Buffer for thinking content
         shown_tool_calls: set[str] = set()

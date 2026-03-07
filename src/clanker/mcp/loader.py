@@ -1,9 +1,8 @@
 """MCP server loader and manager."""
 
-import asyncio
 import os
 import sys
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import contextmanager
 from typing import Any
 
 from langchain_core.tools import BaseTool
@@ -16,148 +15,121 @@ logger = get_logger("mcp")
 
 
 @contextmanager
-def _suppress_stderr():
-    """Temporarily suppress stderr output (from MCP server subprocesses).
+def _suppress_stdio():
+    """Suppress stdout/stderr from subprocesses (like MCP servers) at fd level."""
+    try:
+        # Save original file descriptors
+        stdout_fd = sys.stdout.fileno()
+        stderr_fd = sys.stderr.fileno()
+        saved_stdout = os.dup(stdout_fd)
+        saved_stderr = os.dup(stderr_fd)
 
-    This redirects at the file descriptor level to catch subprocess output.
+        # Redirect to /dev/null
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, stdout_fd)
+        os.dup2(devnull, stderr_fd)
+        os.close(devnull)
+
+        yield
+    except (OSError, ValueError):
+        # If we can't redirect (e.g., no real stdout/stderr), just continue
+        yield
+    else:
+        # Restore original file descriptors
+        os.dup2(saved_stdout, stdout_fd)
+        os.dup2(saved_stderr, stderr_fd)
+        os.close(saved_stdout)
+        os.close(saved_stderr)
+
+
+def build_mcp_server_configs(settings: Settings | None = None) -> dict[str, dict[str, Any]]:
+    """Build MCP server configuration dict for MultiServerMCPClient.
+
+    Args:
+        settings: Optional settings override.
+
+    Returns:
+        Dict of server configs compatible with MultiServerMCPClient.
     """
-    # Save the original stderr file descriptor
-    original_stderr_fd = sys.stderr.fileno()
-    saved_stderr_fd = os.dup(original_stderr_fd)
+    settings = settings or get_settings()
+
+    if not settings.mcp.enabled:
+        return {}
+
+    configs = {}
+    for name, server in settings.mcp.servers.items():
+        if not server.enabled:
+            continue
+
+        if server.transport == "stdio":
+            if not server.command:
+                continue
+            config: dict[str, Any] = {
+                "transport": "stdio",
+                "command": server.command,
+                "args": server.args,
+            }
+            if server.env:
+                config["env"] = server.env
+        elif server.transport == "sse":
+            if not server.url:
+                continue
+            config = {
+                "transport": "sse",
+                "url": server.url,
+            }
+        else:
+            continue
+
+        configs[name] = config
+        logger.debug("Configured MCP server: %s (%s)", name, server.transport)
+
+    return configs
+
+
+async def load_mcp_tools_async(settings: Settings | None = None) -> tuple[Any, list[BaseTool]]:
+    """Load MCP tools asynchronously.
+
+    This returns both the client (which must stay alive) and the tools.
+
+    Args:
+        settings: Optional settings override.
+
+    Returns:
+        Tuple of (client, tools). Client must be kept alive for tools to work.
+    """
+    configs = build_mcp_server_configs(settings)
+
+    if not configs:
+        return None, []
 
     try:
-        # Open devnull and redirect stderr to it
-        devnull = os.open(os.devnull, os.O_WRONLY)
-        os.dup2(devnull, original_stderr_fd)
-        os.close(devnull)
-        yield
-    finally:
-        # Restore original stderr
-        os.dup2(saved_stderr_fd, original_stderr_fd)
-        os.close(saved_stderr_fd)
+        from langchain_mcp_adapters.client import MultiServerMCPClient
+
+        # Suppress MCP server startup messages
+        with _suppress_stdio():
+            client = MultiServerMCPClient(configs)
+            tools = await client.get_tools()
+
+        logger.info("Loaded %d MCP tools from %d servers", len(tools), len(configs))
+        return client, tools
+
+    except ImportError:
+        raise ImportError(
+            "langchain-mcp-adapters is required for MCP support. "
+            "Install it with: pip install langchain-mcp-adapters"
+        )
+    except Exception as e:
+        logger.warning("Failed to load MCP tools: %s", e)
+        return None, []
 
 
-class MCPManager:
-    """Manage MCP server connections and tools."""
-
-    def __init__(self, settings: Settings | None = None):
-        """Initialize the MCP manager.
-
-        Args:
-            settings: Optional settings override.
-        """
-        self._settings = settings or get_settings()
-        self._client = None
-        self._tools: list[BaseTool] = []
-        self._server_names: dict[str, str] = {}  # tool_name -> server_name mapping
-
-    @property
-    def is_enabled(self) -> bool:
-        """Check if MCP is enabled and has servers configured."""
-        mcp = self._settings.mcp
-        if not mcp.enabled:
-            return False
-        return any(s.enabled for s in mcp.servers.values())
-
-    def _build_server_configs(self) -> dict[str, dict[str, Any]]:
-        """Build server configuration dict for MultiServerMCPClient."""
-        configs = {}
-        for name, server in self._settings.mcp.servers.items():
-            if not server.enabled:
-                continue
-
-            if server.transport == "stdio":
-                if not server.command:
-                    continue
-                config = {
-                    "transport": "stdio",
-                    "command": server.command,
-                    "args": server.args,
-                }
-                if server.env:
-                    config["env"] = server.env
-            elif server.transport == "sse":
-                if not server.url:
-                    continue
-                config = {
-                    "transport": "sse",
-                    "url": server.url,
-                }
-            else:
-                continue
-
-            configs[name] = config
-
-        return configs
-
-    async def load_tools(self) -> list[BaseTool]:
-        """Load tools from all configured MCP servers.
-
-        Returns:
-            List of tools from MCP servers.
-        """
-        if not self.is_enabled:
-            return []
-
-        configs = self._build_server_configs()
-        if not configs:
-            return []
-
-        try:
-            from langchain_mcp_adapters.client import MultiServerMCPClient
-
-            self._client = MultiServerMCPClient(configs)
-            self._tools = await self._client.get_tools()
-
-            # Map tool names to server names for display
-            for tool in self._tools:
-                # Try to extract server name from tool name (format: server__tool)
-                tool_name = tool.name
-                for server_name in configs:
-                    if tool_name.startswith(f"{server_name}__") or server_name in tool_name:
-                        self._server_names[tool_name] = server_name
-                        break
-                else:
-                    # If no match, use first server or "mcp"
-                    self._server_names[tool_name] = list(configs.keys())[0] if configs else "mcp"
-
-            return self._tools
-
-        except ImportError:
-            raise ImportError(
-                "langchain-mcp-adapters is required for MCP support. "
-                "Install it with: pip install langchain-mcp-adapters"
-            )
-        except Exception as e:
-            # Log but don't crash if MCP fails to load
-            raise RuntimeError(f"Failed to load MCP tools: {e}") from e
-
-    def get_server_name(self, tool_name: str) -> str:
-        """Get the server name for a tool.
-
-        Args:
-            tool_name: Name of the tool.
-
-        Returns:
-            Name of the server providing the tool.
-        """
-        return self._server_names.get(tool_name, "mcp")
-
-    @property
-    def tools(self) -> list[BaseTool]:
-        """Get loaded MCP tools."""
-        return self._tools
-
-    async def close(self) -> None:
-        """Close MCP client connections."""
-        # The client handles cleanup automatically
-        self._client = None
-        self._tools = []
-        self._server_names = {}
-
-
+# For backward compatibility - synchronous wrapper
 def load_mcp_tools(settings: Settings | None = None) -> list[BaseTool]:
     """Synchronous wrapper to load MCP tools.
+
+    Note: This is provided for backward compatibility but the async version
+    is preferred as it properly manages the MCP client lifecycle.
 
     Args:
         settings: Optional settings override.
@@ -165,32 +137,41 @@ def load_mcp_tools(settings: Settings | None = None) -> list[BaseTool]:
     Returns:
         List of tools from MCP servers.
     """
-    import nest_asyncio
+    import asyncio
 
-    # Allow nested event loops
-    nest_asyncio.apply()
-
-    manager = MCPManager(settings)
-    if not manager.is_enabled:
+    configs = build_mcp_server_configs(settings)
+    if not configs:
         return []
+
+    async def _load():
+        from langchain_mcp_adapters.client import MultiServerMCPClient
+
+        # Suppress MCP server startup messages
+        with _suppress_stdio():
+            client = MultiServerMCPClient(configs)
+            tools = await client.get_tools()
+
+        # Store client reference on tools to keep it alive
+        for tool in tools:
+            tool._mcp_client = client  # type: ignore
+        return tools
 
     try:
-        # Suppress stderr from MCP server subprocesses (startup messages, warnings)
-        with _suppress_stderr():
-            return asyncio.run(manager.load_tools())
+        # Run in a fresh event loop in a separate thread to avoid anyio conflicts
+        import concurrent.futures
+
+        def run_in_thread():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(_load())
+            finally:
+                loop.close()
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(run_in_thread)
+            return future.result(timeout=60)
+
     except Exception as e:
-        # Log the error but don't break the app
         logger.warning("Failed to load MCP tools: %s", e)
         return []
-
-
-def get_mcp_manager(settings: Settings | None = None) -> MCPManager:
-    """Get an MCP manager instance.
-
-    Args:
-        settings: Optional settings override.
-
-    Returns:
-        MCPManager instance.
-    """
-    return MCPManager(settings)

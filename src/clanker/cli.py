@@ -15,7 +15,7 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.completion import Completer, Completion
 
 from clanker import __version__
-from clanker.agent import create_agent_graph, create_model
+from clanker.agent import create_model
 from clanker.config import CONFIG_PATH, Settings, get_settings, reload_settings
 from clanker.config.setup_wizard import run_setup_wizard
 from clanker.logging import get_logger, setup_logging
@@ -243,16 +243,15 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
 
     logger.debug("Session manager initialized: session_id=%s", session_manager.session_id)
 
-    # Create agent and model
+    # Validate model configuration
     try:
-        logger.info("Creating agent graph with provider=%s, model=%s",
+        logger.info("Validating model config: provider=%s, model=%s",
                    settings.model.provider, settings.model.name)
-        graph = create_agent_graph(settings, checkpointer=session_manager.checkpointer)
-        # Create model for compaction (without tools)
+        # Create model for compaction (without tools) - also validates API key
         compaction_model = create_model(settings)
-        logger.info("Agent graph created successfully")
+        logger.info("Model configuration validated successfully")
     except ValueError as e:
-        logger.error("Failed to create agent: %s", e)
+        logger.error("Failed to validate model config: %s", e)
         console.print_error(str(e))
         console.print_info("Please set your API key in the environment or config file.")
         sys.exit(1)
@@ -342,7 +341,8 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
             console.rule()
             try:
                 result = stream_agent_response_sync(
-                    graph,
+                    settings,
+                    session_manager.checkpointer,
                     state,
                     session_manager.get_config(),
                     console,
@@ -426,8 +426,9 @@ def run_single_prompt(prompt: str, console: Console, settings: Settings) -> None
     """
     session_manager = SessionManager()
 
+    # Validate model configuration
     try:
-        graph = create_agent_graph(settings, checkpointer=session_manager.checkpointer)
+        create_model(settings)
     except ValueError as e:
         console.print_error(str(e))
         sys.exit(1)
@@ -442,7 +443,8 @@ def run_single_prompt(prompt: str, console: Console, settings: Settings) -> None
 
     try:
         result = stream_agent_response_sync(
-            graph,
+            settings,
+            session_manager.checkpointer,
             state,
             session_manager.get_config(),
             console,
@@ -469,7 +471,24 @@ def run_single_prompt(prompt: str, console: Console, settings: Settings) -> None
         sys.exit(1)
 
 
-@click.command()
+class ClankerGroup(click.Group):
+    """Custom group that handles prompt argument alongside subcommands."""
+
+    def invoke(self, ctx: click.Context):
+        """Invoke, handling the case where prompt matches a subcommand."""
+        # If prompt is a subcommand name, invoke that subcommand instead
+        prompt = ctx.params.get("prompt")
+        if prompt and prompt in self.commands:
+            # Clear the prompt and invoke the subcommand
+            ctx.params["prompt"] = None
+            ctx.invoked_subcommand = prompt
+            with ctx:
+                cmd = self.commands[prompt]
+                return ctx.invoke(cmd)
+        return super().invoke(ctx)
+
+
+@click.group(cls=ClankerGroup, invoke_without_command=True)
 @click.argument("prompt", required=False)
 @click.option(
     "--model",
@@ -506,7 +525,9 @@ def run_single_prompt(prompt: str, console: Console, settings: Settings) -> None
     is_flag=True,
     help="Show version and exit",
 )
+@click.pass_context
 def main(
+    ctx: click.Context,
     prompt: str | None,
     model: str | None,
     provider: str | None,
@@ -527,10 +548,16 @@ def main(
 
         clanker -m gpt-4o           Use a specific model
 
+        clanker config              Open web-based configuration
+
         clanker --history           List past conversations
 
         clanker -r abc123           Resume conversation abc123
     """
+    # If a subcommand is invoked, don't run the default behavior
+    if ctx.invoked_subcommand is not None:
+        return
+
     if version:
         click.echo(f"Clanker v{__version__}")
         return
@@ -602,6 +629,37 @@ def main(
         run_single_prompt(prompt, console, settings)
     else:
         run_interactive(console, settings, resume_session=resume)
+
+
+@main.command()
+@click.option(
+    "--port",
+    "-p",
+    default=8765,
+    help="Port to run the config server on",
+)
+@click.option(
+    "--no-browser",
+    is_flag=True,
+    help="Don't open browser automatically",
+)
+def config(port: int, no_browser: bool) -> None:
+    """Open web-based configuration interface.
+
+    Starts a local web server and opens your browser to configure Clanker
+    settings through a user-friendly interface.
+
+    Examples:
+
+        clanker config              Open config in browser
+
+        clanker config --port 9000  Use custom port
+
+        clanker config --no-browser Start server without opening browser
+    """
+    from clanker.config.web import run_config_server
+
+    run_config_server(port=port, open_browser=not no_browser)
 
 
 if __name__ == "__main__":

@@ -181,9 +181,6 @@ def compact_context_sync(
         Tuple of (compacted_messages, was_compacted).
     """
     import asyncio
-    import nest_asyncio
-
-    nest_asyncio.apply()
 
     return asyncio.run(compact_context_async(
         messages, model, context_used_percent, console
