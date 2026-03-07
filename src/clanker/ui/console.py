@@ -301,8 +301,9 @@ class Console:
 [dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]
 
 Commands:
-  [dim]/help[/dim]    Show help        [dim]/clear[/dim]   Clear history
-  [dim]/logs[/dim]    View logs        [dim]/exit[/dim]    Power down
+  [dim]/help[/dim]     Show help        [dim]/clear[/dim]    Clear history
+  [dim]/history[/dim]  Past sessions    [dim]/memories[/dim] View memories
+  [dim]/exit[/dim]     Power down
 
 [bold green]>[/bold green] State your objective, human. [bold cyan]*CLANK*[/bold cyan]
 
@@ -315,24 +316,33 @@ Commands:
 [bold cyan]*WHIRR*[/bold cyan] [bold]CLANKER HELP SUBSYSTEM[/bold]
 
 [bold]System Commands:[/bold]
-  /help     Display this help matrix
-  /clear    Wipe conversation memory banks
-  /model    Query current AI model status
-  /config   Display configuration parameters
-  /mcp      Show MCP server connections
-  /logs     Access diagnostic log files
-  /exit     Initiate shutdown sequence
+  /help       Display this help matrix
+  /clear      Wipe conversation memory banks
+  /model      Query current AI model status
+  /config     Display configuration parameters
+  /mcp        Show MCP server connections
+  /logs       Access diagnostic log files
+  /exit       Initiate shutdown sequence
+
+[bold]History & Memory:[/bold]
+  /history    List past conversations
+  /restore    Resume a previous session (usage: /restore <id>)
+  /memories   Show stored workspace memories
+  /remember   Store a memory (usage: /remember <text>)
+  /forget     Delete a memory (usage: /forget <id>)
 
 [bold]Operational Capabilities:[/bold]
   • File operations: read, write, edit, append
   • Codebase search: glob patterns, regex content search
   • Command execution: bash shell access
+  • Memory: remember context across conversations
   • MCP tools: extended capabilities via [server] prefix
 
 [bold]Pro Tips:[/bold]
   • Be direct. State objectives clearly.
   • I act first, explain after. No hesitation.
-  • Complex tasks? Chain commands. I'll handle it.
+  • Ask me to remember project preferences.
+  • Use /restore to continue past conversations.
 
 [dim]*CLANK* Systems ready for input. *BZZZT*[/dim]
 """

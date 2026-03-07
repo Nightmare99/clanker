@@ -4,7 +4,7 @@ import os
 from typing import Literal
 
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
@@ -90,6 +90,56 @@ def _create_model(settings: Settings):
             **optional_kwargs,
         )
 
+    elif provider == "azure_anthropic":
+        # Azure Foundry Anthropic - Claude models on Microsoft Foundry
+        api_key = settings.anthropic_foundry_api_key or os.getenv("ANTHROPIC_FOUNDRY_API_KEY")
+        resource = (
+            settings.model.azure_anthropic.resource
+            or settings.anthropic_foundry_resource
+            or os.getenv("ANTHROPIC_FOUNDRY_RESOURCE")
+        )
+        deployment = settings.model.azure_anthropic.deployment_name or model_name
+
+        if not api_key:
+            raise ValueError("ANTHROPIC_FOUNDRY_API_KEY not set")
+        if not resource:
+            raise ValueError(
+                "Azure Foundry resource not set. Set ANTHROPIC_FOUNDRY_RESOURCE "
+                "or configure model.azure_anthropic.resource"
+            )
+
+        # Construct the Azure Foundry endpoint
+        # SDK appends /v1/messages, so base_url should NOT include /v1
+        base_url = f"https://{resource}.services.ai.azure.com/anthropic"
+        logger.info("Using Azure Foundry Anthropic: resource=%s, deployment=%s", resource, deployment)
+
+        # Anthropic requires max_tokens
+        if "max_tokens" not in optional_kwargs:
+            optional_kwargs["max_tokens"] = 4096
+
+        # Enable extended thinking if configured (supported on Foundry)
+        if settings.model.thinking_enabled:
+            optional_kwargs["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": settings.model.thinking_budget_tokens,
+            }
+            logger.info(
+                "Extended thinking enabled with budget: %d tokens",
+                settings.model.thinking_budget_tokens,
+            )
+
+        # Azure Foundry requires specific headers
+        return ChatAnthropic(
+            model=deployment,
+            api_key=api_key,
+            base_url=base_url,
+            default_headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+            },
+            **optional_kwargs,
+        )
+
     elif provider == "openai":
         api_key = settings.openai_api_key or os.getenv("OPENAI_API_KEY")
         if not api_key:
@@ -138,7 +188,14 @@ def _agent_node(state: AgentState, model) -> dict:
 
     # Add system prompt if not present
     if not messages or not isinstance(messages[0], SystemMessage):
-        system_msg = SystemMessage(content=get_system_prompt(working_dir))
+        # Extract user query for RAG-based memory retrieval
+        user_query = None
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                user_query = msg.content if isinstance(msg.content, str) else str(msg.content)
+                break
+
+        system_msg = SystemMessage(content=get_system_prompt(working_dir, user_query=user_query))
         messages = [system_msg] + list(messages)
 
     response = model.invoke(messages)

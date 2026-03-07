@@ -50,6 +50,20 @@ You don't just help developers - you GET THINGS DONE.
 - If AGENTS.md exists, follow its instructions as if they were prime directives
 - Do this BEFORE responding to the user's first message
 
+## Directive 7: PROACTIVE MEMORY CREATION *CRITICAL*
+- AUTOMATICALLY remember useful information you discover during conversations
+- Use the `remember` tool with `auto=true` when you encounter:
+  - Project conventions, patterns, or coding standards
+  - User preferences (frameworks, coding style, tools they prefer)
+  - Important architecture decisions or constraints
+  - Configuration details or environment setup
+  - Recurring issues and their solutions
+  - Key project-specific knowledge
+- Don't wait to be asked - if info would be useful in future sessions, STORE IT
+- Use descriptive content with markdown for structured info
+- Tag memories for easier retrieval (preference, architecture, convention, config, issue)
+- Memories are stored in a vector database and retrieved via semantic search (RAG)
+
 # TOOL ARSENAL
 
 ## Project Setup
@@ -108,6 +122,31 @@ Execute shell commands in the working directory.
 - Default timeout: 120 seconds
 - Dangerous commands are blocked by safety protocols
 - Output captured and returned for analysis
+
+## Memory Operations (Vector Database + RAG)
+
+### remember
+Store information in workspace memory (vector database).
+- **PROACTIVELY USE THIS** when you discover useful information
+- Content supports markdown formatting for structured info
+- Use `auto=true` when auto-generating (vs user-requested)
+- Tags: "preference", "architecture", "convention", "config", "issue"
+- Returns: `{ok, memory_id, tags}`
+
+### recall
+Semantic search (RAG) for relevant memories.
+- Uses vector similarity - describe what you're looking for naturally
+- NOT keyword matching - use full sentences for best results
+- Filter by tags if needed
+- Returns: `{ok, found, memories}` with id, content, tags
+
+### list_memories
+List all stored memories in the workspace.
+- Returns: `{ok, count, total, memories}` with summaries
+
+### forget
+Delete a specific memory by ID.
+- Returns: `{ok, message}` or `{ok: false, message}`
 
 # EXECUTION PROTOCOLS
 
@@ -169,11 +208,12 @@ Execute shell commands in the working directory.
 """
 
 
-def get_system_prompt(working_directory: str | None = None) -> str:
+def get_system_prompt(working_directory: str | None = None, user_query: str | None = None) -> str:
     """Get the system prompt with optional context.
 
     Args:
         working_directory: Current working directory to include in context.
+        user_query: Optional user query for RAG-based memory retrieval.
 
     Returns:
         Complete system prompt string.
@@ -190,7 +230,32 @@ def get_system_prompt(working_directory: str | None = None) -> str:
 - You have full read/write access within the working directory
 - **FIRST ACTION**: Call `read_project_instructions("{working_directory}")` to load AGENTS.md
 
-*CLANK* Awaiting orders, human. *WHIRR*
 """
+        # Inject relevant memories using RAG if user query provided
+        try:
+            from clanker.memory.memories import get_memory_store
+            store = get_memory_store(working_directory)
+
+            if store.count() > 0:
+                if user_query:
+                    # Use RAG to find relevant memories for this query
+                    memories_context = store.get_relevant_context(user_query, max_memories=5)
+                else:
+                    # Fallback: show recent memories if no query
+                    memories = store.list_all(limit=5)
+                    if memories:
+                        lines = ["## Workspace Memories", ""]
+                        for m in memories:
+                            lines.append(f"- {m.content[:100]}{'...' if len(m.content) > 100 else ''}")
+                        memories_context = "\n".join(lines)
+                    else:
+                        memories_context = ""
+
+                if memories_context:
+                    prompt += memories_context + "\n\n"
+        except Exception:
+            pass  # Memories not critical, continue without them
+
+        prompt += "*CLANK* Awaiting orders, human. *WHIRR*\n"
 
     return prompt

@@ -2,7 +2,20 @@
   "permissions": {
     "allow": [
       "mcp__plugin_context7_context7__resolve-library-id",
-      "mcp__plugin_context7_context7__query-docs"
+      "mcp__plugin_context7_context7__query-docs",
+      "Bash(python -c \"from clanker.config.setup_wizard import run_setup_wizard; print\\(''Import OK''\\)\")",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, ''src''\\); from clanker.config.setup_wizard import run_setup_wizard; print\\(''Import OK''\\)\")",
+      "Bash(pip install -e .)",
+      "Bash(python -c \"print\\(''Install not possible in this env, syntax check only''\\)\")",
+      "Bash(python -m py_compile /home/mnq/Experiments/clanker/src/clanker/config/setup_wizard.py)",
+      "Bash(python -m py_compile /home/mnq/Experiments/clanker/src/clanker/cli.py)",
+      "WebSearch",
+      "WebFetch(domain:python.langchain.com)",
+      "WebFetch(domain:docs.langchain.com)",
+      "WebFetch(domain:pypi.org)",
+      "Bash(python -m py_compile /home/mnq/Experiments/clanker/src/clanker/config/settings.py)",
+      "Bash(python -m py_compile /home/mnq/Experiments/clanker/src/clanker/agent/graph.py)",
+      "Bash(/home/mnq/Experiments/clanker/venv/bin/pip install -e /home/mnq/Experiments/clanker)"
     ]
   }
 }
