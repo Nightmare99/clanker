@@ -355,3 +355,58 @@ Commands:
     def rule(self, title: str = "") -> None:
         """Print a horizontal rule."""
         self._console.rule(title)
+
+    def print_token_usage(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        context_used_percent: float,
+        cache_read: int = 0,
+        cache_creation: int = 0,
+    ) -> None:
+        """Print token usage and context remaining.
+
+        Args:
+            input_tokens: Tokens used for input.
+            output_tokens: Tokens generated in response.
+            context_used_percent: Percentage of context window used.
+            cache_read: Tokens read from cache (Anthropic).
+            cache_creation: Tokens used for cache creation (Anthropic).
+        """
+        total = input_tokens + output_tokens
+        remaining = max(0.0, 100.0 - context_used_percent)
+
+        text = Text()
+        text.append("  [", style="dim")
+        text.append(f"{total:,}", style="cyan")
+        text.append(" tokens", style="dim")
+
+        # Show breakdown
+        text.append(" (", style="dim")
+        text.append(f"in:{input_tokens:,}", style="dim green")
+        text.append(" ", style="dim")
+        text.append(f"out:{output_tokens:,}", style="dim yellow")
+
+        # Show cache info if present (Anthropic)
+        if cache_read > 0:
+            text.append(" ", style="dim")
+            text.append(f"cache:{cache_read:,}", style="dim magenta")
+
+        text.append(")", style="dim")
+
+        # Context remaining with color coding
+        text.append(" | ", style="dim")
+
+        # Color based on remaining context
+        if remaining > 50:
+            ctx_style = "green"
+        elif remaining > 20:
+            ctx_style = "yellow"
+        else:
+            ctx_style = "red"
+
+        text.append(f"{remaining:.0f}%", style=ctx_style)
+        text.append(" ctx remaining", style="dim")
+        text.append("]", style="dim")
+
+        self._console.print(text)

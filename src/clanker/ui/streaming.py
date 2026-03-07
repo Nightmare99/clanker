@@ -3,8 +3,25 @@
 import os
 import sys
 from contextlib import contextmanager
+from dataclasses import dataclass
 
 from clanker.config import get_settings
+
+
+@dataclass
+class StreamResult:
+    """Result from streaming an agent response."""
+
+    response: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    model_name: str = ""
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
 
 
 @contextmanager
@@ -25,7 +42,7 @@ def _suppress_subprocess_stderr():
         os.close(saved_stderr_fd)
 
 
-def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str:
+def stream_agent_response_sync(graph, state: dict, config: dict, console) -> StreamResult:
     """Synchronous wrapper for async stream_agent_response.
 
     Uses asyncio to execute the async streaming function.
@@ -38,7 +55,7 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str
         console: Console instance for output.
 
     Returns:
-        The complete response text.
+        StreamResult with response text and token usage.
     """
     import asyncio
     import nest_asyncio
@@ -46,7 +63,7 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str
     # Allow nested event loops (needed when called from sync context with existing loop)
     nest_asyncio.apply()
 
-    async def _stream_async() -> str:
+    async def _stream_async() -> StreamResult:
         settings = get_settings()
         current_response = ""  # Buffer for current model run
         current_thinking = ""  # Buffer for thinking content
@@ -55,6 +72,13 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str
         current_model_run: str | None = None  # Track current model run_id
         thinking_shown = False
         rich_console = console._console
+
+        # Token tracking
+        total_input_tokens = 0
+        total_output_tokens = 0
+        cache_read_tokens = 0
+        cache_creation_tokens = 0
+        model_name = ""
 
         def show_tool(tool_name: str, tool_input: dict):
             """Display a single tool call with details."""
@@ -154,6 +178,32 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str
                             elif content and isinstance(content, str):
                                 current_response += content
 
+                    # Capture token usage when model completes
+                    elif event_type == "on_chat_model_end":
+                        output = event.get("data", {}).get("output")
+                        if output:
+                            # Get model name from response
+                            if hasattr(output, "response_metadata"):
+                                meta = output.response_metadata
+                                model_name = meta.get("model", "") or meta.get("model_name", "")
+
+                            # Get usage from usage_metadata (preferred)
+                            if hasattr(output, "usage_metadata") and output.usage_metadata:
+                                usage = output.usage_metadata
+                                total_input_tokens += usage.get("input_tokens", 0)
+                                total_output_tokens += usage.get("output_tokens", 0)
+                                # Anthropic cache tokens
+                                cache_read_tokens += usage.get("cache_read_input_tokens", 0)
+                                cache_creation_tokens += usage.get("cache_creation_input_tokens", 0)
+
+                            # Fallback to response_metadata
+                            elif hasattr(output, "response_metadata"):
+                                meta = output.response_metadata
+                                usage = meta.get("usage", {})
+                                if usage:
+                                    total_input_tokens += usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
+                                    total_output_tokens += usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+
         finally:
             pass
 
@@ -165,7 +215,14 @@ def stream_agent_response_sync(graph, state: dict, config: dict, console) -> str
         if current_thinking:
             console.print_thinking(current_thinking)
 
-        return current_response
+        return StreamResult(
+            response=current_response,
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            model_name=model_name,
+        )
 
     # Run the async function
     return asyncio.run(_stream_async())

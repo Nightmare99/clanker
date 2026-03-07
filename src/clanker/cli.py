@@ -22,7 +22,8 @@ from clanker.logging import get_logger, setup_logging
 from clanker.memory.checkpointer import SessionManager
 from clanker.memory.memories import get_memory_store
 from clanker.ui.console import Console
-from clanker.ui.streaming import stream_agent_response_sync
+from clanker.ui.streaming import StreamResult, stream_agent_response_sync
+from clanker.ui.token_tracking import SessionTokenTracker
 
 # Load environment variables
 load_dotenv()
@@ -269,6 +270,9 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
     # Track messages for saving
     conversation_messages = []
 
+    # Token tracking
+    token_tracker = SessionTokenTracker(model_name=settings.model.name)
+
     while True:
         try:
             # Get user input
@@ -321,16 +325,33 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
             logger.info("Processing user message: %s", user_input[:100] + "..." if len(user_input) > 100 else user_input)
             console.rule()
             try:
-                response = stream_agent_response_sync(
+                result = stream_agent_response_sync(
                     graph,
                     state,
                     session_manager.get_config(),
                     console,
                 )
+
+                # Track tokens
+                if result.input_tokens > 0 or result.output_tokens > 0:
+                    usage = token_tracker.add_turn(
+                        result.input_tokens,
+                        result.output_tokens,
+                        result.cache_read_tokens,
+                        result.cache_creation_tokens,
+                    )
+                    console.print_token_usage(
+                        result.input_tokens,
+                        result.output_tokens,
+                        token_tracker.context_used_percent,
+                        result.cache_read_tokens,
+                        result.cache_creation_tokens,
+                    )
+
                 # Track AI response
-                if response:
+                if result.response:
                     from langchain_core.messages import AIMessage
-                    conversation_messages.append(AIMessage(content=response))
+                    conversation_messages.append(AIMessage(content=result.response))
                     # Auto-save after each exchange
                     session_manager.save_conversation_snapshot(conversation_messages)
 
@@ -369,18 +390,37 @@ def run_single_prompt(prompt: str, console: Console, settings: Settings) -> None
         console.print_error(str(e))
         sys.exit(1)
 
+    # Token tracking
+    token_tracker = SessionTokenTracker(model_name=settings.model.name)
+
     state = {
         "messages": [HumanMessage(content=prompt)],
         "working_directory": os.getcwd(),
     }
 
     try:
-        stream_agent_response_sync(
+        result = stream_agent_response_sync(
             graph,
             state,
             session_manager.get_config(),
             console,
         )
+
+        # Display token usage
+        if result.input_tokens > 0 or result.output_tokens > 0:
+            token_tracker.add_turn(
+                result.input_tokens,
+                result.output_tokens,
+                result.cache_read_tokens,
+                result.cache_creation_tokens,
+            )
+            console.print_token_usage(
+                result.input_tokens,
+                result.output_tokens,
+                token_tracker.context_used_percent,
+                result.cache_read_tokens,
+                result.cache_creation_tokens,
+            )
     except Exception as e:
         console.print_error(f"Agent error: {e}")
         sys.exit(1)
