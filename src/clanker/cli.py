@@ -393,8 +393,7 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
                             for m in conversation_messages
                         )
                         token_tracker = SessionTokenTracker(model_name=settings.model.name)
-                        token_tracker.total_tokens = estimated_tokens
-                        token_tracker.total_input = estimated_tokens
+                        token_tracker.current_context_tokens = estimated_tokens
                         logger.info("Context compacted, new session started, estimated tokens: %d", estimated_tokens)
 
                 logger.debug("Agent response completed successfully")

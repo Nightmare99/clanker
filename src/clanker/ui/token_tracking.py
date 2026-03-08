@@ -113,10 +113,12 @@ class SessionTokenTracker:
     # Per-turn tracking
     turns: list[TokenUsage] = field(default_factory=list)
 
-    # Cumulative totals
-    total_input: int = 0
+    # Current context size (last input tokens = full conversation context)
+    # Note: input_tokens from LLM includes entire conversation history
+    current_context_tokens: int = 0
+
+    # Cumulative output tokens (for cost tracking)
     total_output: int = 0
-    total_tokens: int = 0
 
     def __post_init__(self):
         if self.model_name:
@@ -127,7 +129,7 @@ class SessionTokenTracker:
         """Record token usage for a conversation turn.
 
         Args:
-            input_tokens: Tokens used for input/prompt.
+            input_tokens: Tokens used for input/prompt (includes full context).
             output_tokens: Tokens generated in response.
             cache_read: Tokens read from cache (Anthropic).
             cache_creation: Tokens used for cache creation (Anthropic).
@@ -135,9 +137,10 @@ class SessionTokenTracker:
         Returns:
             TokenUsage for this turn with cumulative stats.
         """
-        self.total_input += input_tokens
+        # input_tokens represents the FULL context sent to the model
+        # So current context = last input + last output (which becomes next input)
+        self.current_context_tokens = input_tokens + output_tokens
         self.total_output += output_tokens
-        self.total_tokens += input_tokens + output_tokens
 
         usage = TokenUsage(
             input_tokens=input_tokens,
@@ -145,9 +148,9 @@ class SessionTokenTracker:
             total_tokens=input_tokens + output_tokens,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
-            cumulative_input=self.total_input,
+            cumulative_input=input_tokens,
             cumulative_output=self.total_output,
-            cumulative_total=self.total_tokens,
+            cumulative_total=self.current_context_tokens,
             context_window=self.context_window,
         )
 
@@ -156,10 +159,14 @@ class SessionTokenTracker:
 
     @property
     def context_used_percent(self) -> float:
-        """Calculate percentage of context window used."""
+        """Calculate percentage of context window used.
+
+        Based on current context size (last turn's input + output),
+        not cumulative totals which would double-count.
+        """
         if self.context_window <= 0:
             return 0.0
-        return (self.total_tokens / self.context_window) * 100
+        return (self.current_context_tokens / self.context_window) * 100
 
     @property
     def context_remaining_percent(self) -> float:
