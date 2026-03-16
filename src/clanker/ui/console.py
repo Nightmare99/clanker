@@ -331,18 +331,29 @@ class Console:
 
     def print_welcome(self) -> None:
         """Print welcome message."""
+        from clanker.config import get_default_model
+
         agent_name = self._settings.agent.name
+
+        # Get current model info
+        current_model = get_default_model()
+        if current_model:
+            model_info = f"{current_model.name} [dim]({current_model.provider})[/dim]"
+        else:
+            model_info = f"{self._settings.model.name} [dim]({self._settings.model.provider})[/dim]"
+
         welcome = f"""
 [bold cyan]*BZZZT*[/bold cyan] [bold]{agent_name.upper()} UNIT ACTIVATED[/bold] [bold cyan]*WHIRR*[/bold cyan]
 
 [dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]
   Systems online. Circuits humming. Ready to build.
+  Model: [bold cyan]{model_info}[/bold cyan]
 [dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]
 
 Commands:
-  [dim]/help[/dim]     Show help        [dim]/clear[/dim]    Clear history
+  [dim]/model[/dim]    Switch model     [dim]/clear[/dim]    Clear history
   [dim]/history[/dim]  Past sessions    [dim]/memories[/dim] View memories
-  [dim]/exit[/dim]     Power down
+  [dim]/help[/dim]     Show help        [dim]/exit[/dim]     Power down
 
 [bold green]>[/bold green] State your objective, human. [bold cyan]*CLANK*[/bold cyan]
 
