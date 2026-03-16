@@ -26,18 +26,10 @@ class AzureAnthropicSettings(BaseModel):
     deployment_name: str | None = None
 
 
-class GithubCopilotSettings(BaseModel):
-    """GitHub Copilot specific configuration."""
-
-    # Model to use (e.g., "gpt-4o", "claude-sonnet-4", "claude-3.5-sonnet")
-    # Leave empty to use Copilot's default model
-    model: str | None = None
-
-
 class ModelSettings(BaseModel):
     """LLM model configuration."""
 
-    provider: Literal["openai", "anthropic", "azure", "azure_anthropic", "github_copilot", "ollama"] = "azure"
+    provider: Literal["openai", "anthropic", "azure", "azure_anthropic", "ollama"] = "azure"
     name: str = "gpt-4o"
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, gt=0)
@@ -54,9 +46,6 @@ class ModelSettings(BaseModel):
 
     # Azure Foundry Anthropic-specific settings
     azure_anthropic: AzureAnthropicSettings = Field(default_factory=AzureAnthropicSettings)
-
-    # GitHub Copilot-specific settings
-    github_copilot: GithubCopilotSettings = Field(default_factory=GithubCopilotSettings)
 
 
 class SafetySettings(BaseModel):
@@ -150,8 +139,6 @@ class Settings(BaseSettings):
     # Azure Foundry Anthropic credentials
     anthropic_foundry_api_key: str | None = Field(default=None, alias="ANTHROPIC_FOUNDRY_API_KEY")
     anthropic_foundry_resource: str | None = Field(default=None, alias="ANTHROPIC_FOUNDRY_RESOURCE")
-    # GitHub Copilot token (obtained via device auth flow)
-    github_token: str | None = Field(default=None, alias="GITHUB_TOKEN")
 
     # Nested settings
     agent: AgentSettings = Field(default_factory=AgentSettings)
@@ -197,7 +184,6 @@ class Settings(BaseSettings):
                 "azure_openai_endpoint",
                 "anthropic_foundry_api_key",
                 "anthropic_foundry_resource",
-                "github_token",
             },
             exclude_none=True,
         )

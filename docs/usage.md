@@ -29,18 +29,6 @@ clanker "Explain the code in src/main.py"
 clanker -p azure "Find all Python files in this project"
 ```
 
-## Authentication
-
-For providers that require OAuth authentication:
-
-```bash
-# Authenticate with GitHub Copilot
-clanker login
-
-# Remove stored token
-clanker logout
-```
-
 ## Commands
 
 Inside the interactive session:
@@ -49,8 +37,7 @@ Inside the interactive session:
 |---------|-------------|
 | `/help` | Show available commands |
 | `/clear` | Clear conversation history |
-| `/model` | Show current model or switch models |
-| `/model <provider>/<model>` | Switch to a different provider/model |
+| `/model` | Show current model |
 | `/config` | Show configuration |
 | `/mcp` | Show MCP server status |
 | `/logs` | Show logging status and log files |
@@ -60,26 +47,6 @@ Inside the interactive session:
 | `/remember <text>` | Save a memory |
 | `/forget <id>` | Delete a memory |
 | `/exit` | Exit Clanker |
-
-### Switching Models
-
-You can switch providers and models on the fly without restarting:
-
-```
-❯ /model
-Current model: azure/gpt-4o
-
-❯ /model anthropic/claude-sonnet-4-20250514
-*CLANK* Switched to anthropic/claude-sonnet-4-20250514
-
-❯ /model github_copilot/gpt-4o
-*CLANK* Switched to github_copilot/gpt-4o
-
-❯ /model github_copilot
-*CLANK* Switched to github_copilot/gpt-4o
-```
-
-Available providers: `anthropic`, `openai`, `azure`, `github_copilot`, `ollama`
 
 ## Examples
 

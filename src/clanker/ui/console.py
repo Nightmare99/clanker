@@ -340,8 +340,8 @@ class Console:
 [dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]
 
 Commands:
-  [dim]/help[/dim]     Show help        [dim]/model[/dim]    Switch model
-  [dim]/history[/dim]  Past sessions    [dim]/clear[/dim]    Clear history
+  [dim]/help[/dim]     Show help        [dim]/clear[/dim]    Clear history
+  [dim]/history[/dim]  Past sessions    [dim]/memories[/dim] View memories
   [dim]/exit[/dim]     Power down
 
 [bold green]>[/bold green] State your objective, human. [bold cyan]*CLANK*[/bold cyan]
@@ -357,7 +357,7 @@ Commands:
 [bold]System Commands:[/bold]
   /help       Display this help matrix
   /clear      Wipe conversation memory banks
-  /model      Switch model (usage: /model <provider>/<model>)
+  /model      Query current AI model status
   /config     Display configuration parameters
   /mcp        Show MCP server connections
   /logs       Access diagnostic log files

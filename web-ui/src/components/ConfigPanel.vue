@@ -51,7 +51,6 @@ interface Config {
     parallel_tool_calls: boolean
     azure: { api_version: string; deployment_name: string | null }
     azure_anthropic: { resource: string | null; deployment_name: string | null }
-    github_copilot: { model: string | null }
   }
   safety: {
     require_confirmation: boolean
@@ -96,7 +95,6 @@ interface EnvStatus {
   AZURE_OPENAI_DEPLOYMENT_NAME: boolean
   ANTHROPIC_FOUNDRY_API_KEY: boolean
   ANTHROPIC_FOUNDRY_RESOURCE: boolean
-  GITHUB_TOKEN: boolean
 }
 
 // State
@@ -123,10 +121,6 @@ const mcpForm = ref({
 })
 const testingServer = ref<string | null>(null)
 
-// Available models from providers
-const availableModels = ref<Record<string, string[]>>({})
-const loadingModels = ref(false)
-
 // Menu items
 const menuOptions: MenuOption[] = [
   { label: 'Model', key: 'model', icon: () => h(NIcon, null, { default: () => h(HardwareChipOutline) }) },
@@ -145,7 +139,6 @@ const providerOptions = [
   { label: 'OpenAI', value: 'openai' },
   { label: 'Anthropic', value: 'anthropic' },
   { label: 'Azure Anthropic (Foundry)', value: 'azure_anthropic' },
-  { label: 'GitHub Copilot', value: 'github_copilot' },
   { label: 'Ollama', value: 'ollama' },
 ]
 
@@ -164,18 +157,6 @@ const isAnthropicProvider = computed(() =>
 
 const isAzureProvider = computed(() => config.value?.model.provider === 'azure')
 const isAzureAnthropicProvider = computed(() => config.value?.model.provider === 'azure_anthropic')
-const isGithubCopilotProvider = computed(() => config.value?.model.provider === 'github_copilot')
-
-// Model options based on provider
-const modelOptions = computed(() => {
-  const provider = config.value?.model.provider
-  if (!provider) return []
-
-  const models = availableModels.value[provider] || []
-  return models.map(m => ({ label: m, value: m }))
-})
-
-const hasAvailableModels = computed(() => modelOptions.value.length > 0)
 
 // API functions
 async function fetchConfig() {
@@ -185,27 +166,11 @@ async function fetchConfig() {
     config.value = data.config
     configPath.value = data.config_path
     envStatus.value = data.env_status
-    // Also fetch available models
-    fetchAvailableModels()
   } catch (error) {
     message.error('Failed to load configuration')
     console.error(error)
   } finally {
     loading.value = false
-  }
-}
-
-async function fetchAvailableModels() {
-  loadingModels.value = true
-  try {
-    const response = await fetch('/api/models')
-    if (response.ok) {
-      availableModels.value = await response.json()
-    }
-  } catch (error) {
-    console.error('Failed to fetch models:', error)
-  } finally {
-    loadingModels.value = false
   }
 }
 
@@ -424,7 +389,7 @@ onMounted(fetchConfig)
                 />
               </NFormItem>
 
-              <NFormItem v-if="!isGithubCopilotProvider && !isAzureProvider && !isAzureAnthropicProvider" label="Model Name">
+              <NFormItem label="Model Name">
                 <NInput
                   v-model:value="config.model.name"
                   placeholder="e.g., gpt-4o, claude-sonnet-4-20250514"
@@ -492,23 +457,11 @@ onMounted(fetchConfig)
                 </NFormItem>
 
                 <NFormItem label="Deployment Name">
-                  <NSpace vertical style="width: 100%">
-                    <NSelect
-                      v-if="availableModels.azure?.length"
-                      v-model:value="config.model.azure.deployment_name"
-                      :options="availableModels.azure.map(m => ({ label: m, value: m }))"
-                      filterable
-                      tag
-                      placeholder="Select or type deployment name"
-                      @update:value="markChanged"
-                    />
-                    <NInput
-                      v-else
-                      v-model:value="config.model.azure.deployment_name"
-                      placeholder="Or set via AZURE_OPENAI_DEPLOYMENT_NAME"
-                      @update:value="markChanged"
-                    />
-                  </NSpace>
+                  <NInput
+                    v-model:value="config.model.azure.deployment_name"
+                    placeholder="Or set via AZURE_OPENAI_DEPLOYMENT_NAME"
+                    @update:value="markChanged"
+                  />
                 </NFormItem>
               </template>
 
@@ -529,38 +482,6 @@ onMounted(fetchConfig)
                     placeholder="Defaults to model name"
                     @update:value="markChanged"
                   />
-                </NFormItem>
-              </template>
-
-              <template v-if="isGithubCopilotProvider">
-                <NDivider>GitHub Copilot Settings</NDivider>
-
-                <NAlert type="info" style="margin-bottom: 16px">
-                  Authenticate with: <code>clanker login</code>
-                </NAlert>
-
-                <NFormItem label="Model">
-                  <NSpace vertical style="width: 100%">
-                    <NSelect
-                      v-if="availableModels.github_copilot?.length"
-                      v-model:value="config.model.github_copilot.model"
-                      :options="availableModels.github_copilot.map(m => ({ label: m, value: m }))"
-                      filterable
-                      clearable
-                      placeholder="Select model (or leave empty for default)"
-                      :loading="loadingModels"
-                      @update:value="markChanged"
-                    />
-                    <NInput
-                      v-else
-                      v-model:value="config.model.github_copilot.model"
-                      placeholder="e.g., gpt-4o, claude-sonnet-4 (run 'clanker login' for model list)"
-                      @update:value="markChanged"
-                    />
-                    <NButton size="small" @click="fetchAvailableModels" :loading="loadingModels">
-                      Refresh Models
-                    </NButton>
-                  </NSpace>
                 </NFormItem>
               </template>
             </NForm>

@@ -34,8 +34,6 @@ class MessageResponse(BaseModel):
 
 def get_env_status() -> dict[str, bool]:
     """Check which environment variables are set."""
-    from clanker.auth import is_github_token_valid
-
     env_vars = [
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
@@ -45,10 +43,7 @@ def get_env_status() -> dict[str, bool]:
         "ANTHROPIC_FOUNDRY_API_KEY",
         "ANTHROPIC_FOUNDRY_RESOURCE",
     ]
-    status = {var: bool(os.getenv(var)) for var in env_vars}
-    # GitHub token can be in env or stored file
-    status["GITHUB_TOKEN"] = is_github_token_valid()
-    return status
+    return {var: bool(os.getenv(var)) for var in env_vars}
 
 
 def mask_key(key: str | None) -> str | None:
@@ -74,7 +69,6 @@ async def get_config() -> ConfigResponse:
             "azure_openai_endpoint",
             "anthropic_foundry_api_key",
             "anthropic_foundry_resource",
-            "github_token",
         }
     )
 
@@ -116,7 +110,6 @@ async def update_config(request: ConfigUpdateRequest) -> MessageResponse:
                 "azure_openai_endpoint",
                 "anthropic_foundry_api_key",
                 "anthropic_foundry_resource",
-                "github_token",
             }
         )
 
@@ -247,48 +240,6 @@ async def test_mcp_server(server_config: dict[str, Any]) -> MessageResponse:
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.get("/models")
-async def get_available_models() -> dict[str, list[str]]:
-    """Get available models from all providers."""
-    models: dict[str, list[str]] = {
-        "github_copilot": [],
-        "ollama": [],
-        "azure": [],
-        "azure_anthropic": [],
-    }
-
-    # GitHub Copilot models (from API)
-    try:
-        from clanker.auth.github_copilot import get_available_copilot_models
-        models["github_copilot"] = get_available_copilot_models()
-    except Exception:
-        pass
-
-    # Ollama models (from local API)
-    try:
-        import requests
-        resp = requests.get("http://localhost:11434/api/tags", timeout=2)
-        if resp.ok:
-            for m in resp.json().get("models", []):
-                name = m.get("name", "").split(":")[0]
-                if name:
-                    models["ollama"].append(name)
-    except Exception:
-        pass
-
-    # Azure deployments from config
-    try:
-        settings = reload_settings()
-        if settings.model.azure.deployment_name:
-            models["azure"].append(settings.model.azure.deployment_name)
-        if settings.model.azure_anthropic.deployment_name:
-            models["azure_anthropic"].append(settings.model.azure_anthropic.deployment_name)
-    except Exception:
-        pass
-
-    return models
 
 
 @router.post("/shutdown")

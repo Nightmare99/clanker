@@ -15,18 +15,7 @@
       "WebFetch(domain:pypi.org)",
       "Bash(python -m py_compile /home/mnq/Experiments/clanker/src/clanker/config/settings.py)",
       "Bash(python -m py_compile /home/mnq/Experiments/clanker/src/clanker/agent/graph.py)",
-      "Bash(/home/mnq/Experiments/clanker/venv/bin/pip install -e /home/mnq/Experiments/clanker)",
-      "Bash(python -m py_compile /home/mnq/Experiments/clanker/src/clanker/config/settings.py /home/mnq/Experiments/clanker/src/clanker/agent/graph.py /home/mnq/Experiments/clanker/src/clanker/cli.py /home/mnq/Experiments/clanker/src/clanker/auth/__init__.py /home/mnq/Experiments/clanker/src/clanker/auth/github_copilot.py /home/mnq/Experiments/clanker/src/clanker/config/web/routes.py && echo \"Syntax OK\")",
-      "Bash(PYTHONPATH=src python -c \"from clanker.cli import main; print\\('CLI imports OK'\\)\")",
-      "Bash(which npm && npm --version)",
-      "Bash(cd /home/mnq/Experiments/clanker/web-ui && npm run build 2>&1)",
-      "Bash(rm -rf /home/mnq/Experiments/clanker/src/clanker/config/web/static/* && cp -r /home/mnq/Experiments/clanker/web-ui/dist/* /home/mnq/Experiments/clanker/src/clanker/config/web/static/ && ls -la /home/mnq/Experiments/clanker/src/clanker/config/web/static/)",
-      "Bash(cd /home/mnq/Experiments/clanker && python -m clanker.cli --help)",
-      "Bash(cd /home/mnq/Experiments/clanker && pip install -e . -q && clanker --help)",
-      "Bash(source .venv/bin/activate && clanker --help)",
-      "Bash(/home/mnq/Experiments/clanker/.venv/bin/clanker --help)",
-      "Bash(source venv/bin/activate && pip install -q -e . && clanker login 2>&1 | head -20)",
-      "Bash(source venv/bin/activate && clanker login 2>&1 | head -5)"
+      "Bash(/home/mnq/Experiments/clanker/venv/bin/pip install -e /home/mnq/Experiments/clanker)"
     ]
   }
 }
