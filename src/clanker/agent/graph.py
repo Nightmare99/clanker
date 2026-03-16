@@ -144,10 +144,15 @@ def create_model(settings: Settings):
         api_key = settings.openai_api_key or os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY not set")
+
+        # Don't pass max_tokens or temperature - newer models have restrictions
+        openai_kwargs = {k: v for k, v in optional_kwargs.items() if k not in ("max_tokens", "temperature")}
+
         return ChatOpenAI(
             model=model_name,
             api_key=api_key,
-            **optional_kwargs,
+            temperature=1,  # Override default - some models only support 1
+            **openai_kwargs,
         )
 
     elif provider == "azure":
@@ -169,13 +174,46 @@ def create_model(settings: Settings):
                 "or configure model.azure.deployment_name"
             )
 
+        # Don't pass max_tokens or temperature for Azure - newer models have restrictions
+        # (o1/o3 models only support temperature=1, require max_completion_tokens)
+        azure_kwargs = {k: v for k, v in optional_kwargs.items() if k not in ("max_tokens", "temperature")}
+
         return AzureChatOpenAI(
             azure_endpoint=endpoint,
             azure_deployment=deployment,
             api_version=api_version,
             api_key=api_key,
-            **optional_kwargs,
+            temperature=1,  # Override default 0.7 - some models only support 1
+            **azure_kwargs,
         )
+
+    elif provider == "github_copilot":
+        from clanker.auth import get_github_token
+
+        token = settings.github_token or get_github_token()
+        if not token:
+            raise ValueError(
+                "GitHub token not set. Run 'clanker login' to authenticate "
+                "or set GITHUB_TOKEN environment variable."
+            )
+
+        # Set token in environment for the langchain-github-copilot package
+        os.environ["GITHUB_TOKEN"] = token
+
+        from langchain_github_copilot import ChatGitHubCopilot
+
+        # GitHub Copilot model selection (optional)
+        copilot_kwargs = {}
+        copilot_model = settings.model.github_copilot.model
+        if copilot_model:
+            copilot_kwargs["model"] = copilot_model
+            logger.info("Using GitHub Copilot model: %s", copilot_model)
+
+        # Don't pass max_tokens or temperature - let Copilot API use defaults
+        gc_kwargs = {k: v for k, v in optional_kwargs.items() if k not in ("max_tokens", "temperature")}
+
+        logger.info("Using GitHub Copilot provider")
+        return ChatGitHubCopilot(**copilot_kwargs, temperature=1, **gc_kwargs)
 
     else:
         raise ValueError(f"Unsupported provider: {provider}")

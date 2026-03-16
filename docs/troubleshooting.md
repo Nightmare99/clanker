@@ -30,6 +30,30 @@
 - Set your API key: `export ANTHROPIC_API_KEY=your-key`
 - Or add it to your `.env` file
 
+## GitHub Copilot Issues
+
+### "GitHub token not set"
+
+1. Run `clanker login` to authenticate
+2. Follow the prompts to visit GitHub and enter the code
+3. Once authenticated, try again
+
+### "Authentication timed out"
+
+- The device code expires after 15 minutes
+- Run `clanker login` again to get a new code
+
+### Token expired
+
+GitHub Copilot tokens are long-lived but may eventually expire:
+1. Run `clanker logout` to clear the old token
+2. Run `clanker login` to re-authenticate
+
+### Model not available
+
+- Some models require specific Copilot subscription tiers (Pro, Pro+, Business, Enterprise)
+- Leave the model setting empty to use the default model for your subscription
+
 ## MCP Server Issues
 
 ### Server not loading

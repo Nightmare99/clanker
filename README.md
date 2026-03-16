@@ -8,7 +8,7 @@ An AI-powered coding assistant CLI built with LangChain and LangGraph.
 - File operations: read, write, edit, search
 - Shell command execution with sandboxing
 - Session persistence and conversation history
-- Multi-provider: Anthropic, OpenAI, Azure OpenAI
+- Multi-provider: Anthropic, OpenAI, Azure OpenAI, GitHub Copilot
 - Web-based configuration UI
 - MCP server support for extensibility
 
@@ -35,6 +35,16 @@ export AZURE_OPENAI_DEPLOYMENT_NAME=your-deployment
 clanker -p azure
 ```
 
+Or with GitHub Copilot (requires Copilot subscription):
+
+```bash
+# Authenticate with GitHub (one-time setup)
+clanker login
+
+# Use GitHub Copilot
+clanker -p github_copilot
+```
+
 ## Usage
 
 ```bash
@@ -42,6 +52,8 @@ clanker                        # Interactive mode
 clanker "explain main.py"      # Single prompt
 clanker config                 # Web configuration UI
 clanker -p azure -m gpt-4o     # Specify provider/model
+clanker -p github_copilot      # Use GitHub Copilot
+clanker login                  # Authenticate with GitHub
 clanker --resume <session-id>  # Resume conversation
 ```
 

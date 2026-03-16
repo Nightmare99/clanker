@@ -143,10 +143,10 @@ def stream_agent_response_sync(
             start_loading()
 
             with _suppress_subprocess_stderr():
-                async for event in graph.astream_events(
-                    state, config=config, version="v2"
-                ):
-                    event_type = event.get("event", "")
+                stream = graph.astream_events(state, config=config, version="v2")
+                try:
+                    async for event in stream:
+                        event_type = event.get("event", "")
 
                     # Collect tool calls
                     if event_type == "on_tool_start":
@@ -223,8 +223,22 @@ def stream_agent_response_sync(
 
                     # Capture token usage when model completes
                     elif event_type == "on_chat_model_end":
+                        stop_loading()
                         output = event.get("data", {}).get("output")
                         if output:
+                            # For non-streaming models (like GitHub Copilot), get content here
+                            if hasattr(output, "content") and output.content:
+                                content = output.content
+                                if isinstance(content, str) and content:
+                                    current_response = content
+                                elif isinstance(content, list):
+                                    # Handle list content format
+                                    for block in content:
+                                        if isinstance(block, dict) and block.get("type") == "text":
+                                            current_response += block.get("text", "")
+                                        elif hasattr(block, "type") and block.type == "text":
+                                            current_response += getattr(block, "text", "")
+
                             # Get model name from response
                             if hasattr(output, "response_metadata"):
                                 meta = output.response_metadata
@@ -246,6 +260,12 @@ def stream_agent_response_sync(
                                 if usage:
                                     total_input_tokens += usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
                                     total_output_tokens += usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+                finally:
+                    # Properly close the async generator to avoid "generator didn't stop" errors
+                    try:
+                        await stream.aclose()
+                    except Exception:
+                        pass
 
         finally:
             stop_loading()  # Ensure loading spinner is stopped

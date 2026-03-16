@@ -23,23 +23,31 @@ classifiers = [
     "Topic :: Software Development",
 ]
 dependencies = [
-    "fastapi>=0.109.0",
-    "uvicorn>=0.27.0",
-    "langchain>=0.3.0",
-    "langgraph>=0.2.0",
-    "langgraph-checkpoint-sqlite>=2.0.0",
-    "langchain-openai>=0.2.0",
-    "langchain-anthropic>=0.2.0",
-    "langchain-mcp-adapters>=0.1.0",
-    "faiss-cpu>=1.7.0",
-    "sentence-transformers>=2.2.0",
-    "click>=8.0.0",
-    "rich>=13.0.0",
-    "prompt-toolkit>=3.0.0",
-    "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
-    "python-dotenv>=1.0.0",
-    "pyyaml>=6.0.0",
+    # Web server
+    "fastapi>=0.115.0,<1.0",
+    "uvicorn>=0.32.0,<1.0",
+    # LangChain ecosystem - pin to compatible versions
+    "langchain>=0.3.0,<0.4",
+    "langgraph>=0.2.0,<0.3",
+    "langgraph-checkpoint-sqlite>=2.0.0,<3.0",
+    "langchain-openai>=0.2.0,<0.3",
+    "langchain-anthropic>=0.3.0,<0.4",
+    "langchain-mcp-adapters>=0.1.0,<0.2",
+    "langchain-github-copilot>=0.4.0,<0.5",
+    # ML/embeddings
+    "faiss-cpu>=1.9.0,<2.0",
+    "sentence-transformers>=3.0.0,<4.0",
+    # CLI
+    "click>=8.1.0,<9.0",
+    "rich>=13.9.0,<14.0",
+    "prompt-toolkit>=3.0.0,<4.0",
+    # Config
+    "pydantic>=2.9.0,<3.0",
+    "pydantic-settings>=2.6.0,<3.0",
+    "python-dotenv>=1.0.0,<2.0",
+    "pyyaml>=6.0.0,<7.0",
+    # HTTP client for auth
+    "requests>=2.32.0,<3.0",
 ]
 
 [project.optional-dependencies]

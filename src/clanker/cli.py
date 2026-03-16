@@ -63,19 +63,42 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
         console.print("[bold cyan]*WHIRR*[/bold cyan] Memory banks wiped. Fresh slate initialized. [bold cyan]*CLANK*[/bold cyan]")
 
     elif cmd.startswith("/model"):
-        parts = cmd.split(maxsplit=1)
+        parts = command.strip().split(maxsplit=1)
         if len(parts) == 1:
-            settings = get_settings()
-            console.print_info(f"Current model: {settings.model.provider}/{settings.model.name}")
+            # Reload settings from config to show current state
+            current_settings = reload_settings()
+            provider = current_settings.model.provider
+            if provider == "github_copilot":
+                model_name = current_settings.model.github_copilot.model or "default"
+            elif provider == "azure":
+                model_name = current_settings.model.azure.deployment_name or "default"
+            elif provider == "azure_anthropic":
+                model_name = current_settings.model.azure_anthropic.deployment_name or "default"
+            else:
+                model_name = current_settings.model.name
+            console.print_info(f"Current model: {provider}/{model_name}")
+            console.print()
+            console.print_info("Usage: /model <provider>/<model>")
+            console.print_info("Tab to see available models")
         else:
-            console.print_warning("Model switching not yet implemented in this session.")
+            model_spec = parts[1].strip()
+            return f"model:{model_spec}"
 
     elif cmd == "/config":
-        settings = get_settings()
+        current_settings = reload_settings()
+        provider = current_settings.model.provider
+        if provider == "github_copilot":
+            model_name = current_settings.model.github_copilot.model or "default"
+        elif provider == "azure":
+            model_name = current_settings.model.azure.deployment_name or "default"
+        elif provider == "azure_anthropic":
+            model_name = current_settings.model.azure_anthropic.deployment_name or "default"
+        else:
+            model_name = current_settings.model.name
         console.print_info(f"Config file: {CONFIG_PATH}")
-        console.print_info(f"Agent name: {settings.agent.name}")
-        console.print_info(f"Provider: {settings.model.provider}")
-        console.print_info(f"Model: {settings.model.name}")
+        console.print_info(f"Agent name: {current_settings.agent.name}")
+        console.print_info(f"Provider: {provider}")
+        console.print_info(f"Model: {model_name}")
         if settings.mcp.enabled and settings.mcp.servers:
             enabled = [n for n, s in settings.mcp.servers.items() if s.enabled]
             console.print_info(f"MCP servers: {len(enabled)} enabled")
@@ -191,7 +214,7 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
 
 
 class CommandCompleter(Completer):
-    """Autocomplete for slash commands."""
+    """Autocomplete for slash commands and model options."""
 
     COMMANDS = [
         "/help",
@@ -210,10 +233,81 @@ class CommandCompleter(Completer):
         "/forget",
     ]
 
+    def __init__(self):
+        """Initialize completer with cached model list."""
+        self._model_cache: list[str] | None = None
+
+    def _get_available_models(self) -> list[str]:
+        """Get available models from all configured providers."""
+        if self._model_cache is not None:
+            return self._model_cache
+
+        models = []
+
+        # GitHub Copilot models (fetched from API)
+        try:
+            from clanker.auth.github_copilot import get_available_copilot_models
+            copilot_models = get_available_copilot_models()
+            for m in copilot_models:
+                models.append(f"github_copilot/{m}")
+        except Exception:
+            pass
+
+        # Azure deployments from config
+        try:
+            settings = get_settings()
+            if settings.model.azure.deployment_name:
+                models.append(f"azure/{settings.model.azure.deployment_name}")
+            if settings.model.azure_anthropic.deployment_name:
+                models.append(f"azure_anthropic/{settings.model.azure_anthropic.deployment_name}")
+        except Exception:
+            pass
+
+        # Ollama models (fetch from local API)
+        try:
+            import requests
+            resp = requests.get("http://localhost:11434/api/tags", timeout=2)
+            if resp.ok:
+                for m in resp.json().get("models", []):
+                    name = m.get("name", "").split(":")[0]
+                    if name:
+                        models.append(f"ollama/{name}")
+        except Exception:
+            pass
+
+        # Always show provider names so users can type full model name
+        providers = ["anthropic", "openai", "azure", "github_copilot", "ollama"]
+        for p in providers:
+            if not any(m.startswith(f"{p}/") or m == p for m in models):
+                models.append(p)
+
+        self._model_cache = models
+        return models
+
+    def refresh_models(self):
+        """Clear model cache to force refresh."""
+        self._model_cache = None
+
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor
         if not text.startswith("/"):
             return
+
+        # Check if we're completing a /model argument
+        if text.startswith("/model "):
+            model_text = text[7:]  # Text after "/model "
+            for model in self._get_available_models():
+                if model.lower().startswith(model_text.lower()):
+                    # Show provider as metadata
+                    provider = model.split("/")[0] if "/" in model else model
+                    yield Completion(
+                        model,
+                        start_position=-len(model_text),
+                        display_meta=provider
+                    )
+            return
+
+        # Complete command names
         for cmd in self.COMMANDS:
             if cmd.startswith(text):
                 yield Completion(cmd, start_position=-len(text))
@@ -311,6 +405,63 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
                             console.print(f"  [{role}] {content}")
                     else:
                         console.print_warning(f"Session {session_id} not found")
+                elif result and result.startswith("model:"):
+                    # Switch model/provider
+                    model_spec = result.split(":", 1)[1]
+                    try:
+                        if "/" in model_spec:
+                            new_provider, new_model = model_spec.split("/", 1)
+                        else:
+                            new_provider = model_spec
+                            new_model = None
+
+                        # Validate provider
+                        valid_providers = ["anthropic", "openai", "azure", "azure_anthropic", "github_copilot", "ollama"]
+                        if new_provider not in valid_providers:
+                            console.print_error(f"Unknown provider: {new_provider}")
+                            console.print_info(f"Valid providers: {', '.join(valid_providers)}")
+                            continue
+
+                        # Update settings based on provider
+                        settings.model.provider = new_provider
+                        if new_model:
+                            # Set model in the right place based on provider
+                            if new_provider == "github_copilot":
+                                settings.model.github_copilot.model = new_model
+                            elif new_provider == "azure":
+                                # For Azure, the "model" is actually the deployment name
+                                settings.model.azure.deployment_name = new_model
+                            elif new_provider == "azure_anthropic":
+                                settings.model.azure_anthropic.deployment_name = new_model
+                            else:
+                                settings.model.name = new_model
+
+                        # Validate new model config
+                        compaction_model = create_model(settings)
+
+                        # Save to config file and reload cache
+                        settings.save_yaml(CONFIG_PATH)
+                        reload_settings()
+
+                        # Get effective model name for display
+                        if new_provider == "github_copilot":
+                            effective_model = settings.model.github_copilot.model or "default"
+                        elif new_provider == "azure":
+                            effective_model = settings.model.azure.deployment_name or "default"
+                        elif new_provider == "azure_anthropic":
+                            effective_model = settings.model.azure_anthropic.deployment_name or "default"
+                        else:
+                            effective_model = new_model or settings.model.name
+                        token_tracker = SessionTokenTracker(model_name=effective_model)
+
+                        # Clear model cache in completer
+                        if hasattr(prompt_session.completer, 'refresh_models'):
+                            prompt_session.completer.refresh_models()
+
+                        console.print_info(f"[bold cyan]*CLANK*[/bold cyan] Switched to {new_provider}/{effective_model}")
+                        logger.info("Switched model to %s/%s (saved to config)", new_provider, effective_model)
+                    except ValueError as e:
+                        console.print_error(f"Failed to switch model: {e}")
                 continue
 
             # Add user message to tracking
@@ -399,7 +550,9 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
                 logger.debug("Agent response completed successfully")
             except Exception as e:
                 logger.exception("Agent error occurred: %s", e)
-                console.print_error(f"Agent error: {e}")
+                import traceback
+                error_details = str(e) or traceback.format_exc()
+                console.print_error(f"Agent error: {error_details}")
 
             console.rule()
 
@@ -473,18 +626,20 @@ def run_single_prompt(prompt: str, console: Console, settings: Settings) -> None
 class ClankerGroup(click.Group):
     """Custom group that handles prompt argument alongside subcommands."""
 
-    def invoke(self, ctx: click.Context):
-        """Invoke, handling the case where prompt matches a subcommand."""
-        # If prompt is a subcommand name, invoke that subcommand instead
+    def invoke(self, ctx: click.Context) -> None:
+        """Invoke the group, handling subcommand routing."""
+        # Check if prompt captured a subcommand name
         prompt = ctx.params.get("prompt")
         if prompt and prompt in self.commands:
-            # Clear the prompt and invoke the subcommand
+            # This was meant to be a subcommand, not a prompt
             ctx.params["prompt"] = None
             ctx.invoked_subcommand = prompt
             with ctx:
                 cmd = self.commands[prompt]
-                return ctx.invoke(cmd)
-        return super().invoke(ctx)
+                ctx.invoke(cmd)
+            return
+        # Normal invocation
+        super().invoke(ctx)
 
 
 @click.group(cls=ClankerGroup, invoke_without_command=True)
@@ -498,7 +653,7 @@ class ClankerGroup(click.Group):
 @click.option(
     "--provider",
     "-p",
-    type=click.Choice(["anthropic", "openai", "azure", "azure_anthropic", "ollama"]),
+    type=click.Choice(["anthropic", "openai", "azure", "azure_anthropic", "github_copilot", "ollama"]),
     default=None,
     help="LLM provider",
 )
@@ -556,6 +711,7 @@ def main(
     # If a subcommand is invoked, don't run the default behavior
     if ctx.invoked_subcommand is not None:
         return
+
 
     if version:
         click.echo(f"Clanker v{__version__}")
@@ -659,6 +815,54 @@ def config(port: int, no_browser: bool) -> None:
     from clanker.config.web import run_config_server
 
     run_config_server(port=port, open_browser=not no_browser)
+
+
+@main.command(name="login")
+def login_github() -> None:
+    """Authenticate with GitHub Copilot.
+
+    Initiates the GitHub device authorization flow. You'll be prompted
+    to visit a URL and enter a code to authenticate.
+
+    The token is stored locally and used automatically when you select
+    the github_copilot provider.
+
+    Examples:
+
+        clanker login         Authenticate with GitHub Copilot
+    """
+    from clanker.auth import authenticate_github_copilot, is_github_token_valid
+    from clanker.ui.console import Console
+
+    console = Console()
+
+    if is_github_token_valid():
+        console.print_info("You already have a GitHub token stored.")
+        console.print_info("Re-authenticating will replace the existing token.")
+        console.print()
+
+    token = authenticate_github_copilot(console)
+    if token:
+        console.print()
+        console.print_info("You can now use: clanker --provider github_copilot")
+
+
+@main.command(name="logout")
+def logout_github() -> None:
+    """Remove stored GitHub Copilot token.
+
+    Clears the locally stored GitHub token.
+
+    Examples:
+
+        clanker logout        Remove stored GitHub token
+    """
+    from clanker.auth.github_copilot import clear_github_token
+    from clanker.ui.console import Console
+
+    console = Console()
+    clear_github_token()
+    console.print_success("GitHub token cleared.")
 
 
 if __name__ == "__main__":
