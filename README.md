@@ -8,7 +8,9 @@ An AI-powered coding assistant CLI built with LangChain and LangGraph.
 - File operations: read, write, edit, search
 - Shell command execution with sandboxing
 - Session persistence and conversation history
-- Multi-provider: Anthropic, OpenAI, Azure OpenAI
+- Multi-provider: Anthropic, OpenAI, Azure OpenAI, Ollama
+- Easy model switching with `/model` command
+- Extended thinking support for Claude models
 - Web-based configuration UI
 - MCP server support for extensibility
 

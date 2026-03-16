@@ -37,7 +37,8 @@ Inside the interactive session:
 |---------|-------------|
 | `/help` | Show available commands |
 | `/clear` | Clear conversation history |
-| `/model` | Show current model |
+| `/model` | List available models and show current |
+| `/model <name>` | Switch to a different model |
 | `/config` | Show configuration |
 | `/mcp` | Show MCP server status |
 | `/logs` | Show logging status and log files |
@@ -47,6 +48,27 @@ Inside the interactive session:
 | `/remember <text>` | Save a memory |
 | `/forget <id>` | Delete a memory |
 | `/exit` | Exit Clanker |
+
+### Switching Models
+
+You can switch between configured models during a session:
+
+```
+❯ /model
+Current model: Claude Sonnet (Anthropic)
+
+Available models:
+  Claude Sonnet (Anthropic) *
+  GPT-4o (AzureOpenAI)
+  Llama Local (Ollama)
+
+Use /model <name> to switch models.
+
+❯ /model GPT-4o
+Switched to model: GPT-4o (AzureOpenAI)
+```
+
+Models are configured in `~/.clanker/models.json` or via `clanker config`.
 
 ## Examples
 
