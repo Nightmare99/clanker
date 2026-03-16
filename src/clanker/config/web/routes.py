@@ -297,6 +297,11 @@ class ModelRequest(BaseModel):
     model: str | None = None
     deployment_name: str | None = None
     api_version: str | None = None
+    # Token limits
+    max_tokens: int | None = None
+    # Extended thinking (Anthropic only)
+    thinking_enabled: bool = False
+    thinking_budget_tokens: int = 10000
 
 
 class SetDefaultRequest(BaseModel):
@@ -337,6 +342,9 @@ async def create_model_config(request: ModelRequest) -> MessageResponse:
             model=request.model,
             deployment_name=request.deployment_name,
             api_version=request.api_version,
+            max_tokens=request.max_tokens,
+            thinking_enabled=request.thinking_enabled,
+            thinking_budget_tokens=request.thinking_budget_tokens,
         )
         add_model(model)
         return MessageResponse(message=f"Model '{request.name}' saved successfully", success=True)
@@ -366,6 +374,9 @@ async def update_model_config(name: str, request: ModelRequest) -> MessageRespon
             model=request.model,
             deployment_name=request.deployment_name,
             api_version=request.api_version,
+            max_tokens=request.max_tokens,
+            thinking_enabled=request.thinking_enabled,
+            thinking_budget_tokens=request.thinking_budget_tokens,
         )
 
         # If name changed, remove old one

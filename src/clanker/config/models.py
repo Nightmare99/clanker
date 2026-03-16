@@ -30,6 +30,13 @@ class ModelConfig(BaseModel):
     deployment_name: str | None = Field(default=None, description="Azure deployment name")
     api_version: str | None = Field(default=None, description="Azure API version")
 
+    # Token limits
+    max_tokens: int | None = Field(default=None, description="Maximum tokens for response")
+
+    # Extended thinking (Anthropic only)
+    thinking_enabled: bool = Field(default=False, description="Enable extended thinking mode")
+    thinking_budget_tokens: int = Field(default=10000, description="Token budget for thinking")
+
     class Config:
         extra = "allow"  # Allow additional provider-specific fields
 
@@ -194,14 +201,43 @@ def create_llm_from_config(model_config: ModelConfig):
         if not api_key:
             raise ValueError(f"API key not set for model '{model_config.name}'")
 
+        # Determine max_tokens
+        if model_config.max_tokens:
+            max_tokens = model_config.max_tokens
+        elif model_config.thinking_enabled:
+            # max_tokens must be > thinking.budget_tokens, add buffer for response
+            max_tokens = model_config.thinking_budget_tokens + 16000
+        else:
+            max_tokens = 4096
+
+        # Validate max_tokens > thinking budget when thinking is enabled
+        if model_config.thinking_enabled and max_tokens <= model_config.thinking_budget_tokens:
+            raise ValueError(
+                f"max_tokens ({max_tokens}) must be greater than thinking_budget_tokens "
+                f"({model_config.thinking_budget_tokens})"
+            )
+
         kwargs = {
             "api_key": api_key,
-            "max_tokens": 4096,  # Anthropic requires max_tokens
+            "max_tokens": max_tokens,
         }
         if model_config.model:
             kwargs["model"] = model_config.model
         if model_config.base_url:
             kwargs["base_url"] = model_config.base_url
+
+        # Extended thinking support
+        if model_config.thinking_enabled:
+            kwargs["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": model_config.thinking_budget_tokens,
+            }
+            logger.info(
+                "Extended thinking enabled for %s with budget: %d tokens (max_tokens: %d)",
+                model_config.name,
+                model_config.thinking_budget_tokens,
+                max_tokens,
+            )
 
         return ChatAnthropic(**kwargs)
 

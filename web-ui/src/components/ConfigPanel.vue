@@ -114,6 +114,11 @@ interface ModelConfig {
   model: string | null
   deployment_name: string | null
   api_version: string | null
+  // Token limits
+  max_tokens: number | null
+  // Extended thinking (Anthropic only)
+  thinking_enabled: boolean
+  thinking_budget_tokens: number
 }
 
 // State
@@ -142,6 +147,9 @@ const modelForm = ref<ModelConfig>({
   model: null,
   deployment_name: null,
   api_version: null,
+  max_tokens: null,
+  thinking_enabled: false,
+  thinking_budget_tokens: 10000,
 })
 
 // MCP Server editing
@@ -266,6 +274,9 @@ function openAddModel() {
     model: null,
     deployment_name: null,
     api_version: null,
+    max_tokens: null,
+    thinking_enabled: false,
+    thinking_budget_tokens: 10000,
   }
   showModelModal.value = true
 }
@@ -649,6 +660,14 @@ onMounted(() => {
                     <span class="detail-label">API Key:</span>
                     <code class="detail-value">{{ model.api_key || '(from environment)' }}</code>
                   </div>
+                  <div v-if="model.max_tokens" class="model-detail-row">
+                    <span class="detail-label">Max Tokens:</span>
+                    <code class="detail-value">{{ model.max_tokens?.toLocaleString() }}</code>
+                  </div>
+                  <div v-if="model.thinking_enabled" class="model-detail-row">
+                    <span class="detail-label">Thinking:</span>
+                    <NTag size="small" type="info">{{ model.thinking_budget_tokens?.toLocaleString() }} tokens</NTag>
+                  </div>
                 </div>
 
                 <!-- Card Actions -->
@@ -767,6 +786,17 @@ onMounted(() => {
                 </NFormItem>
               </template>
 
+              <NFormItem label="Max Tokens">
+                <NInputNumber
+                  v-model:value="modelForm.max_tokens"
+                  :min="1"
+                  :max="200000"
+                  placeholder="Default (4096 for Anthropic)"
+                  clearable
+                  style="width: 100%"
+                />
+              </NFormItem>
+
               <NFormItem label="Base URL">
                 <NInput
                   v-model:value="modelForm.base_url"
@@ -789,6 +819,32 @@ onMounted(() => {
                   ({{ modelForm.provider === 'OpenAI' ? 'OPENAI_API_KEY' : modelForm.provider === 'AzureOpenAI' ? 'AZURE_OPENAI_API_KEY' : 'ANTHROPIC_API_KEY' }}).
                 </small>
               </NAlert>
+
+              <!-- Extended Thinking (Anthropic only) -->
+              <template v-if="isModelFormAnthropic">
+                <NDivider style="margin: 16px 0">Extended Thinking</NDivider>
+
+                <NFormItem label="Enable Thinking">
+                  <NSwitch v-model:value="modelForm.thinking_enabled" />
+                </NFormItem>
+
+                <NFormItem v-if="modelForm.thinking_enabled" label="Budget Tokens">
+                  <NInputNumber
+                    v-model:value="modelForm.thinking_budget_tokens"
+                    :min="1000"
+                    :max="100000"
+                    :step="1000"
+                  />
+                </NFormItem>
+
+                <NAlert v-if="modelForm.thinking_enabled" type="warning" style="margin-top: 8px">
+                  <small>
+                    Extended thinking allows the model to reason through complex problems.
+                    <strong>Max Tokens must be greater than Budget Tokens.</strong>
+                    If not set, it defaults to Budget + 16,000.
+                  </small>
+                </NAlert>
+              </template>
             </NForm>
 
             <template #footer>
