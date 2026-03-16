@@ -230,7 +230,7 @@ def stream_agent_response_sync(
                                 meta = output.response_metadata
                                 model_name = meta.get("model", "") or meta.get("model_name", "")
 
-                            # Get usage from usage_metadata (preferred)
+                            # Get usage from usage_metadata (preferred - works for most providers)
                             if hasattr(output, "usage_metadata") and output.usage_metadata:
                                 usage = output.usage_metadata
                                 total_input_tokens += usage.get("input_tokens", 0)
@@ -239,13 +239,26 @@ def stream_agent_response_sync(
                                 cache_read_tokens += usage.get("cache_read_input_tokens", 0)
                                 cache_creation_tokens += usage.get("cache_creation_input_tokens", 0)
 
-                            # Fallback to response_metadata
+                            # Fallback to response_metadata for Azure OpenAI and others
                             elif hasattr(output, "response_metadata"):
                                 meta = output.response_metadata
+
+                                # Try "usage" key first (standard format)
                                 usage = meta.get("usage", {})
                                 if usage:
                                     total_input_tokens += usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
                                     total_output_tokens += usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+
+                                # Azure OpenAI may have token_usage at top level
+                                if not usage and "token_usage" in meta:
+                                    usage = meta.get("token_usage", {})
+                                    total_input_tokens += usage.get("prompt_tokens", 0)
+                                    total_output_tokens += usage.get("completion_tokens", 0)
+
+                                # Some Azure responses have it directly in metadata
+                                if not usage:
+                                    total_input_tokens += meta.get("prompt_tokens", 0)
+                                    total_output_tokens += meta.get("completion_tokens", 0)
 
         finally:
             stop_loading()  # Ensure loading spinner is stopped

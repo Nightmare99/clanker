@@ -16,7 +16,16 @@ from prompt_toolkit.completion import Completer, Completion
 
 from clanker import __version__
 from clanker.agent import create_model
-from clanker.config import CONFIG_PATH, Settings, get_settings, reload_settings
+from clanker.config import (
+    CONFIG_PATH,
+    Settings,
+    get_settings,
+    reload_settings,
+    list_model_names,
+    get_model_by_name,
+    get_default_model,
+    set_default_model,
+)
 from clanker.config.setup_wizard import run_setup_wizard
 from clanker.logging import get_logger, setup_logging
 from clanker.context.compaction import compact_context_sync, should_compact
@@ -63,19 +72,58 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
         console.print("[bold cyan]*WHIRR*[/bold cyan] Memory banks wiped. Fresh slate initialized. [bold cyan]*CLANK*[/bold cyan]")
 
     elif cmd.startswith("/model"):
-        parts = cmd.split(maxsplit=1)
+        parts = command.strip().split(maxsplit=1)
+        model_names = list_model_names()
+
         if len(parts) == 1:
-            settings = get_settings()
-            console.print_info(f"Current model: {settings.model.provider}/{settings.model.name}")
+            # Show current model and list available models
+            current = get_default_model()
+            if current:
+                console.print_info(f"Current model: {current.name} ({current.provider})")
+            else:
+                settings = get_settings()
+                console.print_info(f"Current model: {settings.model.name} (from config.yaml)")
+
+            if model_names:
+                console.print_info("\nAvailable models:")
+                for name in model_names:
+                    model = get_model_by_name(name)
+                    if model:
+                        marker = " *" if current and current.name == name else ""
+                        console.print(f"  [cyan]{name}[/cyan] ({model.provider}){marker}")
+                console.print_info("\nUse /model <name> to switch models.")
+            else:
+                console.print_info("\nNo models configured in ~/.clanker/models.json")
+                console.print_info("Add models via 'clanker config' or edit the JSON file directly.")
         else:
-            console.print_warning("Model switching not yet implemented in this session.")
+            # Switch to specified model
+            target_name = parts[1].strip()
+            model = get_model_by_name(target_name)
+            if model:
+                set_default_model(target_name)
+                console.print_success(f"Switched to model: {model.name} ({model.provider})")
+                console.print_info("Note: Changes take effect on next message.")
+            else:
+                console.print_warning(f"Model '{target_name}' not found.")
+                if model_names:
+                    console.print_info(f"Available: {', '.join(model_names)}")
 
     elif cmd == "/config":
         settings = get_settings()
         console.print_info(f"Config file: {CONFIG_PATH}")
         console.print_info(f"Agent name: {settings.agent.name}")
-        console.print_info(f"Provider: {settings.model.provider}")
-        console.print_info(f"Model: {settings.model.name}")
+
+        # Show model info from JSON config if available
+        current_model = get_default_model()
+        if current_model:
+            console.print_info(f"Model: {current_model.name} (JSON config)")
+            console.print_info(f"Provider: {current_model.provider}")
+            if current_model.model:
+                console.print_info(f"Model ID: {current_model.model}")
+        else:
+            console.print_info(f"Model: {settings.model.name} (YAML config)")
+            console.print_info(f"Provider: {settings.model.provider}")
+
         if settings.mcp.enabled and settings.mcp.servers:
             enabled = [n for n, s in settings.mcp.servers.items() if s.enabled]
             console.print_info(f"MCP servers: {len(enabled)} enabled")
@@ -191,7 +239,7 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
 
 
 class CommandCompleter(Completer):
-    """Autocomplete for slash commands."""
+    """Autocomplete for slash commands and model names."""
 
     COMMANDS = [
         "/help",
@@ -214,6 +262,20 @@ class CommandCompleter(Completer):
         text = document.text_before_cursor
         if not text.startswith("/"):
             return
+
+        # Check if this is a /model command with a space (user wants model name completion)
+        if text.startswith("/model "):
+            model_prefix = text[7:]  # Remove "/model "
+            try:
+                model_names = list_model_names()
+                for name in model_names:
+                    if name.lower().startswith(model_prefix.lower()):
+                        yield Completion(name, start_position=-len(model_prefix))
+            except Exception:
+                pass  # Silently fail if model loading fails
+            return
+
+        # Regular command completion
         for cmd in self.COMMANDS:
             if cmd.startswith(text):
                 yield Completion(cmd, start_position=-len(text))
@@ -245,8 +307,13 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
 
     # Validate model configuration
     try:
-        logger.info("Validating model config: provider=%s, model=%s",
-                   settings.model.provider, settings.model.name)
+        current_model = get_default_model()
+        if current_model:
+            logger.info("Validating model config: %s (provider=%s)",
+                       current_model.name, current_model.provider)
+        else:
+            logger.info("Validating model config: provider=%s, model=%s",
+                       settings.model.provider, settings.model.name)
         # Create model for compaction (without tools) - also validates API key
         compaction_model = create_model(settings)
         logger.info("Model configuration validated successfully")
@@ -272,8 +339,10 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
     # Track messages for saving
     conversation_messages = []
 
-    # Token tracking
-    token_tracker = SessionTokenTracker(model_name=settings.model.name)
+    # Token tracking - use JSON model name if available
+    current_model = get_default_model()
+    tracker_model_name = current_model.name if current_model else settings.model.name
+    token_tracker = SessionTokenTracker(model_name=tracker_model_name)
 
     while True:
         try:
@@ -432,8 +501,10 @@ def run_single_prompt(prompt: str, console: Console, settings: Settings) -> None
         console.print_error(str(e))
         sys.exit(1)
 
-    # Token tracking
-    token_tracker = SessionTokenTracker(model_name=settings.model.name)
+    # Token tracking - use JSON model name if available
+    current_model = get_default_model()
+    tracker_model_name = current_model.name if current_model else settings.model.name
+    token_tracker = SessionTokenTracker(model_name=tracker_model_name)
 
     state = {
         "messages": [HumanMessage(content=prompt)],

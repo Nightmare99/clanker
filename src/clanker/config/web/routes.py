@@ -7,6 +7,18 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from clanker.config import CONFIG_PATH, Settings, get_settings, reload_settings
+from clanker.config.models import (
+    ModelConfig,
+    ModelsConfig,
+    MODELS_CONFIG_PATH,
+    get_models_config,
+    save_models_config,
+    get_model_by_name,
+    get_default_model,
+    set_default_model,
+    add_model,
+    remove_model,
+)
 
 router = APIRouter(tags=["config"])
 
@@ -263,3 +275,192 @@ def deep_merge(base: dict, override: dict) -> dict:
         else:
             result[key] = value
     return result
+
+
+# ==================== Models API ====================
+
+class ModelsResponse(BaseModel):
+    """Models configuration response."""
+
+    models: list[dict[str, Any]]
+    default: str | None
+    config_path: str
+
+
+class ModelRequest(BaseModel):
+    """Model creation/update request."""
+
+    name: str
+    provider: str
+    api_key: str | None = None
+    base_url: str | None = None
+    model: str | None = None
+    deployment_name: str | None = None
+    api_version: str | None = None
+
+
+class SetDefaultRequest(BaseModel):
+    """Set default model request."""
+
+    name: str
+
+
+@router.get("/models", response_model=ModelsResponse)
+async def get_models() -> ModelsResponse:
+    """Get all configured models."""
+    config = get_models_config()
+
+    # Mask API keys for display
+    models_list = []
+    for m in config.models:
+        model_dict = m.model_dump()
+        if model_dict.get("api_key"):
+            model_dict["api_key"] = mask_key(model_dict["api_key"])
+        models_list.append(model_dict)
+
+    return ModelsResponse(
+        models=models_list,
+        default=config.default,
+        config_path=str(MODELS_CONFIG_PATH),
+    )
+
+
+@router.post("/models", response_model=MessageResponse)
+async def create_model_config(request: ModelRequest) -> MessageResponse:
+    """Add or update a model configuration."""
+    try:
+        model = ModelConfig(
+            name=request.name,
+            provider=request.provider,
+            api_key=request.api_key,
+            base_url=request.base_url,
+            model=request.model,
+            deployment_name=request.deployment_name,
+            api_version=request.api_version,
+        )
+        add_model(model)
+        return MessageResponse(message=f"Model '{request.name}' saved successfully", success=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/models/{name}", response_model=MessageResponse)
+async def update_model_config(name: str, request: ModelRequest) -> MessageResponse:
+    """Update an existing model configuration."""
+    try:
+        # Check if model exists
+        existing = get_model_by_name(name)
+        if not existing:
+            raise HTTPException(status_code=404, detail=f"Model '{name}' not found")
+
+        # If API key is masked (from UI), preserve the original
+        api_key = request.api_key
+        if api_key and api_key.startswith("****") or (api_key and "..." in api_key):
+            api_key = existing.api_key
+
+        model = ModelConfig(
+            name=request.name,
+            provider=request.provider,
+            api_key=api_key,
+            base_url=request.base_url,
+            model=request.model,
+            deployment_name=request.deployment_name,
+            api_version=request.api_version,
+        )
+
+        # If name changed, remove old one
+        if name.lower() != request.name.lower():
+            remove_model(name)
+
+        add_model(model)
+        return MessageResponse(message=f"Model '{request.name}' updated successfully", success=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/models/{name}", response_model=MessageResponse)
+async def delete_model_config(name: str) -> MessageResponse:
+    """Delete a model configuration."""
+    if remove_model(name):
+        return MessageResponse(message=f"Model '{name}' deleted successfully", success=True)
+    else:
+        raise HTTPException(status_code=404, detail=f"Model '{name}' not found")
+
+
+@router.post("/models/default", response_model=MessageResponse)
+async def set_default_model_api(request: SetDefaultRequest) -> MessageResponse:
+    """Set the default model."""
+    if set_default_model(request.name):
+        return MessageResponse(message=f"Default model set to '{request.name}'", success=True)
+    else:
+        raise HTTPException(status_code=404, detail=f"Model '{request.name}' not found")
+
+
+@router.post("/models/{name}/test", response_model=MessageResponse)
+async def test_model_config(name: str) -> MessageResponse:
+    """Test a model configuration by making a simple API call."""
+    try:
+        model_config = get_model_by_name(name)
+        if not model_config:
+            raise HTTPException(status_code=404, detail=f"Model '{name}' not found")
+
+        # Create a minimal LLM for testing - avoid parameters that some models don't support
+        provider = model_config.provider
+
+        if provider == "OpenAI":
+            from langchain_openai import ChatOpenAI
+            api_key = model_config.api_key or os.getenv("OPENAI_API_KEY")
+            kwargs = {"api_key": api_key}
+            if model_config.model:
+                kwargs["model"] = model_config.model
+            if model_config.base_url:
+                kwargs["base_url"] = model_config.base_url
+            llm = ChatOpenAI(**kwargs)
+
+        elif provider == "AzureOpenAI":
+            from langchain_openai import AzureChatOpenAI
+            api_key = model_config.api_key or os.getenv("AZURE_OPENAI_API_KEY")
+            base_url = model_config.base_url or os.getenv("AZURE_OPENAI_ENDPOINT")
+            deployment = model_config.deployment_name or os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+            api_version = model_config.api_version or "2024-02-15-preview"
+            # Use temperature=1 - some models (o1, o3, gpt-5) only support this value
+            llm = AzureChatOpenAI(
+                azure_endpoint=base_url,
+                azure_deployment=deployment,
+                api_version=api_version,
+                api_key=api_key,
+                temperature=1,
+            )
+
+        elif provider == "Anthropic":
+            from langchain_anthropic import ChatAnthropic
+            api_key = model_config.api_key or os.getenv("ANTHROPIC_API_KEY")
+            kwargs = {"api_key": api_key, "max_tokens": 100}
+            if model_config.model:
+                kwargs["model"] = model_config.model
+            if model_config.base_url:
+                kwargs["base_url"] = model_config.base_url
+            llm = ChatAnthropic(**kwargs)
+
+        elif provider == "Ollama":
+            from langchain_community.chat_models import ChatOllama
+            base_url = model_config.base_url or "http://localhost:11434"
+            model_name = model_config.model or "llama3"
+            llm = ChatOllama(base_url=base_url, model=model_name)
+
+        else:
+            raise ValueError(f"Unsupported provider: {provider}")
+
+        # Make a simple test invocation
+        response = llm.invoke("Say 'ok'")
+
+        return MessageResponse(
+            message=f"Connection successful! Model responded.",
+            success=True
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Connection failed: {str(e)}")

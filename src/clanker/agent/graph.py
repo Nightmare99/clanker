@@ -12,7 +12,7 @@ from langgraph.prebuilt import ToolNode
 
 from clanker.agent.prompts import get_system_prompt
 from clanker.agent.state import AgentState
-from clanker.config import Settings, get_settings
+from clanker.config import Settings, get_settings, get_default_model, create_llm_from_config
 from clanker.logging import get_logger
 from clanker.mcp import load_mcp_tools, load_mcp_tools_async
 from clanker.tools import ALL_TOOLS
@@ -51,10 +51,28 @@ def _get_all_tools(settings: Settings) -> list:
 
 
 def create_model(settings: Settings):
-    """Create the appropriate LLM based on settings."""
+    """Create the appropriate LLM based on configuration.
+
+    This function first checks the JSON-based models config (~/.clanker/models.json).
+    If no models are configured there, it falls back to the YAML settings.
+    """
+    # First, try the new JSON-based model configuration
+    default_model = get_default_model()
+    if default_model:
+        logger.info("Using model from JSON config: %s (provider=%s)",
+                   default_model.name, default_model.provider)
+        return create_llm_from_config(default_model)
+
+    # Fall back to YAML settings-based configuration
+    logger.info("No JSON model config found, using YAML settings")
+    return _create_model_from_settings(settings)
+
+
+def _create_model_from_settings(settings: Settings):
+    """Create LLM from YAML settings (legacy approach)."""
     provider = settings.model.provider
     model_name = settings.model.name
-    logger.info("Creating model: provider=%s, model=%s", provider, model_name)
+    logger.info("Creating model from settings: provider=%s, model=%s", provider, model_name)
 
     # Build optional kwargs - only include if explicitly set
     optional_kwargs = {}
@@ -174,6 +192,7 @@ def create_model(settings: Settings):
             azure_deployment=deployment,
             api_version=api_version,
             api_key=api_key,
+            stream_usage=True,
             **optional_kwargs,
         )
 

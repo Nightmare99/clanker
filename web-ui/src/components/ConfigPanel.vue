@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import {
   NLayout,
   NLayoutSider,
@@ -22,6 +22,8 @@ import {
   NSpin,
   NModal,
   NPopconfirm,
+  NTooltip,
+  NEmpty,
   useMessage,
 } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
@@ -35,6 +37,13 @@ import {
   ExtensionPuzzleOutline,
   HardwareChipOutline,
   ColorPaletteOutline,
+  AddOutline,
+  CreateOutline,
+  TrashOutline,
+  CheckmarkCircleOutline,
+  PlayOutline,
+  StarOutline,
+  Star,
 } from '@vicons/ionicons5'
 import { h } from 'vue'
 
@@ -97,6 +106,16 @@ interface EnvStatus {
   ANTHROPIC_FOUNDRY_RESOURCE: boolean
 }
 
+interface ModelConfig {
+  name: string
+  provider: string
+  api_key: string | null
+  base_url: string | null
+  model: string | null
+  deployment_name: string | null
+  api_version: string | null
+}
+
 // State
 const message = useMessage()
 const loading = ref(true)
@@ -106,6 +125,24 @@ const config = ref<Config | null>(null)
 const configPath = ref('')
 const envStatus = ref<EnvStatus | null>(null)
 const hasChanges = ref(false)
+
+// Models management
+const models = ref<ModelConfig[]>([])
+const defaultModel = ref<string | null>(null)
+const modelsConfigPath = ref('')
+const showModelModal = ref(false)
+const editingModel = ref<string | null>(null)
+const testingModel = ref<string | null>(null)
+const savingModel = ref(false)
+const modelForm = ref<ModelConfig>({
+  name: '',
+  provider: 'OpenAI',
+  api_key: null,
+  base_url: null,
+  model: null,
+  deployment_name: null,
+  api_version: null,
+})
 
 // MCP Server editing
 const showMcpModal = ref(false)
@@ -123,7 +160,7 @@ const testingServer = ref<string | null>(null)
 
 // Menu items
 const menuOptions: MenuOption[] = [
-  { label: 'Model', key: 'model', icon: () => h(NIcon, null, { default: () => h(HardwareChipOutline) }) },
+  { label: 'Models', key: 'model', icon: () => h(NIcon, null, { default: () => h(HardwareChipOutline) }) },
   { label: 'API Keys', key: 'keys', icon: () => h(NIcon, null, { default: () => h(KeyOutline) }) },
   { label: 'Output', key: 'output', icon: () => h(NIcon, null, { default: () => h(CodeSlashOutline) }) },
   { label: 'Context', key: 'context', icon: () => h(NIcon, null, { default: () => h(ColorPaletteOutline) }) },
@@ -142,6 +179,22 @@ const providerOptions = [
   { label: 'Ollama', value: 'ollama' },
 ]
 
+// Provider options for the new JSON-based model config
+const modelProviderOptions = [
+  { label: 'OpenAI', value: 'OpenAI', description: 'GPT-4, GPT-4o, etc.' },
+  { label: 'Azure OpenAI', value: 'AzureOpenAI', description: 'OpenAI models on Azure' },
+  { label: 'Anthropic', value: 'Anthropic', description: 'Claude models' },
+  { label: 'Ollama', value: 'Ollama', description: 'Local models via Ollama' },
+]
+
+// Provider colors and icons for visual distinction
+const providerStyles: Record<string, { color: string; bgColor: string }> = {
+  'OpenAI': { color: '#10a37f', bgColor: 'rgba(16, 163, 127, 0.1)' },
+  'AzureOpenAI': { color: '#0078d4', bgColor: 'rgba(0, 120, 212, 0.1)' },
+  'Anthropic': { color: '#d97706', bgColor: 'rgba(217, 119, 6, 0.1)' },
+  'Ollama': { color: '#6366f1', bgColor: 'rgba(99, 102, 241, 0.1)' },
+}
+
 const logLevelOptions = [
   { label: 'DEBUG', value: 'DEBUG' },
   { label: 'INFO', value: 'INFO' },
@@ -158,6 +211,22 @@ const isAnthropicProvider = computed(() =>
 const isAzureProvider = computed(() => config.value?.model.provider === 'azure')
 const isAzureAnthropicProvider = computed(() => config.value?.model.provider === 'azure_anthropic')
 
+// Model form computed
+const isModelFormAzure = computed(() => modelForm.value.provider === 'AzureOpenAI')
+const isModelFormAnthropic = computed(() => modelForm.value.provider === 'Anthropic')
+const isModelFormOllama = computed(() => modelForm.value.provider === 'Ollama')
+
+// Get placeholder for model ID based on provider
+const modelIdPlaceholder = computed(() => {
+  switch (modelForm.value.provider) {
+    case 'OpenAI': return 'e.g., gpt-4o, gpt-4-turbo'
+    case 'AzureOpenAI': return 'Leave empty if using deployment name'
+    case 'Anthropic': return 'e.g., claude-sonnet-4-20250514'
+    case 'Ollama': return 'e.g., llama3, mistral, codellama'
+    default: return 'Model identifier'
+  }
+})
+
 // API functions
 async function fetchConfig() {
   try {
@@ -172,6 +241,140 @@ async function fetchConfig() {
   } finally {
     loading.value = false
   }
+}
+
+// Models API functions
+async function fetchModels() {
+  try {
+    const response = await fetch('/api/models')
+    const data = await response.json()
+    models.value = data.models
+    defaultModel.value = data.default
+    modelsConfigPath.value = data.config_path
+  } catch (error) {
+    console.error('Failed to load models:', error)
+  }
+}
+
+function openAddModel() {
+  editingModel.value = null
+  modelForm.value = {
+    name: '',
+    provider: 'OpenAI',
+    api_key: null,
+    base_url: null,
+    model: null,
+    deployment_name: null,
+    api_version: null,
+  }
+  showModelModal.value = true
+}
+
+function openEditModel(model: ModelConfig) {
+  editingModel.value = model.name
+  modelForm.value = { ...model }
+  showModelModal.value = true
+}
+
+async function saveModel() {
+  if (!modelForm.value.name.trim()) {
+    message.error('Model name is required')
+    return
+  }
+
+  savingModel.value = true
+  try {
+    const url = editingModel.value
+      ? `/api/models/${encodeURIComponent(editingModel.value)}`
+      : '/api/models'
+    const method = editingModel.value ? 'PUT' : 'POST'
+
+    const response = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(modelForm.value),
+    })
+
+    if (response.ok) {
+      message.success(editingModel.value ? 'Model updated' : 'Model added')
+      showModelModal.value = false
+      await fetchModels()
+    } else {
+      const error = await response.json()
+      message.error(error.detail || 'Failed to save model')
+    }
+  } catch (error) {
+    message.error('Failed to save model')
+    console.error(error)
+  } finally {
+    savingModel.value = false
+  }
+}
+
+async function deleteModel(name: string) {
+  try {
+    const response = await fetch(`/api/models/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    })
+
+    if (response.ok) {
+      message.success('Model deleted')
+      await fetchModels()
+    } else {
+      const error = await response.json()
+      message.error(error.detail || 'Failed to delete model')
+    }
+  } catch (error) {
+    message.error('Failed to delete model')
+    console.error(error)
+  }
+}
+
+async function setAsDefault(name: string) {
+  try {
+    const response = await fetch('/api/models/default', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+
+    if (response.ok) {
+      message.success(`${name} set as default`)
+      defaultModel.value = name
+    } else {
+      const error = await response.json()
+      message.error(error.detail || 'Failed to set default model')
+    }
+  } catch (error) {
+    message.error('Failed to set default model')
+    console.error(error)
+  }
+}
+
+async function testModel(name: string) {
+  testingModel.value = name
+  try {
+    const response = await fetch(`/api/models/${encodeURIComponent(name)}/test`, {
+      method: 'POST',
+    })
+
+    if (response.ok) {
+      const data = await response.json()
+      message.success(data.message)
+    } else {
+      const error = await response.json()
+      message.error(error.detail || 'Connection test failed')
+    }
+  } catch (error) {
+    message.error('Connection test failed')
+    console.error(error)
+  } finally {
+    testingModel.value = null
+  }
+}
+
+function getProviderStyle(provider: string) {
+  return providerStyles[provider] || { color: '#888', bgColor: 'rgba(136, 136, 136, 0.1)' }
 }
 
 async function saveConfig() {
@@ -333,7 +536,10 @@ async function testMcpServer(name: string) {
   }
 }
 
-onMounted(fetchConfig)
+onMounted(() => {
+  fetchConfig()
+  fetchModels()
+})
 </script>
 
 <template>
@@ -362,7 +568,7 @@ onMounted(fetchConfig)
         <div v-if="config" class="content-wrapper">
           <!-- Header -->
           <div class="content-header">
-            <h1>{{ menuOptions.find(m => m.key === activeKey)?.label }} Settings</h1>
+            <h1>{{ activeKey === 'model' ? 'Models' : menuOptions.find(m => m.key === activeKey)?.label + ' Settings' }}</h1>
             <NSpace>
               <NButton
                 v-if="hasChanges"
@@ -372,120 +578,228 @@ onMounted(fetchConfig)
               >
                 Save Changes
               </NButton>
-              <NButton quaternary @click="resetConfig">Reset to Defaults</NButton>
+              <NButton v-if="activeKey !== 'model'" quaternary @click="resetConfig">Reset to Defaults</NButton>
             </NSpace>
           </div>
 
           <NDivider />
 
-          <!-- Model Settings -->
-          <NCard v-if="activeKey === 'model'" class="settings-card">
-            <NForm label-placement="left" label-width="180">
-              <NFormItem label="Provider">
-                <NSelect
-                  v-model:value="config.model.provider"
-                  :options="providerOptions"
-                  @update:value="markChanged"
-                />
-              </NFormItem>
+          <!-- Model Settings - New Card-based UI -->
+          <div v-if="activeKey === 'model'" class="models-section">
+            <!-- Header with Add button -->
+            <div class="models-header">
+              <div class="models-header-text">
+                <p class="models-description">
+                  Configure your LLM providers. Models are stored in <code>~/.clanker/models.json</code>
+                </p>
+              </div>
+              <NButton type="primary" @click="openAddModel">
+                <template #icon>
+                  <NIcon><AddOutline /></NIcon>
+                </template>
+                Add Model
+              </NButton>
+            </div>
 
-              <NFormItem label="Model Name">
+            <!-- Models Grid -->
+            <div v-if="models.length > 0" class="models-grid">
+              <NCard
+                v-for="model in models"
+                :key="model.name"
+                class="model-card"
+                :class="{ 'model-card-default': model.name === defaultModel }"
+                :style="{ borderColor: getProviderStyle(model.provider).color + '40' }"
+              >
+                <!-- Card Header -->
+                <template #header>
+                  <div class="model-card-header">
+                    <div class="model-info">
+                      <NTag
+                        size="small"
+                        :color="{ color: getProviderStyle(model.provider).bgColor, textColor: getProviderStyle(model.provider).color, borderColor: 'transparent' }"
+                      >
+                        {{ model.provider }}
+                      </NTag>
+                      <span class="model-name">{{ model.name }}</span>
+                      <NTooltip v-if="model.name === defaultModel">
+                        <template #trigger>
+                          <NIcon class="default-star" :component="Star" />
+                        </template>
+                        Default Model
+                      </NTooltip>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- Card Content -->
+                <div class="model-details">
+                  <div v-if="model.model" class="model-detail-row">
+                    <span class="detail-label">Model ID:</span>
+                    <code class="detail-value">{{ model.model }}</code>
+                  </div>
+                  <div v-if="model.deployment_name" class="model-detail-row">
+                    <span class="detail-label">Deployment:</span>
+                    <code class="detail-value">{{ model.deployment_name }}</code>
+                  </div>
+                  <div v-if="model.base_url" class="model-detail-row">
+                    <span class="detail-label">Base URL:</span>
+                    <code class="detail-value detail-url">{{ model.base_url }}</code>
+                  </div>
+                  <div class="model-detail-row">
+                    <span class="detail-label">API Key:</span>
+                    <code class="detail-value">{{ model.api_key || '(from environment)' }}</code>
+                  </div>
+                </div>
+
+                <!-- Card Actions -->
+                <template #footer>
+                  <NSpace justify="space-between" align="center">
+                    <NSpace>
+                      <NButton
+                        size="small"
+                        :loading="testingModel === model.name"
+                        @click="testModel(model.name)"
+                      >
+                        <template #icon>
+                          <NIcon><PlayOutline /></NIcon>
+                        </template>
+                        Test
+                      </NButton>
+                      <NButton
+                        v-if="model.name !== defaultModel"
+                        size="small"
+                        @click="setAsDefault(model.name)"
+                      >
+                        <template #icon>
+                          <NIcon><StarOutline /></NIcon>
+                        </template>
+                        Set Default
+                      </NButton>
+                    </NSpace>
+                    <NSpace>
+                      <NButton size="small" @click="openEditModel(model)">
+                        <template #icon>
+                          <NIcon><CreateOutline /></NIcon>
+                        </template>
+                        Edit
+                      </NButton>
+                      <NPopconfirm @positive-click="deleteModel(model.name)">
+                        <template #trigger>
+                          <NButton size="small" type="error" quaternary>
+                            <template #icon>
+                              <NIcon><TrashOutline /></NIcon>
+                            </template>
+                          </NButton>
+                        </template>
+                        Delete "{{ model.name }}"?
+                      </NPopconfirm>
+                    </NSpace>
+                  </NSpace>
+                </template>
+              </NCard>
+            </div>
+
+            <!-- Empty State -->
+            <NCard v-else class="empty-models-card">
+              <NEmpty description="No models configured">
+                <template #extra>
+                  <NButton type="primary" @click="openAddModel">
+                    <template #icon>
+                      <NIcon><AddOutline /></NIcon>
+                    </template>
+                    Add Your First Model
+                  </NButton>
+                </template>
+              </NEmpty>
+            </NCard>
+
+            <!-- Legacy Settings Info -->
+            <NAlert type="info" style="margin-top: 16px">
+              <strong>Note:</strong> If no models are configured above, Clanker falls back to settings in
+              <code>config.yaml</code>. Add models here for easier switching with the <code>/model</code> command.
+            </NAlert>
+          </div>
+
+          <!-- Add/Edit Model Modal -->
+          <NModal
+            v-model:show="showModelModal"
+            preset="card"
+            :title="editingModel ? 'Edit Model' : 'Add Model'"
+            style="width: 550px"
+          >
+            <NForm label-placement="left" label-width="120">
+              <NFormItem label="Display Name" required>
                 <NInput
-                  v-model:value="config.model.name"
-                  placeholder="e.g., gpt-4o, claude-sonnet-4-20250514"
-                  @update:value="markChanged"
+                  v-model:value="modelForm.name"
+                  placeholder="e.g., GPT-4o, Claude Sonnet, My Azure Model"
                 />
               </NFormItem>
 
-              <NFormItem label="Temperature">
-                <NSlider
-                  v-model:value="config.model.temperature"
-                  :min="0"
-                  :max="2"
-                  :step="0.1"
-                  :format-tooltip="(v: number) => v?.toFixed(1) ?? 'Default'"
-                  @update:value="markChanged"
+              <NFormItem label="Provider" required>
+                <NSelect
+                  v-model:value="modelForm.provider"
+                  :options="modelProviderOptions"
                 />
               </NFormItem>
 
-              <NFormItem label="Max Tokens">
-                <NInputNumber
-                  v-model:value="config.model.max_tokens"
-                  :min="1"
-                  :max="200000"
-                  placeholder="Default"
-                  clearable
-                  @update:value="markChanged"
+              <NDivider style="margin: 16px 0">Connection Settings</NDivider>
+
+              <NFormItem label="Model ID">
+                <NInput
+                  v-model:value="modelForm.model"
+                  :placeholder="modelIdPlaceholder"
                 />
               </NFormItem>
 
-              <NFormItem label="Parallel Tool Calls">
-                <NSwitch
-                  v-model:value="config.model.parallel_tool_calls"
-                  @update:value="markChanged"
-                />
-              </NFormItem>
-
-              <template v-if="isAnthropicProvider">
-                <NDivider>Extended Thinking (Anthropic)</NDivider>
-
-                <NFormItem label="Enable Thinking">
-                  <NSwitch
-                    v-model:value="config.model.thinking_enabled"
-                    @update:value="markChanged"
+              <template v-if="isModelFormAzure">
+                <NFormItem label="Deployment Name" required>
+                  <NInput
+                    v-model:value="modelForm.deployment_name"
+                    placeholder="Your Azure deployment name"
                   />
                 </NFormItem>
-
-                <NFormItem v-if="config.model.thinking_enabled" label="Thinking Budget">
-                  <NInputNumber
-                    v-model:value="config.model.thinking_budget_tokens"
-                    :min="1000"
-                    :max="100000"
-                    @update:value="markChanged"
-                  />
-                </NFormItem>
-              </template>
-
-              <template v-if="isAzureProvider">
-                <NDivider>Azure OpenAI Settings</NDivider>
 
                 <NFormItem label="API Version">
                   <NInput
-                    v-model:value="config.model.azure.api_version"
-                    @update:value="markChanged"
-                  />
-                </NFormItem>
-
-                <NFormItem label="Deployment Name">
-                  <NInput
-                    v-model:value="config.model.azure.deployment_name"
-                    placeholder="Or set via AZURE_OPENAI_DEPLOYMENT_NAME"
-                    @update:value="markChanged"
+                    v-model:value="modelForm.api_version"
+                    placeholder="2024-02-15-preview"
                   />
                 </NFormItem>
               </template>
 
-              <template v-if="isAzureAnthropicProvider">
-                <NDivider>Azure Foundry Anthropic Settings</NDivider>
+              <NFormItem label="Base URL">
+                <NInput
+                  v-model:value="modelForm.base_url"
+                  :placeholder="isModelFormAzure ? 'https://your-resource.openai.azure.com' : isModelFormOllama ? 'http://localhost:11434' : 'Leave empty for default'"
+                />
+              </NFormItem>
 
-                <NFormItem label="Resource Name">
-                  <NInput
-                    v-model:value="config.model.azure_anthropic.resource"
-                    placeholder="Or set via ANTHROPIC_FOUNDRY_RESOURCE"
-                    @update:value="markChanged"
-                  />
-                </NFormItem>
+              <NFormItem label="API Key">
+                <NInput
+                  v-model:value="modelForm.api_key"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="isModelFormOllama ? 'Not required for Ollama' : 'Leave empty to use environment variable'"
+                />
+              </NFormItem>
 
-                <NFormItem label="Deployment Name">
-                  <NInput
-                    v-model:value="config.model.azure_anthropic.deployment_name"
-                    placeholder="Defaults to model name"
-                    @update:value="markChanged"
-                  />
-                </NFormItem>
-              </template>
+              <NAlert v-if="!isModelFormOllama" type="info" style="margin-top: 8px">
+                <small>
+                  <strong>Tip:</strong> You can leave API Key empty to use environment variables
+                  ({{ modelForm.provider === 'OpenAI' ? 'OPENAI_API_KEY' : modelForm.provider === 'AzureOpenAI' ? 'AZURE_OPENAI_API_KEY' : 'ANTHROPIC_API_KEY' }}).
+                </small>
+              </NAlert>
             </NForm>
-          </NCard>
+
+            <template #footer>
+              <NSpace justify="end">
+                <NButton @click="showModelModal = false">Cancel</NButton>
+                <NButton type="primary" :loading="savingModel" @click="saveModel">
+                  {{ editingModel ? 'Update' : 'Add Model' }}
+                </NButton>
+              </NSpace>
+            </template>
+          </NModal>
 
           <!-- API Keys -->
           <NCard v-if="activeKey === 'keys'" class="settings-card">
@@ -930,5 +1244,116 @@ onMounted(fetchConfig)
 .server-detail {
   margin-top: 8px;
   color: #666;
+}
+
+/* Models Section Styles */
+.models-section {
+  max-width: 100%;
+}
+
+.models-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.models-header-text {
+  flex: 1;
+}
+
+.models-description {
+  margin: 0;
+  color: #888;
+  font-size: 14px;
+}
+
+.models-description code {
+  background: #2a2a2a;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.models-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+}
+
+.model-card {
+  border: 1px solid #333;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.model-card:hover {
+  border-color: #555;
+}
+
+.model-card-default {
+  border-width: 2px;
+  box-shadow: 0 0 12px rgba(99, 226, 183, 0.15);
+}
+
+.model-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.model-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.model-name {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.default-star {
+  color: #f0c000;
+  font-size: 16px;
+}
+
+.model-details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.model-detail-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.detail-label {
+  color: #888;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.detail-value {
+  color: #aaa;
+  background: #2a2a2a;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.detail-url {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty-models-card {
+  text-align: center;
+  padding: 40px 20px;
 }
 </style>
