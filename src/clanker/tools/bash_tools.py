@@ -9,10 +9,66 @@ from langchain.tools import tool
 
 from clanker.config import get_settings
 from clanker.logging import get_logger
+from clanker.runtime import is_yolo_mode
 from clanker.utils.sandbox import is_command_safe, requires_confirmation
 
 # Module logger
 logger = get_logger("tools.bash")
+
+
+class CommandRejectedError(Exception):
+    """Raised when user rejects a bash command."""
+    pass
+
+
+def prompt_for_approval(command: str) -> bool:
+    """Display approval prompt for a bash command.
+
+    Returns:
+        True if approved, False if rejected.
+
+    Raises:
+        CommandRejectedError: If user rejects or cancels.
+    """
+    import sys
+
+    # Clear any spinner/loading artifacts and move to new line
+    sys.stdout.write("\r\033[K")  # Clear current line
+    sys.stdout.flush()
+
+    # Format the prompt nicely
+    print()
+    print("\033[33m╭─────────────────────────────────────────────────────────────╮\033[0m")
+    print("\033[33m│\033[0m  \033[1;33mBash Command\033[0m                                               \033[33m│\033[0m")
+    print("\033[33m├─────────────────────────────────────────────────────────────┤\033[0m")
+
+    # Display command with wrapping
+    cmd_width = 57
+    if len(command) <= cmd_width:
+        print(f"\033[33m│\033[0m  \033[36m$\033[0m {command}")
+    else:
+        # First line
+        print(f"\033[33m│\033[0m  \033[36m$\033[0m {command[:cmd_width]}")
+        # Wrap remaining
+        remaining = command[cmd_width:]
+        while remaining:
+            chunk = remaining[:cmd_width]
+            remaining = remaining[cmd_width:]
+            print(f"\033[33m│\033[0m    {chunk}")
+
+    print("\033[33m├─────────────────────────────────────────────────────────────┤\033[0m")
+    print("\033[33m│\033[0m  [\033[32my\033[0m]es  execute     [\033[31mN\033[0m]o  reject and stop                   \033[33m│\033[0m")
+    print("\033[33m╰─────────────────────────────────────────────────────────────╯\033[0m")
+
+    try:
+        response = input("\033[33mApprove?\033[0m ").strip().lower()
+        if response in ("y", "yes"):
+            return True
+        else:
+            raise CommandRejectedError("User rejected the command")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        raise CommandRejectedError("Command cancelled")
 
 # Maximum output size to prevent memory issues
 MAX_OUTPUT_SIZE = 100_000  # 100KB
@@ -43,11 +99,9 @@ def bash(command: str, timeout: int | None = None) -> str:
         logger.warning("Command blocked: %s - %s", command[:50], reason)
         return f"Error: Command blocked - {reason}"
 
-    # Check if confirmation would be required (for now, just note it)
-    if requires_confirmation(command) and settings.safety.require_confirmation:
-        # In a real implementation, this would prompt the user
-        # For now, we'll allow it but note the risk
-        pass
+    # Command approval (unless in yolo mode)
+    if not is_yolo_mode():
+        prompt_for_approval(command)  # Raises CommandRejectedError if rejected
 
     # Set timeout
     timeout_seconds = timeout or (settings.safety.command_timeout // 1000)
@@ -117,6 +171,10 @@ async def bash_async(command: str, timeout: int | None = None) -> str:
     is_safe, reason = is_command_safe(command)
     if not is_safe:
         return f"Error: Command blocked - {reason}"
+
+    # Command approval (unless in yolo mode)
+    if not is_yolo_mode():
+        prompt_for_approval(command)  # Raises CommandRejectedError if rejected
 
     timeout_seconds = timeout or (settings.safety.command_timeout // 1000)
 

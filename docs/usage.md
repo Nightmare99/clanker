@@ -17,6 +17,9 @@ clanker -p azure -m gpt-4o
 
 # Resume a previous session
 clanker --resume <session-id>
+
+# Skip bash command approval (yolo mode)
+clanker --yolo
 ```
 
 ## Single Prompt
@@ -95,3 +98,33 @@ Models are configured in `~/.clanker/models.json` or via `clanker config`.
 ```
 ❯ Run the tests and show me any failures
 ```
+
+## Command Approval
+
+By default, all bash commands require approval before execution. When the AI wants to run a command, you'll see an approval prompt:
+
+```
+╭─────────────────────────────────────────────────────────────╮
+│  Bash Command                                               │
+├─────────────────────────────────────────────────────────────┤
+│  $ npm test
+├─────────────────────────────────────────────────────────────┤
+│  [y]es  execute     [N]o  reject and stop                   │
+╰─────────────────────────────────────────────────────────────╯
+Approve?
+```
+
+- Type `y` or `yes` to approve and execute the command
+- Press Enter or type anything else to reject and stop
+
+**Note:** Rejecting a command terminates the current AI response. This prevents the AI from trying alternative approaches after you've declined.
+
+### Yolo Mode
+
+If you trust the AI's commands and want to skip approval prompts, start Clanker with the `--yolo` flag:
+
+```bash
+clanker --yolo
+```
+
+In yolo mode, all bash commands execute automatically without asking for approval. A warning indicator will appear in the welcome message to remind you that this mode is active.

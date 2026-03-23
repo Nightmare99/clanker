@@ -6,6 +6,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 
 from clanker.config import Settings
+from clanker.tools.bash_tools import CommandRejectedError
+from clanker.runtime import is_yolo_mode
 
 
 @dataclass
@@ -157,6 +159,9 @@ def stream_agent_response_sync(
                                 shown_tool_calls.add(run_id)
                                 tool_name = event.get("name", "unknown")
                                 tool_input = event.get("data", {}).get("input", {})
+                                # Skip bash display when approval is needed (approval prompt shows it)
+                                if tool_name == "bash" and not is_yolo_mode():
+                                    continue
                                 pending_tools.append((tool_name, tool_input))
 
                     # Flush tools when execution completes
@@ -259,6 +264,18 @@ def stream_agent_response_sync(
                                 if not usage:
                                     total_input_tokens += meta.get("prompt_tokens", 0)
                                     total_output_tokens += meta.get("completion_tokens", 0)
+
+        except CommandRejectedError as e:
+            stop_loading()
+            rich_console.print(f"\n[bold yellow]Operation cancelled:[/bold yellow] {e}")
+            return StreamResult(
+                response="",
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_creation_tokens=cache_creation_tokens,
+                model_name=model_name,
+            )
 
         finally:
             stop_loading()  # Ensure loading spinner is stopped

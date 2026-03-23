@@ -332,6 +332,7 @@ class Console:
     def print_welcome(self) -> None:
         """Print welcome message."""
         from clanker.config import get_default_model
+        from clanker.runtime import is_yolo_mode
 
         agent_name = self._settings.agent.name
 
@@ -341,6 +342,11 @@ class Console:
             model_info = f"{current_model.name} [dim]({current_model.provider})[/dim]"
         else:
             model_info = f"{self._settings.model.name} [dim]({self._settings.model.provider})[/dim]"
+
+        # Yolo mode indicator
+        yolo_line = ""
+        if is_yolo_mode():
+            yolo_line = "\n  [bold yellow]YOLO MODE[/bold yellow] [dim]- bash commands auto-approved[/dim]"
 
         welcome = f"""
 [bold cyan]
@@ -356,7 +362,7 @@ class Console:
 
 [dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]
   Systems online. Circuits humming. Ready to build.
-  Model: [bold cyan]{model_info}[/bold cyan]
+  Model: [bold cyan]{model_info}[/bold cyan]{yolo_line}
 [dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]
 
 Commands:

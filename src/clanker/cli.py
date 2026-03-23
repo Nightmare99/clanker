@@ -34,6 +34,7 @@ from clanker.memory.memories import get_memory_store
 from clanker.ui.console import Console
 from clanker.ui.streaming import StreamResult, stream_agent_response_sync
 from clanker.ui.token_tracking import SessionTokenTracker
+from clanker.runtime import set_yolo_mode
 
 # Load environment variables
 load_dotenv()
@@ -595,6 +596,11 @@ class ClankerGroup(click.Group):
     is_flag=True,
     help="Show version and exit",
 )
+@click.option(
+    "--yolo",
+    is_flag=True,
+    help="Skip bash command approval (auto-execute all commands)",
+)
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -605,6 +611,7 @@ def main(
     history: bool,
     memories: bool,
     version: bool,
+    yolo: bool,
 ) -> None:
     """Clanker - AI-Powered Coding Assistant.
 
@@ -631,6 +638,9 @@ def main(
     if version:
         click.echo(f"Clanker v{__version__}")
         return
+
+    # Set yolo mode (skip bash command approval)
+    set_yolo_mode(yolo)
 
     console = Console()
 
