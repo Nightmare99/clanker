@@ -83,6 +83,8 @@ def stream_agent_response_sync(
         pending_tools: list[tuple[str, dict]] = []  # Collect parallel tool calls
         current_model_run: str | None = None  # Track current model run_id
         thinking_shown = False
+        in_think_tag = False  # Track if we're inside <think>...</think> tags
+        think_tag_closed = False  # Track if </think> has been seen
         rich_console = console._console
 
         # Loading state
@@ -195,6 +197,8 @@ def stream_agent_response_sync(
                             current_thinking = ""
                             thinking_shown = False
                             first_content_received = False
+                            in_think_tag = False
+                            think_tag_closed = False
                             current_model_run = run_id
 
                     # Stream text from LLM
@@ -203,9 +207,9 @@ def stream_agent_response_sync(
                         if chunk:
                             content = getattr(chunk, "content", None)
 
-                            # Stop loading on first content
+                            # Track first content but don't stop loading yet
+                            # (we'll stop when we get actual response, not thinking)
                             if content and not first_content_received:
-                                stop_loading()
                                 first_content_received = True
 
                             # Handle Anthropic list content (with thinking blocks)
@@ -222,6 +226,7 @@ def stream_agent_response_sync(
                                         elif block.get("type") == "text":
                                             text = block.get("text", "")
                                             if text:
+                                                stop_loading()
                                                 current_response += text
                                     elif hasattr(block, "type"):
                                         if block.type == "thinking":
@@ -234,11 +239,62 @@ def stream_agent_response_sync(
                                         elif block.type == "text":
                                             text = getattr(block, "text", "")
                                             if text:
+                                                stop_loading()
                                                 current_response += text
 
                             # Handle string content (standard format)
                             elif content and isinstance(content, str):
-                                current_response += content
+                                # Handle <think>...</think> tags (DeepSeek, etc.)
+                                # Some models output thinking without <think> tag, just </think> at end
+                                remaining = content
+                                while remaining:
+                                    if think_tag_closed:
+                                        # Already past thinking - everything is response
+                                        stop_loading()  # Stop spinner when response starts
+                                        current_response += remaining
+                                        remaining = ""
+                                    elif in_think_tag:
+                                        # Inside explicit <think> tag
+                                        end_idx = remaining.find("</think>")
+                                        if end_idx != -1:
+                                            current_thinking += remaining[:end_idx]
+                                            remaining = remaining[end_idx + 8:]
+                                            in_think_tag = False
+                                            think_tag_closed = True
+                                            stop_loading()  # Stop spinner when thinking ends
+                                        else:
+                                            current_thinking += remaining
+                                            remaining = ""
+                                    else:
+                                        # Check for </think> (implicit thinking mode)
+                                        end_idx = remaining.find("</think>")
+                                        start_idx = remaining.find("<think>")
+
+                                        if start_idx != -1 and (end_idx == -1 or start_idx < end_idx):
+                                            # Found <think> tag first
+                                            current_response += remaining[:start_idx]
+                                            remaining = remaining[start_idx + 7:]
+                                            in_think_tag = True
+                                            if not thinking_shown:
+                                                console.print_thinking_start()
+                                                thinking_shown = True
+                                        elif end_idx != -1:
+                                            # Found </think> without <think> - all prior is thinking
+                                            current_thinking += remaining[:end_idx]
+                                            remaining = remaining[end_idx + 8:]
+                                            think_tag_closed = True
+                                            stop_loading()  # Stop spinner when thinking ends
+                                            if not thinking_shown and current_thinking:
+                                                console.print_thinking_start()
+                                                thinking_shown = True
+                                        else:
+                                            # No tags yet - buffer as potential thinking
+                                            # We'll reclassify if we see </think> later
+                                            current_thinking += remaining
+                                            if not thinking_shown:
+                                                console.print_thinking_start()
+                                                thinking_shown = True
+                                            remaining = ""
 
                     # Capture token usage when model completes
                     elif event_type == "on_chat_model_end":
@@ -293,6 +349,12 @@ def stream_agent_response_sync(
 
         finally:
             stop_loading()  # Ensure loading spinner is stopped
+
+        # If we buffered thinking but never saw </think>, treat it as response
+        # This handles models that don't use think tags
+        if current_thinking and not think_tag_closed and not current_response:
+            current_response = current_thinking
+            current_thinking = ""
 
         # Print final response as plain text
         if current_response.strip():
