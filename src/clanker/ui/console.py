@@ -229,13 +229,37 @@ class Console:
 
         self._console.print(text)
 
-    def print_tool_result(self, result: str, truncate: int = 500) -> None:
-        """Print a tool result."""
+    def print_tool_result(self, result: str, max_lines: int = 3, max_chars: int = 200) -> None:
+        """Print a tool result in muted grey, truncated."""
         if not self._settings.output.show_tool_calls:
             return
 
-        display = result[:truncate] + "..." if len(result) > truncate else result
-        self._console.print(Text(display, style="dim"))
+        # Clean and truncate the result
+        result = result.strip()
+        if not result:
+            return
+
+        lines = result.split('\n')
+        if len(lines) > max_lines:
+            display_lines = lines[:max_lines]
+            display = '\n'.join(display_lines)
+            suffix = f"  ... (+{len(lines) - max_lines} lines)"
+        else:
+            display = result
+            suffix = ""
+
+        # Truncate if still too long
+        if len(display) > max_chars:
+            display = display[:max_chars] + "..."
+            suffix = ""
+
+        # Print with indentation and muted style
+        text = Text()
+        text.append("    ", style="dim")  # Indent
+        text.append(display.replace('\n', '\n    '), style="dim")  # Keep indent on newlines
+        if suffix:
+            text.append(suffix, style="dim italic")
+        self._console.print(text)
 
     def print_edit_diff(self, old_string: str, new_string: str) -> None:
         """Print a diff showing what was changed in an edit operation."""

@@ -168,6 +168,20 @@ def stream_agent_response_sync(
                     elif event_type == "on_tool_end":
                         if pending_tools:
                             flush_pending_tools()
+                        # Show tool output (truncated, muted)
+                        if settings.output.show_tool_calls:
+                            data = event.get("data", {})
+                            # Tool output can be in 'output' directly or nested
+                            tool_output = data.get("output")
+                            # Handle ToolMessage objects
+                            if tool_output is None:
+                                tool_output = ""
+                            elif hasattr(tool_output, "content"):
+                                tool_output = tool_output.content
+                            elif not isinstance(tool_output, str):
+                                tool_output = str(tool_output)
+                            if tool_output and tool_output.strip():
+                                console.print_tool_result(tool_output)
                         # Restart loading while waiting for next model response
                         start_loading()
 
