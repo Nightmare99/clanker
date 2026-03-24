@@ -92,11 +92,17 @@ main() {
         info "Current version: ${INSTALLED_VERSION}"
         info "Latest version:  ${VERSION}"
         echo ""
-        read -p "Upgrade to ${VERSION}? [Y/n] " -n 1 -r
-        echo ""
-        if [[ $REPLY =~ ^[Nn]$ ]]; then
-            info "Upgrade cancelled."
-            exit 0
+
+        # Check if running interactively
+        if [ -t 0 ]; then
+            read -p "Upgrade to ${VERSION}? [Y/n] " -n 1 -r
+            echo ""
+            if [[ $REPLY =~ ^[Nn]$ ]]; then
+                info "Upgrade cancelled."
+                exit 0
+            fi
+        else
+            info "Upgrading to ${VERSION}..."
         fi
     fi
 
