@@ -2,7 +2,7 @@
 set -e
 
 # Clanker Installation Script
-# Usage: curl -fsSL https://raw.githubusercontent.com/USER/clanker/main/scripts/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.sh | bash
 
 REPO="Nightmare99/clanker"
 INSTALL_DIR="${CLANKER_INSTALL_DIR:-$HOME/.local/bin}"
@@ -46,6 +46,15 @@ get_latest_version() {
         sed -E 's/.*"([^"]+)".*/\1/'
 }
 
+# Get installed version
+get_installed_version() {
+    if command -v clanker &> /dev/null; then
+        clanker --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1
+    elif [ -x "${INSTALL_DIR}/clanker" ]; then
+        "${INSTALL_DIR}/clanker" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1
+    fi
+}
+
 # Main installation
 main() {
     echo ""
@@ -66,6 +75,30 @@ main() {
         error "Could not determine latest version. Check your internet connection."
     fi
     info "Latest version: ${VERSION}"
+
+    # Check for existing installation
+    INSTALLED_VERSION=$(get_installed_version)
+    if [ -n "$INSTALLED_VERSION" ]; then
+        # Normalize versions for comparison (remove 'v' prefix)
+        INSTALLED_CLEAN="${INSTALLED_VERSION#v}"
+        LATEST_CLEAN="${VERSION#v}"
+
+        if [ "$INSTALLED_CLEAN" = "$LATEST_CLEAN" ]; then
+            success "Clanker ${VERSION} is already installed and up to date!"
+            exit 0
+        fi
+
+        echo ""
+        info "Current version: ${INSTALLED_VERSION}"
+        info "Latest version:  ${VERSION}"
+        echo ""
+        read -p "Upgrade to ${VERSION}? [Y/n] " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            info "Upgrade cancelled."
+            exit 0
+        fi
+    fi
 
     # Construct download URL based on OS
     case "$OS" in

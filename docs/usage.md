@@ -1,25 +1,36 @@
 # Usage
 
+## CLI Flags
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--help` | `-h` | Show help and exit |
+| `--version` | `-v` | Show version and exit |
+| `--check-update` | | Check for updates and exit |
+| `--model <name>` | `-m` | Use a specific model |
+| `--provider <name>` | `-p` | Use a specific provider |
+| `--resume <id>` | `-r` | Resume a previous session |
+| `--history` | | List past conversations |
+| `--memories` | | Show stored memories |
+| `--yolo` | | Skip bash command approval |
+
 ## Interactive Mode
 
 ```bash
-# Start with default provider
+# Start with default model
 clanker
 
-# Start with specific provider
-clanker --provider azure
-
-# Start with a specific model
-clanker --provider azure --model gpt-4o
-
-# Short form
-clanker -p azure -m gpt-4o
+# Start with a specific model (from models.json)
+clanker -m "Claude Sonnet"
 
 # Resume a previous session
 clanker --resume <session-id>
 
 # Skip bash command approval (yolo mode)
 clanker --yolo
+
+# Check for updates
+clanker --check-update
 ```
 
 ## Single Prompt
@@ -128,3 +139,22 @@ clanker --yolo
 ```
 
 In yolo mode, all bash commands execute automatically without asking for approval. A warning indicator will appear in the welcome message to remind you that this mode is active.
+
+## Checking for Updates
+
+Clanker can check for new releases on GitHub:
+
+```bash
+# Manual check
+clanker --check-update
+```
+
+On startup, Clanker automatically checks for updates and shows a notification if a new version is available:
+
+```
+[Update Available]
+v0.1.0 -> v0.2.0
+Run: curl -fsSL https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.sh | bash
+```
+
+To update, run the install script - it will detect the existing installation and prompt before upgrading.

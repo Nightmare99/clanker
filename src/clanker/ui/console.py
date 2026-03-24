@@ -344,6 +344,14 @@ class Console:
         """Print an info message."""
         self._console.print(Text(message, style="info"))
 
+    def print_update_available(self, message: str) -> None:
+        """Print an update available notification."""
+        self._console.print()
+        self._console.print(Text("  [Update Available]", style="bold yellow"))
+        for line in message.split("\n"):
+            self._console.print(Text(f"  {line}", style="yellow"))
+        self._console.print()
+
     def print_success(self, message: str) -> None:
         """Print a success message."""
         self._console.print(Text(message, style="success"))

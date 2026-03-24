@@ -335,6 +335,15 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
 
     console.print_welcome()
 
+    # Check for updates (non-blocking, silent on failure)
+    try:
+        from clanker.update import get_update_message
+        update_msg = get_update_message()
+        if update_msg:
+            console.print_update_available(update_msg)
+    except Exception:
+        pass  # Silently ignore update check failures
+
     working_dir = os.getcwd()
 
     # Track messages for saving
@@ -597,6 +606,11 @@ class ClankerGroup(click.Group):
     help="Show version and exit",
 )
 @click.option(
+    "--check-update",
+    is_flag=True,
+    help="Check for updates and exit",
+)
+@click.option(
     "--yolo",
     is_flag=True,
     help="Skip bash command approval (auto-execute all commands)",
@@ -611,6 +625,7 @@ def main(
     history: bool,
     memories: bool,
     version: bool,
+    check_update: bool,
     yolo: bool,
 ) -> None:
     """Clanker - AI-Powered Coding Assistant.
@@ -637,6 +652,21 @@ def main(
 
     if version:
         click.echo(f"Clanker v{__version__}")
+        return
+
+    if check_update:
+        from clanker.update import check_for_update, REPO
+        click.echo(f"Current version: v{__version__}")
+        click.echo("Checking for updates...")
+        update_available, latest, _ = check_for_update()
+        if update_available and latest:
+            click.echo(f"Update available: {latest}")
+            click.echo(f"\nTo update, run:")
+            click.echo(f"  curl -fsSL https://raw.githubusercontent.com/{REPO}/main/scripts/install.sh | bash")
+        elif latest:
+            click.echo("You're on the latest version!")
+        else:
+            click.echo("Could not check for updates. Check your internet connection.")
         return
 
     # Set yolo mode (skip bash command approval)

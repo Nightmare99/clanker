@@ -1,38 +1,47 @@
 # Installation
 
-## Pre-built Binaries (Recommended)
+## One-Line Install (Recommended)
 
-Download the latest binary for your platform from [GitHub Releases](https://github.com/yourusername/clanker/releases).
+The easiest way to install Clanker:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.sh | bash
+```
+
+This script:
+- Detects your OS (Linux, macOS, Windows/WSL) and architecture (amd64, arm64)
+- Downloads the latest release from GitHub
+- Installs to `~/.local/bin` (configurable via `CLANKER_INSTALL_DIR`)
+- Prompts before upgrading if already installed
+
+### Custom Install Location
+
+```bash
+CLANKER_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.sh | bash
+```
+
+## Manual Download
+
+Download from [GitHub Releases](https://github.com/Nightmare99/clanker/releases):
 
 ### Linux
 
 ```bash
-# Download
-curl -LO https://github.com/yourusername/clanker/releases/latest/download/clanker-linux-amd64.tar.gz
-
-# Extract
+curl -LO https://github.com/Nightmare99/clanker/releases/latest/download/clanker-linux-amd64.tar.gz
 tar -xzf clanker-linux-amd64.tar.gz
-
-# Install (optional)
 sudo mv clanker /usr/local/bin/
-
-# Or add to your PATH
-chmod +x clanker
-./clanker --version
 ```
 
 ### macOS
 
 ```bash
 # Intel Mac
-curl -LO https://github.com/yourusername/clanker/releases/latest/download/clanker-darwin-amd64.tar.gz
-tar -xzf clanker-darwin-amd64.tar.gz
+curl -LO https://github.com/Nightmare99/clanker/releases/latest/download/clanker-darwin-amd64.tar.gz
 
 # Apple Silicon (M1/M2/M3)
-curl -LO https://github.com/yourusername/clanker/releases/latest/download/clanker-darwin-arm64.tar.gz
-tar -xzf clanker-darwin-arm64.tar.gz
+curl -LO https://github.com/Nightmare99/clanker/releases/latest/download/clanker-darwin-arm64.tar.gz
 
-# Install
+tar -xzf clanker-darwin-*.tar.gz
 sudo mv clanker /usr/local/bin/
 
 # Note: You may need to allow the binary in System Preferences > Security & Privacy
@@ -58,35 +67,57 @@ pipx install clanker
 ## From Source
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/clanker.git
+git clone https://github.com/Nightmare99/clanker.git
 cd clanker
-
-# Install in development mode
 pip install -e ".[dev]"
-
-# Run
 clanker --version
 ```
 
 ## Building Binaries Locally
 
-If you want to build your own binary:
-
 ```bash
-# Install build dependencies
+# Install dependencies and build
 pip install -e ".[dev]"
-
-# Run the build script
 ./scripts/build.sh
 
-# The binary will be in dist/clanker
+# Binary will be at dist/clanker (~100MB)
 ./dist/clanker --version
+```
+
+## Updating
+
+### Check for Updates
+
+```bash
+clanker --check-update
+```
+
+Clanker also shows a notification on startup if an update is available.
+
+### Update to Latest
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.sh | bash
+```
+
+The install script detects existing installations and prompts before upgrading.
+
+## Uninstalling
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/uninstall.sh | bash
+```
+
+Or manually:
+
+```bash
+rm ~/.local/bin/clanker
+rm -rf ~/.clanker  # Remove config (optional)
 ```
 
 ## Configuration
 
-After installation, run `clanker` to start the setup wizard, or create a configuration manually:
+After installation, run `clanker` to start the setup wizard, or:
 
 1. Set your API key:
    ```bash

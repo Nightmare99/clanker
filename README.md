@@ -16,9 +16,17 @@ An AI-powered coding assistant CLI built with LangChain and LangGraph.
 
 ## Quick Start
 
-### Pre-built Binary (Recommended)
+### One-Line Install (Recommended)
 
-Download from [GitHub Releases](https://github.com/yourusername/clanker/releases):
+```bash
+curl -fsSL https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.sh | bash
+```
+
+This automatically detects your OS/architecture and installs the latest release.
+
+### Manual Download
+
+Download from [GitHub Releases](https://github.com/Nightmare99/clanker/releases):
 - **Linux**: `clanker-linux-amd64.tar.gz`
 - **macOS Intel**: `clanker-darwin-amd64.tar.gz`
 - **macOS ARM**: `clanker-darwin-arm64.tar.gz`
@@ -27,24 +35,9 @@ Download from [GitHub Releases](https://github.com/yourusername/clanker/releases
 ### From Source
 
 ```bash
-# Install
 pip install -e ".[dev]"
-
-# Set your API key
 export ANTHROPIC_API_KEY=your-key
-
-# Run
 clanker
-```
-
-Or with Azure OpenAI:
-
-```bash
-export AZURE_OPENAI_API_KEY=your-key
-export AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-export AZURE_OPENAI_DEPLOYMENT_NAME=your-deployment
-
-clanker -p azure
 ```
 
 ## Usage
@@ -53,8 +46,10 @@ clanker -p azure
 clanker                        # Interactive mode
 clanker "explain main.py"      # Single prompt
 clanker config                 # Web configuration UI
-clanker -p azure -m gpt-4o     # Specify provider/model
+clanker -m claude              # Use a specific model
 clanker --resume <session-id>  # Resume conversation
+clanker --yolo                 # Auto-execute bash commands (skip approval)
+clanker --check-update         # Check for updates
 ```
 
 ## Documentation
