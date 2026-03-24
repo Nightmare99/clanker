@@ -16,6 +16,16 @@ An AI-powered coding assistant CLI built with LangChain and LangGraph.
 
 ## Quick Start
 
+### Pre-built Binary (Recommended)
+
+Download from [GitHub Releases](https://github.com/yourusername/clanker/releases):
+- **Linux**: `clanker-linux-amd64.tar.gz`
+- **macOS Intel**: `clanker-darwin-amd64.tar.gz`
+- **macOS ARM**: `clanker-darwin-arm64.tar.gz`
+- **Windows**: `clanker-windows-amd64.zip`
+
+### From Source
+
 ```bash
 # Install
 pip install -e ".[dev]"
@@ -51,6 +61,7 @@ clanker --resume <session-id>  # Resume conversation
 
 | Topic | Description |
 |-------|-------------|
+| [Installation](docs/installation.md) | Pre-built binaries, pip, building from source |
 | [Configuration](docs/configuration.md) | Config file, web UI, environment variables |
 | [Usage Guide](docs/usage.md) | Commands, interactive mode, examples |
 | [Tools](docs/tools.md) | Available tools and their usage |
