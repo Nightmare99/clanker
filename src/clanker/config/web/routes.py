@@ -302,6 +302,8 @@ class ModelRequest(BaseModel):
     # Extended thinking (Anthropic only)
     thinking_enabled: bool = False
     thinking_budget_tokens: int = 10000
+    # Reasoning effort (Azure OpenAI o1/o3 models)
+    reasoning_effort: str | None = None
 
 
 class SetDefaultRequest(BaseModel):
@@ -345,6 +347,7 @@ async def create_model_config(request: ModelRequest) -> MessageResponse:
             max_tokens=request.max_tokens,
             thinking_enabled=request.thinking_enabled,
             thinking_budget_tokens=request.thinking_budget_tokens,
+            reasoning_effort=request.reasoning_effort,
         )
         add_model(model)
         return MessageResponse(message=f"Model '{request.name}' saved successfully", success=True)
@@ -377,6 +380,7 @@ async def update_model_config(name: str, request: ModelRequest) -> MessageRespon
             max_tokens=request.max_tokens,
             thinking_enabled=request.thinking_enabled,
             thinking_budget_tokens=request.thinking_budget_tokens,
+            reasoning_effort=request.reasoning_effort,
         )
 
         # If name changed, remove old one

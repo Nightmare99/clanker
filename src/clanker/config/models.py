@@ -33,9 +33,12 @@ class ModelConfig(BaseModel):
     # Token limits
     max_tokens: int | None = Field(default=None, description="Maximum tokens for response")
 
-    # Extended thinking (Anthropic only)
+    # Extended thinking (Anthropic)
     thinking_enabled: bool = Field(default=False, description="Enable extended thinking mode")
     thinking_budget_tokens: int = Field(default=10000, description="Token budget for thinking")
+
+    # Reasoning effort (Azure OpenAI o1/o3 models)
+    reasoning_effort: str | None = Field(default=None, description="Reasoning effort: low, medium, high")
 
     class Config:
         extra = "allow"  # Allow additional provider-specific fields
@@ -159,6 +162,19 @@ def create_llm_from_config(model_config: ModelConfig):
         if model_config.base_url:
             kwargs["base_url"] = model_config.base_url
 
+        # Reasoning effort for o1/o3/GPT-5+ models
+        if model_config.reasoning_effort:
+            kwargs["reasoning_effort"] = model_config.reasoning_effort
+            logger.info(
+                "Reasoning enabled for %s with effort: %s",
+                model_config.name,
+                model_config.reasoning_effort,
+            )
+
+        # Max tokens if specified
+        if model_config.max_tokens:
+            kwargs["max_tokens"] = model_config.max_tokens
+
         # stream_usage enables token counts in streaming responses
         return ChatOpenAI(
             api_key=api_key,
@@ -185,14 +201,29 @@ def create_llm_from_config(model_config: ModelConfig):
         # Don't set temperature - some Azure models (o1, o3, gpt-5) only support default (1)
         # We need to set it to 1 explicitly since LangChain defaults to 0.7
         # stream_usage enables token counts in streaming responses
-        return AzureChatOpenAI(
-            azure_endpoint=base_url,
-            azure_deployment=deployment,
-            api_version=api_version,
-            api_key=api_key,
-            temperature=1,
-            stream_usage=True,
-        )
+        kwargs = {
+            "azure_endpoint": base_url,
+            "azure_deployment": deployment,
+            "api_version": api_version,
+            "api_key": api_key,
+            "temperature": 1,
+            "stream_usage": True,
+        }
+
+        # Reasoning effort for o1/o3/GPT-5+ models
+        if model_config.reasoning_effort:
+            kwargs["reasoning_effort"] = model_config.reasoning_effort
+            logger.info(
+                "Reasoning enabled for %s with effort: %s",
+                model_config.name,
+                model_config.reasoning_effort,
+            )
+
+        # Max tokens if specified
+        if model_config.max_tokens:
+            kwargs["max_tokens"] = model_config.max_tokens
+
+        return AzureChatOpenAI(**kwargs)
 
     elif provider == "Anthropic":
         from langchain_anthropic import ChatAnthropic

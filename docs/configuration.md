@@ -10,6 +10,7 @@ The recommended way to configure LLM providers is using the JSON-based models co
 - Switch between models easily with the `/model` command
 - Store API keys and connection settings per model
 - Enable extended thinking for Anthropic models
+- Enable reasoning for Azure OpenAI o1/o3 models
 
 ### Example models.json
 
@@ -32,6 +33,14 @@ The recommended way to configure LLM providers is using the JSON-based models co
       "base_url": "https://your-resource.openai.azure.com",
       "api_key": null,
       "api_version": "2024-10-21"
+    },
+    {
+      "name": "o3 Reasoning",
+      "provider": "AzureOpenAI",
+      "deployment_name": "o3",
+      "base_url": "https://your-resource.openai.azure.com",
+      "api_key": null,
+      "reasoning_effort": "medium"
     },
     {
       "name": "GPT-4o (OpenAI)",
@@ -64,6 +73,7 @@ The recommended way to configure LLM providers is using the JSON-based models co
 | `api_version` | No | Azure API version (AzureOpenAI only) |
 | `thinking_enabled` | No | Enable extended thinking (Anthropic only) |
 | `thinking_budget_tokens` | No | Token budget for thinking (default: 10000) |
+| `reasoning_effort` | No | Reasoning effort: `low`, `medium`, `high` (AzureOpenAI o1/o3 only) |
 
 ### Switching Models
 
@@ -121,6 +131,7 @@ The web UI provides:
 
 - **Models Management**: Add, edit, delete, and test model configurations
 - **Extended Thinking**: Enable and configure thinking budget for Claude models
+- **Reasoning Effort**: Configure reasoning for Azure OpenAI o1/o3 models
 - **Max Tokens**: Configure token limits per model
 - **Set Default Model**: Choose which model to use by default
 - **MCP Server Management**: Add, edit, delete, and test MCP server connections
@@ -148,6 +159,42 @@ Configure via `models.json`:
 ```
 
 **Important**: When thinking is enabled, `max_tokens` must be greater than `thinking_budget_tokens`. If not specified, `max_tokens` defaults to `thinking_budget_tokens + 16000`.
+
+## Reasoning (OpenAI o1/o3/GPT-5+)
+
+OpenAI's o1, o3, and GPT-5+ models support a reasoning feature that allows the model to "think" before responding. This is controlled via the `reasoning_effort` parameter and works with both direct OpenAI API and Azure OpenAI.
+
+Configure via `models.json`:
+
+```json
+{
+  "name": "GPT-5 Pro",
+  "provider": "OpenAI",
+  "model": "gpt-5-pro",
+  "reasoning_effort": "high"
+}
+```
+
+Or for Azure OpenAI:
+
+```json
+{
+  "name": "o3 High Reasoning",
+  "provider": "AzureOpenAI",
+  "deployment_name": "o3",
+  "base_url": "https://your-resource.openai.azure.com",
+  "reasoning_effort": "high"
+}
+```
+
+**Reasoning Effort Levels**:
+- `minimal` - Lightest reasoning, fastest responses
+- `low` - Light reasoning, faster responses
+- `medium` - Balanced reasoning (recommended for most tasks)
+- `high` - Deep reasoning, best for complex problems (default for gpt-5-pro)
+- `xhigh` - Maximum reasoning, only supported for models after GPT-5.1
+
+**Note**: Reasoning only works with o1, o3, GPT-5, and similar reasoning-capable models. Using it with older models (like gpt-4o) will have no effect.
 
 ## Environment Variables
 

@@ -119,6 +119,8 @@ interface ModelConfig {
   // Extended thinking (Anthropic only)
   thinking_enabled: boolean
   thinking_budget_tokens: number
+  // Reasoning effort (Azure OpenAI o1/o3 models)
+  reasoning_effort: string | null
 }
 
 // State
@@ -150,6 +152,7 @@ const modelForm = ref<ModelConfig>({
   max_tokens: null,
   thinking_enabled: false,
   thinking_budget_tokens: 10000,
+  reasoning_effort: null,
 })
 
 // MCP Server editing
@@ -221,6 +224,7 @@ const isAzureAnthropicProvider = computed(() => config.value?.model.provider ===
 
 // Model form computed
 const isModelFormAzure = computed(() => modelForm.value.provider === 'AzureOpenAI')
+const isModelFormOpenAI = computed(() => modelForm.value.provider === 'OpenAI')
 const isModelFormAnthropic = computed(() => modelForm.value.provider === 'Anthropic')
 const isModelFormOllama = computed(() => modelForm.value.provider === 'Ollama')
 
@@ -277,6 +281,7 @@ function openAddModel() {
     max_tokens: null,
     thinking_enabled: false,
     thinking_budget_tokens: 10000,
+    reasoning_effort: null,
   }
   showModelModal.value = true
 }
@@ -668,6 +673,10 @@ onMounted(() => {
                     <span class="detail-label">Thinking:</span>
                     <NTag size="small" type="info">{{ model.thinking_budget_tokens?.toLocaleString() }} tokens</NTag>
                   </div>
+                  <div v-if="model.reasoning_effort" class="model-detail-row">
+                    <span class="detail-label">Reasoning:</span>
+                    <NTag size="small" type="warning">{{ model.reasoning_effort }}</NTag>
+                  </div>
                 </div>
 
                 <!-- Card Actions -->
@@ -819,6 +828,35 @@ onMounted(() => {
                   ({{ modelForm.provider === 'OpenAI' ? 'OPENAI_API_KEY' : modelForm.provider === 'AzureOpenAI' ? 'AZURE_OPENAI_API_KEY' : 'ANTHROPIC_API_KEY' }}).
                 </small>
               </NAlert>
+
+              <!-- Reasoning Effort (OpenAI o1/o3/GPT-5+ models) -->
+              <template v-if="isModelFormAzure || isModelFormOpenAI">
+                <NDivider style="margin: 16px 0">Reasoning (o1/o3/GPT-5+ models)</NDivider>
+
+                <NFormItem label="Reasoning Effort">
+                  <NSelect
+                    v-model:value="modelForm.reasoning_effort"
+                    :options="[
+                      { label: 'None (disabled)', value: null },
+                      { label: 'Minimal', value: 'minimal' },
+                      { label: 'Low', value: 'low' },
+                      { label: 'Medium', value: 'medium' },
+                      { label: 'High', value: 'high' },
+                      { label: 'Extra High (GPT-5.1+)', value: 'xhigh' },
+                    ]"
+                    clearable
+                    placeholder="Select reasoning effort"
+                  />
+                </NFormItem>
+
+                <NAlert v-if="modelForm.reasoning_effort" type="info" style="margin-top: 8px">
+                  <small>
+                    Reasoning effort controls how much the model "thinks" before responding.
+                    Works with o1, o3, GPT-5, and newer reasoning-capable models.
+                    "xhigh" is only supported for models after GPT-5.1.
+                  </small>
+                </NAlert>
+              </template>
 
               <!-- Extended Thinking (Anthropic only) -->
               <template v-if="isModelFormAnthropic">
