@@ -4,7 +4,7 @@ set -e
 # Clanker Installation Script
 # Usage: curl -fsSL https://raw.githubusercontent.com/USER/clanker/main/scripts/install.sh | bash
 
-REPO="USER/clanker"  # Update with actual repo
+REPO="Nightmare99/clanker"
 INSTALL_DIR="${CLANKER_INSTALL_DIR:-$HOME/.local/bin}"
 BINARY_NAME="clanker"
 
