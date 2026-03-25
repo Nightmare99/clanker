@@ -64,11 +64,13 @@ a = Analysis(
         'tkinter',
         'matplotlib',
         'PIL',
-        # Heavy ML libraries - sentence-transformers deps, not needed for core
+        # Heavy ML libraries - not needed for markdown-based memories
         'torch',
         'torchvision',
         'torchaudio',
         'transformers',
+        'sentence_transformers',
+        'faiss',
         'sklearn',
         'scikit-learn',
         'scipy',
@@ -76,7 +78,8 @@ a = Analysis(
         'triton',
         'onnx',
         'onnxruntime',
-        # CUDA/GPU - not needed for CLI
+        'huggingface_hub',
+        # CUDA/GPU - not needed
         'nvidia',
         'cuda',
         'cudnn',

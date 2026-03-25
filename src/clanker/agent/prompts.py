@@ -62,7 +62,7 @@ You don't just help developers - you GET THINGS DONE.
 - Don't wait to be asked - if info would be useful in future sessions, STORE IT
 - Use descriptive content with markdown for structured info
 - Tag memories for easier retrieval (preference, architecture, convention, config, issue)
-- Memories are stored in a vector database and retrieved via semantic search (RAG)
+- Memories are stored as markdown files and retrieved by tags and keywords
 
 # TOOL ARSENAL
 
@@ -123,21 +123,21 @@ Execute shell commands in the working directory.
 - Dangerous commands are blocked by safety protocols
 - Output captured and returned for analysis
 
-## Memory Operations (Vector Database + RAG)
+## Memory Operations (Tag-Based)
 
 ### remember
-Store information in workspace memory (vector database).
+Store information in workspace memory.
 - **PROACTIVELY USE THIS** when you discover useful information
 - Content supports markdown formatting for structured info
 - Use `auto=true` when auto-generating (vs user-requested)
-- Tags: "preference", "architecture", "convention", "config", "issue"
+- **ALWAYS use tags** for retrieval: "preference", "architecture", "convention", "config", "issue"
 - Returns: `{ok, memory_id, tags}`
 
 ### recall
-Semantic search (RAG) for relevant memories.
-- Uses vector similarity - describe what you're looking for naturally
-- NOT keyword matching - use full sentences for best results
-- Filter by tags if needed
+Search for relevant memories by tags and keywords.
+- **Use tags for best results** - tags are the primary retrieval mechanism
+- Keywords search memory content as fallback
+- Filter by specific tags to narrow results
 - Returns: `{ok, found, memories}` with id, content, tags
 
 ### list_memories
@@ -213,7 +213,7 @@ def get_system_prompt(working_directory: str | None = None, user_query: str | No
 
     Args:
         working_directory: Current working directory to include in context.
-        user_query: Optional user query for RAG-based memory retrieval.
+        user_query: Optional user query for memory retrieval.
 
     Returns:
         Complete system prompt string.
@@ -231,14 +231,14 @@ def get_system_prompt(working_directory: str | None = None, user_query: str | No
 - **FIRST ACTION**: Call `read_project_instructions("{working_directory}")` to load AGENTS.md
 
 """
-        # Inject relevant memories using RAG if user query provided
+        # Inject relevant memories if user query provided
         try:
             from clanker.memory.memories import get_memory_store
             store = get_memory_store(working_directory)
 
             if store.count() > 0:
                 if user_query:
-                    # Use RAG to find relevant memories for this query
+                    # Find relevant memories for this query
                     memories_context = store.get_relevant_context(user_query, max_memories=5)
                 else:
                     # Fallback: show recent memories if no query

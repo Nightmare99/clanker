@@ -1,18 +1,15 @@
-"""Vector-based memories system for Clanker using FAISS.
+"""Simple markdown-based memories system for Clanker.
 
-Stores memories as markdown documents in a local vector database for RAG retrieval.
-Memories persist across conversations and are automatically retrieved based on context.
+Stores memories as markdown files with YAML frontmatter for tags.
+Memories persist across conversations and are retrieved based on tags and keywords.
 """
 
-import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 from clanker.memory.workspace import get_workspace_storage
 
@@ -36,8 +33,55 @@ class Memory:
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def to_markdown(self) -> str:
+        """Convert to markdown with YAML frontmatter."""
+        lines = ["---"]
+        lines.append(f"id: {self.id}")
+        lines.append(f"source: {self.source.value}")
+        lines.append(f"created: {self.created_at}")
+        if self.tags:
+            lines.append(f"tags: [{', '.join(self.tags)}]")
+        lines.append("---")
+        lines.append("")
+        lines.append(self.content)
+        return "\n".join(lines)
+
+    @classmethod
+    def from_markdown(cls, content: str, file_id: str | None = None) -> "Memory":
+        """Parse a Memory from markdown with YAML frontmatter."""
+        # Extract frontmatter
+        frontmatter = {}
+        body = content
+
+        if content.startswith("---"):
+            parts = content.split("---", 2)
+            if len(parts) >= 3:
+                frontmatter_text = parts[1].strip()
+                body = parts[2].strip()
+
+                # Simple YAML parsing
+                for line in frontmatter_text.split("\n"):
+                    if ":" in line:
+                        key, value = line.split(":", 1)
+                        key = key.strip()
+                        value = value.strip()
+
+                        # Parse tags list
+                        if key == "tags" and value.startswith("["):
+                            value = [t.strip() for t in value[1:-1].split(",") if t.strip()]
+                        frontmatter[key] = value
+
+        return cls(
+            id=frontmatter.get("id", file_id or str(uuid.uuid4())[:8]),
+            content=body,
+            source=MemorySource(frontmatter.get("source", "user")),
+            tags=frontmatter.get("tags", []) if isinstance(frontmatter.get("tags"), list) else [],
+            created_at=frontmatter.get("created", datetime.now().isoformat()),
+            metadata={},
+        )
+
     def to_dict(self) -> dict:
-        """Convert to dictionary for JSON serialization."""
+        """Convert to dictionary."""
         return {
             "id": self.id,
             "content": self.content,
@@ -60,130 +104,37 @@ class Memory:
         )
 
 
-class VectorMemoryStore:
-    """Vector-based memory store using FAISS for RAG retrieval."""
+class MemoryStore:
+    """Markdown-based memory store."""
 
     def __init__(self, workspace_path: str | Path | None = None):
-        """Initialize the vector memory store.
+        """Initialize the memory store.
 
         Args:
             workspace_path: Optional workspace path. Defaults to current directory.
         """
         self._storage = get_workspace_storage(workspace_path)
-        self._embedder = None
-        self._index = None
-        self._memories: list[Memory] = []
-        self._loaded = False
+        self._memories_dir: Path | None = None
 
-    def _get_db_path(self) -> Path:
-        """Get the memory database storage path."""
-        return self._storage.clanker_dir / "memory_db"
+    def _get_memories_dir(self) -> Path:
+        """Get the memories directory path."""
+        if self._memories_dir is None:
+            self._memories_dir = self._storage.clanker_dir / "memories"
+            self._memories_dir.mkdir(parents=True, exist_ok=True)
+        return self._memories_dir
 
-    def _get_index_path(self) -> Path:
-        """Get the FAISS index file path."""
-        return self._get_db_path() / "index.faiss"
+    def _get_memory_path(self, memory_id: str) -> Path:
+        """Get the path for a specific memory file."""
+        return self._get_memories_dir() / f"{memory_id}.md"
 
-    def _get_memories_path(self) -> Path:
-        """Get the memories JSON file path."""
-        return self._get_db_path() / "memories.json"
-
-    def _ensure_embedder(self):
-        """Ensure the sentence transformer model is loaded."""
-        if self._embedder is None:
-            import os
-            import sys
-            from sentence_transformers import SentenceTransformer
-
-            # Suppress model loading output at file descriptor level
-            # (catches tqdm progress bars that write directly to fd)
-            try:
-                stdout_fd = sys.stdout.fileno()
-                stderr_fd = sys.stderr.fileno()
-                saved_stdout = os.dup(stdout_fd)
-                saved_stderr = os.dup(stderr_fd)
-
-                devnull = os.open(os.devnull, os.O_WRONLY)
-                os.dup2(devnull, stdout_fd)
-                os.dup2(devnull, stderr_fd)
-                os.close(devnull)
-
-                try:
-                    self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
-                finally:
-                    os.dup2(saved_stdout, stdout_fd)
-                    os.dup2(saved_stderr, stderr_fd)
-                    os.close(saved_stdout)
-                    os.close(saved_stderr)
-            except (OSError, ValueError):
-                # If we can't redirect (e.g., no real stdout), just load normally
-                self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
-
-        return self._embedder
-
-    def _embed(self, texts: list[str]) -> np.ndarray:
-        """Generate embeddings for texts."""
-        embedder = self._ensure_embedder()
-        return embedder.encode(texts, convert_to_numpy=True, show_progress_bar=False)
-
-    def _load(self) -> None:
-        """Load memories and index from disk."""
-        if self._loaded:
-            return
-
-        memories_path = self._get_memories_path()
-        index_path = self._get_index_path()
-
-        if memories_path.exists():
-            with open(memories_path, encoding="utf-8") as f:
-                data = json.load(f)
-                self._memories = [Memory.from_dict(m) for m in data.get("memories", [])]
-
-        if index_path.exists() and self._memories:
-            import faiss
-            self._index = faiss.read_index(str(index_path))
-        elif self._memories:
-            # Rebuild index if memories exist but index doesn't
-            self._rebuild_index()
-
-        self._loaded = True
-
-    def _save(self) -> None:
-        """Save memories and index to disk."""
-        self._storage.ensure_directories()
-        db_path = self._get_db_path()
-        db_path.mkdir(parents=True, exist_ok=True)
-
-        # Save memories as JSON
-        memories_path = self._get_memories_path()
-        data = {
-            "version": 1,
-            "updated_at": datetime.now().isoformat(),
-            "memories": [m.to_dict() for m in self._memories],
-        }
-        with open(memories_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-
-        # Save FAISS index
-        if self._index is not None:
-            import faiss
-            faiss.write_index(self._index, str(self._get_index_path()))
-
-    def _rebuild_index(self) -> None:
-        """Rebuild the FAISS index from current memories."""
-        if not self._memories:
-            self._index = None
-            return
-
-        import faiss
-
-        # Generate embeddings for all memories
-        texts = [m.content for m in self._memories]
-        embeddings = self._embed(texts)
-
-        # Create FAISS index (L2 distance)
-        dimension = embeddings.shape[1]
-        self._index = faiss.IndexFlatL2(dimension)
-        self._index.add(embeddings.astype(np.float32))
+    def _load_memory(self, path: Path) -> Memory | None:
+        """Load a memory from a file."""
+        try:
+            content = path.read_text(encoding="utf-8")
+            file_id = path.stem
+            return Memory.from_markdown(content, file_id)
+        except Exception:
+            return None
 
     def add(
         self,
@@ -192,19 +143,17 @@ class VectorMemoryStore:
         tags: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Memory:
-        """Add a new memory to the vector store.
+        """Add a new memory.
 
         Args:
             content: The memory content (markdown supported).
             source: Source of the memory.
-            tags: Optional tags for categorization.
+            tags: Tags for categorization and retrieval.
             metadata: Optional additional metadata.
 
         Returns:
             The created Memory.
         """
-        self._load()
-
         memory = Memory(
             content=content,
             source=source,
@@ -212,66 +161,11 @@ class VectorMemoryStore:
             metadata=metadata or {},
         )
 
-        self._memories.append(memory)
+        # Save to file
+        path = self._get_memory_path(memory.id)
+        path.write_text(memory.to_markdown(), encoding="utf-8")
 
-        # Add to FAISS index
-        embedding = self._embed([content])
-
-        import faiss
-        if self._index is None:
-            dimension = embedding.shape[1]
-            self._index = faiss.IndexFlatL2(dimension)
-
-        self._index.add(embedding.astype(np.float32))
-
-        self._save()
         return memory
-
-    def search(
-        self,
-        query: str,
-        n_results: int = 5,
-        tags: list[str] | None = None,
-    ) -> list[Memory]:
-        """Search memories using semantic similarity (RAG).
-
-        Args:
-            query: Natural language query for semantic search.
-            n_results: Maximum number of results to return.
-            tags: Optional tags to filter by.
-
-        Returns:
-            List of matching memories, ordered by relevance.
-        """
-        self._load()
-
-        if not self._memories or self._index is None:
-            return []
-
-        # Generate query embedding
-        query_embedding = self._embed([query])
-
-        # Search FAISS index
-        k = min(n_results * 2, len(self._memories))  # Get more results for filtering
-        distances, indices = self._index.search(query_embedding.astype(np.float32), k)
-
-        results = []
-        for i, idx in enumerate(indices[0]):
-            if idx < 0 or idx >= len(self._memories):
-                continue
-
-            memory = self._memories[idx]
-
-            # Filter by tags if specified
-            if tags and not any(t in memory.tags for t in tags):
-                continue
-
-            results.append(memory)
-
-            if len(results) >= n_results:
-                break
-
-        return results
 
     def get(self, memory_id: str) -> Memory | None:
         """Get a specific memory by ID.
@@ -282,11 +176,9 @@ class VectorMemoryStore:
         Returns:
             The Memory or None if not found.
         """
-        self._load()
-
-        for memory in self._memories:
-            if memory.id == memory_id:
-                return memory
+        path = self._get_memory_path(memory_id)
+        if path.exists():
+            return self._load_memory(path)
         return None
 
     def list_all(self, limit: int = 100) -> list[Memory]:
@@ -298,11 +190,87 @@ class VectorMemoryStore:
         Returns:
             List of all memories, newest first.
         """
-        self._load()
+        memories = []
+        memories_dir = self._get_memories_dir()
+
+        for path in memories_dir.glob("*.md"):
+            memory = self._load_memory(path)
+            if memory:
+                memories.append(memory)
 
         # Sort by created_at descending
-        sorted_memories = sorted(self._memories, key=lambda m: m.created_at, reverse=True)
-        return sorted_memories[:limit]
+        memories.sort(key=lambda m: m.created_at, reverse=True)
+        return memories[:limit]
+
+    def search(
+        self,
+        query: str | None = None,
+        tags: list[str] | None = None,
+        n_results: int = 10,
+    ) -> list[Memory]:
+        """Search memories by tags and/or keywords.
+
+        Args:
+            query: Optional text query for keyword matching.
+            tags: Optional tags to filter by (matches any).
+            n_results: Maximum number of results.
+
+        Returns:
+            List of matching memories.
+        """
+        all_memories = self.list_all(limit=1000)
+        results = []
+
+        query_lower = query.lower() if query else None
+        query_words = set(query_lower.split()) if query_lower else set()
+
+        for memory in all_memories:
+            score = 0
+
+            # Tag matching (high priority)
+            if tags:
+                matching_tags = set(memory.tags) & set(tags)
+                if matching_tags:
+                    score += len(matching_tags) * 10
+                else:
+                    continue  # Skip if tags specified but none match
+
+            # Keyword matching
+            if query_lower:
+                content_lower = memory.content.lower()
+                content_words = set(content_lower.split())
+
+                # Word overlap
+                word_matches = len(query_words & content_words)
+                score += word_matches * 2
+
+                # Substring match bonus
+                if query_lower in content_lower:
+                    score += 5
+
+                # Tag keyword match
+                for tag in memory.tags:
+                    if query_lower in tag.lower():
+                        score += 3
+
+            if score > 0 or (not tags and not query):
+                results.append((score, memory))
+
+        # Sort by score descending
+        results.sort(key=lambda x: x[0], reverse=True)
+        return [m for _, m in results[:n_results]]
+
+    def get_by_tags(self, tags: list[str], n_results: int = 10) -> list[Memory]:
+        """Get memories that match any of the given tags.
+
+        Args:
+            tags: Tags to match.
+            n_results: Maximum number of results.
+
+        Returns:
+            List of matching memories.
+        """
+        return self.search(tags=tags, n_results=n_results)
 
     def delete(self, memory_id: str) -> bool:
         """Delete a memory by ID.
@@ -313,35 +281,80 @@ class VectorMemoryStore:
         Returns:
             True if deleted, False if not found.
         """
-        self._load()
-
-        for i, memory in enumerate(self._memories):
-            if memory.id == memory_id:
-                self._memories.pop(i)
-                # Rebuild index after deletion
-                self._rebuild_index()
-                self._save()
-                return True
+        path = self._get_memory_path(memory_id)
+        if path.exists():
+            path.unlink()
+            return True
         return False
 
     def clear(self) -> None:
         """Clear all memories."""
-        self._memories = []
-        self._index = None
-        self._save()
+        memories_dir = self._get_memories_dir()
+        for path in memories_dir.glob("*.md"):
+            path.unlink()
 
     def count(self) -> int:
         """Get the number of memories."""
-        self._load()
-        return len(self._memories)
+        return len(list(self._get_memories_dir().glob("*.md")))
 
-    def get_relevant_context(self, query: str, max_memories: int = 5) -> str:
+    def get_all_tags(self) -> list[str]:
+        """Get all unique tags across all memories.
+
+        Returns:
+            Sorted list of unique tags.
+        """
+        tags = set()
+        for memory in self.list_all(limit=1000):
+            tags.update(memory.tags)
+        return sorted(tags)
+
+    def get_memories_summary(self) -> str:
+        """Get a summary of available memories and their tags.
+
+        Returns:
+            Formatted summary string for the agent.
+        """
+        memories = self.list_all(limit=100)
+        if not memories:
+            return ""
+
+        # Group by tags
+        tag_memories: dict[str, list[Memory]] = {}
+        untagged: list[Memory] = []
+
+        for memory in memories:
+            if memory.tags:
+                for tag in memory.tags:
+                    if tag not in tag_memories:
+                        tag_memories[tag] = []
+                    tag_memories[tag].append(memory)
+            else:
+                untagged.append(memory)
+
+        lines = ["## Available Memories", ""]
+        lines.append(f"Total: {len(memories)} memories")
+        lines.append("")
+
+        if tag_memories:
+            lines.append("### By Tag:")
+            for tag in sorted(tag_memories.keys()):
+                count = len(tag_memories[tag])
+                lines.append(f"- `{tag}`: {count} memories")
+
+        if untagged:
+            lines.append(f"- (untagged): {len(untagged)} memories")
+
+        lines.append("")
+        lines.append("Use tags to retrieve relevant memories.")
+
+        return "\n".join(lines)
+
+    def get_relevant_context(self, query: str, tags: list[str] | None = None, max_memories: int = 5) -> str:
         """Get relevant memories formatted for injection into context.
-
-        Uses RAG to find the most relevant memories for the current query.
 
         Args:
             query: The current conversation context/query.
+            tags: Optional tags to prioritize.
             max_memories: Maximum number of memories to include.
 
         Returns:
@@ -350,7 +363,8 @@ class VectorMemoryStore:
         if self.count() == 0:
             return ""
 
-        memories = self.search(query, n_results=max_memories)
+        # Search with query and optional tags
+        memories = self.search(query=query, tags=tags, n_results=max_memories)
 
         if not memories:
             return ""
@@ -361,41 +375,42 @@ class VectorMemoryStore:
 
         for memory in memories:
             tags_str = f" [tags: {', '.join(memory.tags)}]" if memory.tags else ""
-            # Format as markdown blockquote for clarity
             content_lines = memory.content.strip().split("\n")
             if len(content_lines) == 1:
                 lines.append(f"- {memory.content}{tags_str}")
             else:
                 lines.append(f"- **Memory ({memory.id})**:{tags_str}")
-                for line in content_lines:
+                for line in content_lines[:5]:  # Limit preview
                     lines.append(f"  {line}")
+                if len(content_lines) > 5:
+                    lines.append(f"  ... ({len(content_lines) - 5} more lines)")
 
         return "\n".join(lines)
 
 
-# Backwards compatibility alias
-MemoryStore = VectorMemoryStore
+# Backwards compatibility
+VectorMemoryStore = MemoryStore
 
 # Global memory store instance
-_memory_store: VectorMemoryStore | None = None
+_memory_store: MemoryStore | None = None
 
 
-def get_memory_store(workspace_path: str | Path | None = None) -> VectorMemoryStore:
+def get_memory_store(workspace_path: str | Path | None = None) -> MemoryStore:
     """Get the memory store instance.
 
     Args:
         workspace_path: Optional workspace path.
 
     Returns:
-        VectorMemoryStore instance.
+        MemoryStore instance.
     """
     global _memory_store
 
     if workspace_path is not None:
-        return VectorMemoryStore(workspace_path)
+        return MemoryStore(workspace_path)
 
     if _memory_store is None:
-        _memory_store = VectorMemoryStore()
+        _memory_store = MemoryStore()
 
     return _memory_store
 

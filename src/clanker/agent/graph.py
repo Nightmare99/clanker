@@ -207,7 +207,7 @@ def _agent_node(state: AgentState, model) -> dict:
 
     # Add system prompt if not present
     if not messages or not isinstance(messages[0], SystemMessage):
-        # Extract user query for RAG-based memory retrieval
+        # Extract user query for memory retrieval
         user_query = None
         for msg in messages:
             if isinstance(msg, HumanMessage):

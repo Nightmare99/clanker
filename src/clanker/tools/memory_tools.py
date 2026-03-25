@@ -1,7 +1,7 @@
 """Memory tools for Clanker agent.
 
-These tools allow the agent to store and recall memories using vector similarity search.
-Memories are stored in a local ChromaDB instance and retrieved via RAG.
+These tools allow the agent to store and recall memories using tags and keywords.
+Memories are stored as markdown files with YAML frontmatter for tags.
 """
 
 from langchain_core.tools import tool
@@ -55,16 +55,16 @@ def remember(content: str, tags: str = "", auto: bool = False) -> dict:
 
 
 @tool
-def recall(query: str, tags: str = "", n_results: int = 5) -> dict:
-    """Search memories using semantic similarity (RAG retrieval).
+def recall(query: str = "", tags: str = "", n_results: int = 5) -> dict:
+    """Search memories by tags and keywords.
 
-    This tool uses vector similarity to find relevant memories based on meaning,
-    not just keyword matching. Use natural language queries.
+    Use tags for best results - they are the primary retrieval mechanism.
+    Keywords search memory content as a fallback.
 
     Args:
-        query: Natural language description of what you're looking for.
-               Be descriptive - the search is semantic, not keyword-based.
-        tags: Optional comma-separated tags to filter results.
+        query: Keywords to search for in memory content.
+        tags: Comma-separated tags to filter by (recommended).
+              Examples: "preference", "architecture", "convention", "config", "issue"
         n_results: Maximum number of memories to return (default: 5).
 
     Returns:
