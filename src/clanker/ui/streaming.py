@@ -180,6 +180,9 @@ def stream_agent_response_sync(
                                 tool_output = ""
                             elif hasattr(tool_output, "content"):
                                 tool_output = tool_output.content
+                            # Convert list content to string
+                            if isinstance(tool_output, list):
+                                tool_output = "\n".join(str(item) for item in tool_output)
                             elif not isinstance(tool_output, str):
                                 tool_output = str(tool_output)
                             if tool_output and tool_output.strip():
