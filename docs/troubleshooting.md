@@ -55,7 +55,7 @@
 ### High memory usage
 
 - Long conversations accumulate context; use `/clear` to reset
-- Context compaction kicks in automatically at 70% usage
+- Summarization kicks in automatically at the configured threshold (default 80%)
 
 ### Logs not appearing
 

@@ -21,6 +21,7 @@ class StreamResult:
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
     model_name: str = ""
+    summarization_occurred: bool = False
 
     @property
     def total_tokens(self) -> int:
@@ -92,23 +93,27 @@ def stream_agent_response_sync(
         loading_live: Live | None = None
         first_content_received = False
 
+        # Summarization detection
+        # Track model calls before any tools run - if we see 2+ model starts
+        # before the first tool, the first was likely summarization
+        model_call_count = 0
+        tools_started = False
+        summarization_detected = False
+        summarization_spinner_shown = False
+
         # Token tracking
-        # last_input_tokens: input tokens from the FINAL LLM call only.
-        # Each LLM call re-sends the full conversation history, so summing
-        # across calls would multiply-count it.  We keep only the last value
-        # for context-window accounting.
         last_input_tokens = 0
-        total_output_tokens = 0   # summed across all LLM calls (each is new)
+        total_output_tokens = 0
         last_cache_read_tokens = 0
         last_cache_creation_tokens = 0
         model_name = ""
 
-        def start_loading():
+        def start_loading(message: str | None = None):
             """Start the loading spinner."""
             nonlocal loading_live
             if loading_live is None:
-                message = console.get_loading_message()
-                spinner = Spinner("dots", text=Text(f" {message}", style="cyan"))
+                msg = message or console.get_loading_message()
+                spinner = Spinner("dots", text=Text(f" {msg}", style="cyan"))
                 loading_live = Live(spinner, console=rich_console, refresh_per_second=10, transient=True)
                 loading_live.start()
 
@@ -118,6 +123,13 @@ def stream_agent_response_sync(
             if loading_live is not None:
                 loading_live.stop()
                 loading_live = None
+
+        def update_loading(message: str):
+            """Update the loading spinner message."""
+            nonlocal loading_live
+            if loading_live is not None:
+                spinner = Spinner("dots", text=Text(f" {message}", style="cyan"))
+                loading_live.update(spinner)
 
         def show_tool(tool_name: str, tool_input: dict):
             """Display a single tool call with details."""
@@ -147,10 +159,7 @@ def stream_agent_response_sync(
                 show_tool(*pending_tools[0])
             pending_tools = []
 
-        # Register the notify callback so the agent can push status updates
-        # to the console mid-execution (before the graph runs).
-        # The spinner is stopped before notify fires (on_tool_start) so the
-        # message prints cleanly with no competing Live display.
+        # Register the notify callback
         def _notify_callback(message: str, level: str) -> None:
             console.print_notify(message, level)
 
@@ -168,14 +177,15 @@ def stream_agent_response_sync(
 
                     # Collect tool calls
                     if event_type == "on_tool_start":
-                        stop_loading()  # Stop loading when tools start
+                        tools_started = True
+                        stop_loading()
                         if settings.output.show_tool_calls:
                             run_id = event.get("run_id", "")
                             if run_id and run_id not in shown_tool_calls:
                                 shown_tool_calls.add(run_id)
                                 tool_name = event.get("name", "unknown")
                                 tool_input = event.get("data", {}).get("input", {})
-                                # Skip bash display when approval is needed (approval prompt shows it)
+                                # Skip bash display when approval is needed
                                 if tool_name == "bash" and not is_yolo_mode():
                                     continue
                                 # Skip notify - the tool itself handles display
@@ -187,37 +197,46 @@ def stream_agent_response_sync(
                     elif event_type == "on_tool_end":
                         if pending_tools:
                             flush_pending_tools()
-                        # Skip result display for notify - it already printed
                         tool_name_end = event.get("name", "")
                         if tool_name_end == "notify":
-                            # Restart loading so the spinner shows while waiting
-                            # for the next model response after a notify call.
                             start_loading()
                             continue
-                        # Show tool output (truncated, muted)
+                        # Show tool output
                         if settings.output.show_tool_calls:
                             data = event.get("data", {})
-                            # Tool output can be in 'output' directly or nested
                             tool_output = data.get("output")
-                            # Handle ToolMessage objects
                             if tool_output is None:
                                 tool_output = ""
                             elif hasattr(tool_output, "content"):
                                 tool_output = tool_output.content
-                            # Convert list content to string
                             if isinstance(tool_output, list):
                                 tool_output = "\n".join(str(item) for item in tool_output)
                             elif not isinstance(tool_output, str):
                                 tool_output = str(tool_output)
                             if tool_output and tool_output.strip():
                                 console.print_tool_result(tool_output, tool_name=tool_name_end)
-                        # Restart loading while waiting for next model response
                         start_loading()
 
-                    # New model run - reset for final response only
+                    # Track model calls to detect summarization
                     elif event_type == "on_chat_model_start":
                         run_id = event.get("run_id", "")
                         if run_id != current_model_run:
+                            model_call_count += 1
+
+                            # If this is the 2nd+ model call before tools started,
+                            # the previous call was likely summarization
+                            if model_call_count == 1 and not tools_started:
+                                # First model call - could be summarization, show special message
+                                # We'll know for sure if we see another model start
+                                pass
+                            elif model_call_count == 2 and not tools_started and not summarization_spinner_shown:
+                                # Second model call before tools = first was summarization!
+                                summarization_detected = True
+                                summarization_spinner_shown = True
+                                stop_loading()
+                                console.print_info("*WHIRR* Compressing memory banks...")
+                                start_loading()
+
                             if pending_tools:
                                 flush_pending_tools()
                             current_response = ""
@@ -234,8 +253,6 @@ def stream_agent_response_sync(
                         if chunk:
                             content = getattr(chunk, "content", None)
 
-                            # Track first content but don't stop loading yet
-                            # (we'll stop when we get actual response, not thinking)
                             if content and not first_content_received:
                                 first_content_received = True
 
@@ -271,34 +288,28 @@ def stream_agent_response_sync(
 
                             # Handle string content (standard format)
                             elif content and isinstance(content, str):
-                                # Handle <think>...</think> tags (DeepSeek, etc.)
-                                # Some models output thinking without <think> tag, just </think> at end
                                 remaining = content
                                 while remaining:
                                     if think_tag_closed:
-                                        # Already past thinking - everything is response
-                                        stop_loading()  # Stop spinner when response starts
+                                        stop_loading()
                                         current_response += remaining
                                         remaining = ""
                                     elif in_think_tag:
-                                        # Inside explicit <think> tag
                                         end_idx = remaining.find("</think>")
                                         if end_idx != -1:
                                             current_thinking += remaining[:end_idx]
                                             remaining = remaining[end_idx + 8:]
                                             in_think_tag = False
                                             think_tag_closed = True
-                                            stop_loading()  # Stop spinner when thinking ends
+                                            stop_loading()
                                         else:
                                             current_thinking += remaining
                                             remaining = ""
                                     else:
-                                        # Check for </think> (implicit thinking mode)
                                         end_idx = remaining.find("</think>")
                                         start_idx = remaining.find("<think>")
 
                                         if start_idx != -1 and (end_idx == -1 or start_idx < end_idx):
-                                            # Found <think> tag first
                                             current_response += remaining[:start_idx]
                                             remaining = remaining[start_idx + 7:]
                                             in_think_tag = True
@@ -306,17 +317,14 @@ def stream_agent_response_sync(
                                                 console.print_thinking_start()
                                                 thinking_shown = True
                                         elif end_idx != -1:
-                                            # Found </think> without <think> - all prior is thinking
                                             current_thinking += remaining[:end_idx]
                                             remaining = remaining[end_idx + 8:]
                                             think_tag_closed = True
-                                            stop_loading()  # Stop spinner when thinking ends
+                                            stop_loading()
                                             if not thinking_shown and current_thinking:
                                                 console.print_thinking_start()
                                                 thinking_shown = True
                                         else:
-                                            # No tags yet - buffer as potential thinking
-                                            # We'll reclassify if we see </think> later
                                             current_thinking += remaining
                                             if not thinking_shown:
                                                 console.print_thinking_start()
@@ -327,41 +335,29 @@ def stream_agent_response_sync(
                     elif event_type == "on_chat_model_end":
                         output = event.get("data", {}).get("output")
                         if output:
-                            # Get model name from response
                             if hasattr(output, "response_metadata"):
                                 meta = output.response_metadata
                                 model_name = meta.get("model", "") or meta.get("model_name", "")
 
-                            # Get usage from usage_metadata (preferred - works for most providers)
                             if hasattr(output, "usage_metadata") and output.usage_metadata:
                                 usage = output.usage_metadata
-                                # Input tokens: OVERWRITE (not accumulate) - each LLM call
-                                # re-sends the full conversation history so the latest value
-                                # is what represents our actual context footprint.
                                 last_input_tokens = usage.get("input_tokens", 0)
-                                # Output tokens: accumulate - each call produces genuinely new tokens.
                                 total_output_tokens += usage.get("output_tokens", 0)
-                                # Anthropic cache tokens (overwrite - from final call)
                                 last_cache_read_tokens = usage.get("cache_read_input_tokens", 0)
                                 last_cache_creation_tokens = usage.get("cache_creation_input_tokens", 0)
 
-                            # Fallback to response_metadata for Azure OpenAI and others
                             elif hasattr(output, "response_metadata"):
                                 meta = output.response_metadata
-
-                                # Try "usage" key first (standard format)
                                 usage = meta.get("usage", {})
                                 if usage:
                                     last_input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
                                     total_output_tokens += usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
 
-                                # Azure OpenAI may have token_usage at top level
                                 if not usage and "token_usage" in meta:
                                     usage = meta.get("token_usage", {})
                                     last_input_tokens = usage.get("prompt_tokens", 0)
                                     total_output_tokens += usage.get("completion_tokens", 0)
 
-                                # Some Azure responses have it directly in metadata
                                 if not usage:
                                     last_input_tokens = meta.get("prompt_tokens", 0)
                                     total_output_tokens += meta.get("completion_tokens", 0)
@@ -376,14 +372,14 @@ def stream_agent_response_sync(
                 cache_read_tokens=last_cache_read_tokens,
                 cache_creation_tokens=last_cache_creation_tokens,
                 model_name=model_name,
+                summarization_occurred=summarization_detected,
             )
 
         finally:
-            stop_loading()  # Ensure loading spinner is stopped
-            set_notify_callback(None)  # Clear notify callback after execution
+            stop_loading()
+            set_notify_callback(None)
 
         # If we buffered thinking but never saw </think>, treat it as response
-        # This handles models that don't use think tags
         if current_thinking and not think_tag_closed and not current_response:
             current_response = current_thinking
             current_thinking = ""
@@ -403,6 +399,7 @@ def stream_agent_response_sync(
             cache_read_tokens=last_cache_read_tokens,
             cache_creation_tokens=last_cache_creation_tokens,
             model_name=model_name,
+            summarization_occurred=summarization_detected,
         )
 
     # Run the async function

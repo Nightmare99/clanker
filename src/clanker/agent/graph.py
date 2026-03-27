@@ -213,11 +213,16 @@ def create_agent_graph(
     # Create model
     model = create_model(settings)
 
+    # Convert percentage to fraction (e.g., 80.0 -> 0.8)
+    trigger_fraction = settings.context.summarization_threshold / 100.0
+    logger.info("Summarization trigger: %.0f%% of context window", settings.context.summarization_threshold)
+
     # Create summarization middleware using the same model
+    # Uses fraction-based trigger which automatically uses model's context window
     summarization = SummarizationMiddleware(
-        model=model,  # Use the same configured model
-        trigger=("tokens", 8000),  # Trigger when exceeding 8k tokens
-        keep=("messages", settings.context.keep_recent_turns * 2),  # Keep recent turns
+        model=model,
+        trigger=("fraction", trigger_fraction),
+        keep=("messages", settings.context.keep_recent_turns * 2),
     )
 
     # Create agent with middleware
@@ -266,11 +271,16 @@ async def create_agent_graph_async(
     # Create model
     model = create_model(settings)
 
+    # Convert percentage to fraction (e.g., 80.0 -> 0.8)
+    trigger_fraction = settings.context.summarization_threshold / 100.0
+    logger.info("Summarization trigger: %.0f%% of context window", settings.context.summarization_threshold)
+
     # Create summarization middleware using the same model
+    # Uses fraction-based trigger which automatically uses model's context window
     summarization = SummarizationMiddleware(
-        model=model,  # Use the same configured model
-        trigger=("tokens", 8000),  # Trigger when exceeding 8k tokens
-        keep=("messages", settings.context.keep_recent_turns * 2),  # Keep recent turns
+        model=model,
+        trigger=("fraction", trigger_fraction),
+        keep=("messages", settings.context.keep_recent_turns * 2),
     )
 
     # Create agent with middleware

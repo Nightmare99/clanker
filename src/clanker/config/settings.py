@@ -69,13 +69,10 @@ class OutputSettings(BaseModel):
 class ContextSettings(BaseModel):
     """Context management configuration."""
 
-    # Auto-compact when context usage exceeds this percentage
-    compaction_threshold: float = Field(default=95.0, ge=50.0, le=99.0)
-    # Pre-turn compaction threshold - compact BEFORE sending next turn to the LLM.
-    # Must be lower than compaction_threshold to act as an early warning.
-    pre_compaction_threshold: float = Field(default=80.0, ge=50.0, le=99.0)
-    # Number of recent conversation turns to keep after compaction
+    # Number of recent conversation turns to keep after summarization
     keep_recent_turns: int = Field(default=4, ge=1, le=20)
+    # Percentage of context window to trigger summarization (0-100)
+    summarization_threshold: float = Field(default=80.0, ge=50.0, le=99.0)
 
 
 class MemorySettings(BaseModel):
@@ -268,11 +265,12 @@ output:
   stream_responses: true
   show_token_usage: true  # Show token count and context remaining after each response
 
-# Context window management
+# Context management (automatic summarization via SummarizationMiddleware)
+# When conversation exceeds the threshold % of the model's context window,
+# older messages are summarized to free up space
 context:
-  compaction_threshold: 95.0  # Post-turn safety net: compact if usage exceeds this % (50-99)
-  pre_compaction_threshold: 80.0  # Pre-turn early compact: fires BEFORE sending next turn (50-99)
-  keep_recent_turns: 4  # Keep last N conversation turns after compaction
+  keep_recent_turns: 4  # Keep last N conversation turns after summarization
+  summarization_threshold: 80.0  # Trigger at this % of context window (50-99)
 
 memory:
   persist_sessions: true

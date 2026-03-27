@@ -74,7 +74,7 @@ interface Config {
     show_token_usage: boolean
   }
   context: {
-    compaction_threshold: number
+    summarization_threshold: number
     keep_recent_turns: number
   }
   memory: {
@@ -950,7 +950,7 @@ onMounted(() => {
             <NForm label-placement="left" label-width="180">
               <NFormItem label="Compaction Threshold">
                 <NSlider
-                  v-model:value="config.context.compaction_threshold"
+                  v-model:value="config.context.summarization_threshold"
                   :min="50"
                   :max="99"
                   :step="1"

@@ -47,7 +47,7 @@ clanker/
 │   ├── agent/       # LangGraph agent definition
 │   ├── config/      # Settings management
 │   │   └── web/     # Web configuration UI (FastAPI + Vue)
-│   ├── context/     # Context compaction
+│   ├── context/     # Context management
 │   ├── mcp/         # MCP server integration
 │   ├── memory/      # Session persistence
 │   ├── tools/       # Tool implementations
