@@ -114,10 +114,15 @@ async def compact_context_async(
 
     Returns:
         Tuple of (compacted_messages, was_compacted).
-    """
-    if not should_compact(context_used_percent):
-        return messages, False
 
+    Note:
+        The caller is responsible for deciding *when* to compact (i.e. checking
+        the threshold before calling this function).  We do NOT re-check the
+        threshold here because the caller may be using a different threshold
+        (e.g. the pre-turn 80% threshold vs the post-turn 95% threshold), and
+        a redundant internal check with the default value would silently skip
+        compaction when called from the pre-turn path.
+    """
     to_compact, to_keep = get_messages_to_compact(messages)
 
     if not to_compact:

@@ -29,6 +29,7 @@ from clanker.config import (
 from clanker.config.setup_wizard import run_setup_wizard
 from clanker.logging import get_logger, setup_logging
 from clanker.context.compaction import compact_context_sync, should_compact
+from clanker.context.errors import is_context_length_error
 from clanker.memory.checkpointer import SessionManager
 from clanker.memory.memories import get_memory_store
 from clanker.ui.console import Console
@@ -396,6 +397,35 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
             user_msg = HumanMessage(content=user_input)
             conversation_messages.append(user_msg)
 
+            # Pre-turn compaction: compact BEFORE invoking the LLM so we never
+            # start a generation that is already near the context ceiling.
+            pre_threshold = settings.context.pre_compaction_threshold
+            if should_compact(token_tracker.context_used_percent, pre_threshold):
+                logger.info(
+                    "Pre-turn compaction triggered at %.1f%% usage (threshold=%.1f%%)",
+                    token_tracker.context_used_percent, pre_threshold,
+                )
+                compacted_messages, was_compacted = compact_context_sync(
+                    conversation_messages,
+                    compaction_model,
+                    token_tracker.context_used_percent,
+                    console,
+                )
+                if was_compacted:
+                    conversation_messages = compacted_messages
+                    session_manager.new_session()
+                    active_model = get_default_model()
+                    tracker_model = active_model.name if active_model else settings.model.name
+                    estimated_tokens = sum(
+                        len(m.content) // 4 if isinstance(m.content, str) else 100
+                        for m in conversation_messages
+                    )
+                    token_tracker = SessionTokenTracker(model_name=tracker_model)
+                    token_tracker.current_context_tokens = estimated_tokens
+                    logger.info(
+                        "Pre-turn compaction done, estimated tokens after: %d", estimated_tokens
+                    )
+
             # Prepare state - include full context if we've compacted
             # (compacted messages include summary + recent messages)
             has_summary = any(
@@ -483,8 +513,76 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
 
                 logger.debug("Agent response completed successfully")
             except Exception as e:
-                logger.exception("Agent error occurred: %s", e)
-                console.print_error(f"Agent error: {e}")
+                if is_context_length_error(e):
+                    # -------------------------------------------------------
+                    # Context-length overflow during generation.
+                    # Compact the conversation NOW and retry once so the user
+                    # gets a response instead of a hard crash.
+                    # -------------------------------------------------------
+                    logger.warning(
+                        "Context length exceeded during generation, attempting emergency compaction: %s", e
+                    )
+                    console.print_warning(
+                        "*BZZT* Context overflow detected mid-generation — initiating emergency compaction..."
+                    )
+                    compacted_messages, was_compacted = compact_context_sync(
+                        conversation_messages,
+                        compaction_model,
+                        100.0,  # treat as 100% full – force compaction
+                        console,
+                    )
+                    if was_compacted:
+                        conversation_messages = compacted_messages
+                        session_manager.new_session()
+                        active_model = get_default_model()
+                        tracker_model = active_model.name if active_model else settings.model.name
+                        estimated_tokens = sum(
+                            len(m.content) // 4 if isinstance(m.content, str) else 100
+                            for m in conversation_messages
+                        )
+                        token_tracker = SessionTokenTracker(model_name=tracker_model)
+                        token_tracker.current_context_tokens = estimated_tokens
+
+                        # Rebuild state with compacted messages and retry
+                        retry_state = {
+                            "messages": conversation_messages,
+                            "working_directory": working_dir,
+                        }
+                        console.print_info("*WHIRR* Retrying with compacted context...")
+                        try:
+                            result = stream_agent_response_sync(
+                                settings,
+                                session_manager.checkpointer,
+                                retry_state,
+                                session_manager.get_config(),
+                                console,
+                            )
+                            # Track tokens from the retry
+                            if result.input_tokens > 0 or result.output_tokens > 0:
+                                token_tracker.add_turn(
+                                    result.input_tokens,
+                                    result.output_tokens,
+                                    result.cache_read_tokens,
+                                    result.cache_creation_tokens,
+                                )
+                            if result.response:
+                                from langchain_core.messages import AIMessage
+                                conversation_messages.append(AIMessage(content=result.response))
+                                session_manager.save_conversation_snapshot(conversation_messages)
+                        except Exception as retry_e:
+                            logger.exception("Agent error on retry after compaction: %s", retry_e)
+                            console.print_error(f"Agent error (after compaction retry): {retry_e}")
+                    else:
+                        # Compaction itself had nothing to compact (e.g. single
+                        # giant first message) – nothing we can do automatically.
+                        logger.error("Emergency compaction had nothing to compact: %s", e)
+                        console.print_error(
+                            "Context limit exceeded and the message is too large to compact. "
+                            "Try breaking your request into smaller pieces."
+                        )
+                else:
+                    logger.exception("Agent error occurred: %s", e)
+                    console.print_error(f"Agent error: {e}")
 
             console.rule()
 

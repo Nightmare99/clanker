@@ -71,6 +71,9 @@ class ContextSettings(BaseModel):
 
     # Auto-compact when context usage exceeds this percentage
     compaction_threshold: float = Field(default=95.0, ge=50.0, le=99.0)
+    # Pre-turn compaction threshold - compact BEFORE sending next turn to the LLM.
+    # Must be lower than compaction_threshold to act as an early warning.
+    pre_compaction_threshold: float = Field(default=80.0, ge=50.0, le=99.0)
     # Number of recent conversation turns to keep after compaction
     keep_recent_turns: int = Field(default=4, ge=1, le=20)
 
@@ -267,7 +270,8 @@ output:
 
 # Context window management
 context:
-  compaction_threshold: 95.0  # Auto-compact when context usage exceeds this % (50-99)
+  compaction_threshold: 95.0  # Post-turn safety net: compact if usage exceeds this % (50-99)
+  pre_compaction_threshold: 80.0  # Pre-turn early compact: fires BEFORE sending next turn (50-99)
   keep_recent_turns: 4  # Keep last N conversation turns after compaction
 
 memory:
