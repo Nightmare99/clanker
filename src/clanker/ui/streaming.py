@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from clanker.config import Settings
 from clanker.tools.bash_tools import CommandRejectedError
+from clanker.tools.notify_tools import set_notify_callback
 from clanker.runtime import is_yolo_mode
 
 
@@ -142,6 +143,17 @@ def stream_agent_response_sync(
                 show_tool(*pending_tools[0])
             pending_tools = []
 
+        # Register the notify callback so the agent can push status updates
+        # to the console mid-execution (before the graph runs).
+        def _notify_callback(message: str, level: str) -> None:
+            stop_loading()
+            console.print_notify(message, level)
+            # Restart spinner after the notification so it resumes while
+            # the agent keeps working.
+            start_loading()
+
+        set_notify_callback(_notify_callback)
+
         try:
             # Start loading spinner
             start_loading()
@@ -164,12 +176,20 @@ def stream_agent_response_sync(
                                 # Skip bash display when approval is needed (approval prompt shows it)
                                 if tool_name == "bash" and not is_yolo_mode():
                                     continue
+                                # Skip notify - the tool itself handles display
+                                if tool_name == "notify":
+                                    continue
                                 pending_tools.append((tool_name, tool_input))
 
                     # Flush tools when execution completes
                     elif event_type == "on_tool_end":
                         if pending_tools:
                             flush_pending_tools()
+                        # Skip result display for notify - it already printed
+                        tool_name_end = event.get("name", "")
+                        if tool_name_end == "notify":
+                            start_loading()
+                            continue
                         # Show tool output (truncated, muted)
                         if settings.output.show_tool_calls:
                             data = event.get("data", {})
@@ -352,6 +372,7 @@ def stream_agent_response_sync(
 
         finally:
             stop_loading()  # Ensure loading spinner is stopped
+            set_notify_callback(None)  # Clear notify callback after execution
 
         # If we buffered thinking but never saw </think>, treat it as response
         # This handles models that don't use think tags

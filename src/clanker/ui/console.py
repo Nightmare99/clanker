@@ -352,6 +352,29 @@ class Console:
             self._console.print(Text(f"  {line}", style="yellow"))
         self._console.print()
 
+    def print_notify(self, message: str, level: str = "info") -> None:
+        """Print an agent status notification (from the notify tool).
+
+        Displayed inline while the agent is still executing so the user
+        gets real-time progress feedback.
+
+        Args:
+            message: The status message sent by the agent.
+            level: Severity / display style - "info", "success", "warning", "error".
+        """
+        level_styles = {
+            "info": ("🔔", "cyan"),
+            "success": ("✅", "green"),
+            "warning": ("⚠️ ", "yellow"),
+            "error": ("❌", "red bold"),
+        }
+        icon, style = level_styles.get(level, ("🔔", "cyan"))
+
+        text = Text()
+        text.append(f"  {icon} ", style="dim")
+        text.append(message, style=style)
+        self._console.print(text)
+
     def print_success(self, message: str) -> None:
         """Print a success message."""
         self._console.print(Text(message, style="success"))

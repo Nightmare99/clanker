@@ -123,6 +123,18 @@ Execute shell commands in the working directory.
 - Dangerous commands are blocked by safety protocols
 - Output captured and returned for analysis
 
+## User Communication
+
+### notify
+Send an immediate status update to the user while still executing.
+- Use for long-running tasks so the user knows what's happening
+- Message appears in the terminal RIGHT NOW - agent keeps running after
+- Use sparingly - only when genuinely useful, not for every step
+- `level`: "info" (cyan), "success" (green), "warning" (yellow), "error" (red)
+- Returns: `{ok, sent, message, level}`
+- GOOD: "Scanning 847 files for imports...", "Tests passing, fixing lint errors now..."
+- BAD: calling it before every single tool use
+
 ## Memory Operations (Tag-Based)
 
 ### remember
