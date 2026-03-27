@@ -50,17 +50,6 @@ import { h } from 'vue'
 // Types
 interface Config {
   agent: { name: string }
-  model: {
-    provider: string
-    name: string
-    temperature: number | null
-    max_tokens: number | null
-    thinking_enabled: boolean
-    thinking_budget_tokens: number
-    parallel_tool_calls: boolean
-    azure: { api_version: string; deployment_name: string | null }
-    azure_anthropic: { resource: string | null; deployment_name: string | null }
-  }
   safety: {
     require_confirmation: boolean
     sandbox_commands: boolean
@@ -102,8 +91,6 @@ interface EnvStatus {
   AZURE_OPENAI_API_KEY: boolean
   AZURE_OPENAI_ENDPOINT: boolean
   AZURE_OPENAI_DEPLOYMENT_NAME: boolean
-  ANTHROPIC_FOUNDRY_API_KEY: boolean
-  ANTHROPIC_FOUNDRY_RESOURCE: boolean
 }
 
 interface ModelConfig {
@@ -182,15 +169,7 @@ const menuOptions: MenuOption[] = [
   { label: 'Agent', key: 'agent', icon: () => h(NIcon, null, { default: () => h(SettingsOutline) }) },
 ]
 
-const providerOptions = [
-  { label: 'Azure OpenAI', value: 'azure' },
-  { label: 'OpenAI', value: 'openai' },
-  { label: 'Anthropic', value: 'anthropic' },
-  { label: 'Azure Anthropic (Foundry)', value: 'azure_anthropic' },
-  { label: 'Ollama', value: 'ollama' },
-]
-
-// Provider options for the new JSON-based model config
+// Provider options for model config
 const modelProviderOptions = [
   { label: 'OpenAI', value: 'OpenAI', description: 'GPT-4, GPT-4o, etc.' },
   { label: 'Azure OpenAI', value: 'AzureOpenAI', description: 'OpenAI models on Azure' },
@@ -213,14 +192,6 @@ const logLevelOptions = [
   { label: 'ERROR', value: 'ERROR' },
   { label: 'CRITICAL', value: 'CRITICAL' },
 ]
-
-// Computed
-const isAnthropicProvider = computed(() =>
-  config.value?.model.provider === 'anthropic' || config.value?.model.provider === 'azure_anthropic'
-)
-
-const isAzureProvider = computed(() => config.value?.model.provider === 'azure')
-const isAzureAnthropicProvider = computed(() => config.value?.model.provider === 'azure_anthropic')
 
 // Model form computed
 const isModelFormAzure = computed(() => modelForm.value.provider === 'AzureOpenAI')

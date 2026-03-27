@@ -9,45 +9,6 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class AzureSettings(BaseModel):
-    """Azure OpenAI specific configuration."""
-
-    endpoint: str | None = None
-    deployment_name: str | None = None
-    api_version: str = "2024-02-15-preview"
-
-
-class AzureAnthropicSettings(BaseModel):
-    """Azure Foundry Anthropic specific configuration."""
-
-    # Resource name (e.g., "my-resource" -> https://my-resource.services.ai.azure.com/anthropic/)
-    resource: str | None = None
-    # Deployment name (defaults to model ID like "claude-sonnet-4-5")
-    deployment_name: str | None = None
-
-
-class ModelSettings(BaseModel):
-    """LLM model configuration."""
-
-    provider: Literal["openai", "anthropic", "azure", "azure_anthropic", "ollama"] = "azure"
-    name: str = "gpt-4o"
-    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
-    max_tokens: int | None = Field(default=None, gt=0)
-
-    # Extended thinking (Anthropic only - works with anthropic and azure_anthropic)
-    thinking_enabled: bool = False
-    thinking_budget_tokens: int = Field(default=10000, gt=0)
-
-    # Parallel tool calls
-    parallel_tool_calls: bool = True
-
-    # Azure OpenAI-specific settings
-    azure: AzureSettings = Field(default_factory=AzureSettings)
-
-    # Azure Foundry Anthropic-specific settings
-    azure_anthropic: AzureAnthropicSettings = Field(default_factory=AzureAnthropicSettings)
-
-
 class SafetySettings(BaseModel):
     """Safety and security configuration."""
 
@@ -131,18 +92,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # API Keys (loaded from environment)
-    openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
-    anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
-    azure_openai_api_key: str | None = Field(default=None, alias="AZURE_OPENAI_API_KEY")
-    azure_openai_endpoint: str | None = Field(default=None, alias="AZURE_OPENAI_ENDPOINT")
-    # Azure Foundry Anthropic credentials
-    anthropic_foundry_api_key: str | None = Field(default=None, alias="ANTHROPIC_FOUNDRY_API_KEY")
-    anthropic_foundry_resource: str | None = Field(default=None, alias="ANTHROPIC_FOUNDRY_RESOURCE")
-
     # Nested settings
     agent: AgentSettings = Field(default_factory=AgentSettings)
-    model: ModelSettings = Field(default_factory=ModelSettings)
     safety: SafetySettings = Field(default_factory=SafetySettings)
     output: OutputSettings = Field(default_factory=OutputSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
@@ -176,17 +127,7 @@ class Settings(BaseSettings):
         """Save settings to a YAML file."""
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        data = self.model_dump(
-            exclude={
-                "openai_api_key",
-                "anthropic_api_key",
-                "azure_openai_api_key",
-                "azure_openai_endpoint",
-                "anthropic_foundry_api_key",
-                "anthropic_foundry_resource",
-            },
-            exclude_none=True,
-        )
+        data = self.model_dump(exclude_none=True)
 
         # Convert Path objects to strings for YAML serialization
         def convert_paths(obj):
@@ -210,48 +151,14 @@ class Settings(BaseSettings):
         config_content = """\
 # Clanker Configuration
 # https://github.com/yourusername/clanker
+#
+# Model configuration is stored separately in ~/.clanker/models.json
+# Use 'clanker model add' to configure models
 
 # Agent identity
 agent:
   # Name used by the assistant across sessions
   name: Clanker
-
-model:
-  # Provider: azure, openai, anthropic, azure_anthropic, ollama
-  provider: azure
-
-  # Model name (used for non-Azure providers)
-  name: gpt-4o
-
-  # Optional: temperature and max_tokens (omit to use model defaults)
-  # Some Azure models (o1, o3) only support default values
-  # temperature: 0.7
-  # max_tokens: 4096
-
-  # Extended thinking (Anthropic/Azure Anthropic - requires claude-3-5-sonnet or later)
-  # thinking_enabled: true
-  # thinking_budget_tokens: 10000
-
-  # Allow parallel tool calls (model dependent)
-  parallel_tool_calls: true
-
-  # Azure OpenAI settings (required when provider is 'azure')
-  # Set these environment variables:
-  #   AZURE_OPENAI_API_KEY
-  #   AZURE_OPENAI_ENDPOINT
-  #   AZURE_OPENAI_DEPLOYMENT_NAME
-  azure:
-    api_version: "2024-02-15-preview"
-    # deployment_name: your-deployment-name  # Or set via env var
-
-  # Azure Foundry Anthropic settings (required when provider is 'azure_anthropic')
-  # Claude models hosted on Microsoft Foundry (Azure)
-  # Set these environment variables:
-  #   ANTHROPIC_FOUNDRY_API_KEY
-  #   ANTHROPIC_FOUNDRY_RESOURCE
-  # azure_anthropic:
-  #   resource: your-resource-name  # Or set via env var
-  #   deployment_name: claude-sonnet-4-5  # Defaults to model name
 
 safety:
   require_confirmation: true

@@ -87,29 +87,35 @@ Use the `/model` command in interactive mode:
 
 The current model is shown on startup.
 
-## Legacy Config File
+## General Settings
 
-You can also use `~/.clanker/config.yaml` for configuration. If no models are configured in `models.json`, Clanker falls back to this file:
+General settings (non-model) are stored in `~/.clanker/config.yaml`:
 
 ```yaml
-model:
-  provider: azure  # or: anthropic, openai
-  name: gpt-4o
-  temperature: 0.7
-
-  # Azure-specific settings
-  azure:
-    deployment_name: your-deployment-name
-    api_version: "2024-02-15-preview"
+# Agent identity
+agent:
+  name: Clanker
 
 safety:
   require_confirmation: true
   sandbox_commands: true
+  max_file_size: 1000000
+  command_timeout: 120000
 
 output:
   syntax_highlighting: true
   show_tool_calls: true
   stream_responses: true
+  show_token_usage: true
+
+# Context management (automatic summarization)
+context:
+  keep_recent_turns: 4
+  summarization_threshold: 80.0  # % of context window
+
+memory:
+  persist_sessions: true
+  max_history_length: 100
 ```
 
 ## Web Configuration UI

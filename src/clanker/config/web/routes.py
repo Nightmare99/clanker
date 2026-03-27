@@ -52,8 +52,6 @@ def get_env_status() -> dict[str, bool]:
         "AZURE_OPENAI_API_KEY",
         "AZURE_OPENAI_ENDPOINT",
         "AZURE_OPENAI_DEPLOYMENT_NAME",
-        "ANTHROPIC_FOUNDRY_API_KEY",
-        "ANTHROPIC_FOUNDRY_RESOURCE",
     ]
     return {var: bool(os.getenv(var)) for var in env_vars}
 
@@ -72,17 +70,7 @@ async def get_config() -> ConfigResponse:
     """Get current configuration."""
     settings = reload_settings()
 
-    # Convert to dict, excluding sensitive fields
-    config_dict = settings.model_dump(
-        exclude={
-            "openai_api_key",
-            "anthropic_api_key",
-            "azure_openai_api_key",
-            "azure_openai_endpoint",
-            "anthropic_foundry_api_key",
-            "anthropic_foundry_resource",
-        }
-    )
+    config_dict = settings.model_dump()
 
     # Convert Path objects to strings
     if "memory" in config_dict and "storage_path" in config_dict["memory"]:
@@ -114,16 +102,7 @@ async def update_config(request: ConfigUpdateRequest) -> MessageResponse:
             new_config["logging"]["log_dir"] = current.logging.log_dir
 
         # Merge current config with new values
-        current_dict = current.model_dump(
-            exclude={
-                "openai_api_key",
-                "anthropic_api_key",
-                "azure_openai_api_key",
-                "azure_openai_endpoint",
-                "anthropic_foundry_api_key",
-                "anthropic_foundry_resource",
-            }
-        )
+        current_dict = current.model_dump()
 
         # Deep merge the configs
         merged = deep_merge(current_dict, new_config)

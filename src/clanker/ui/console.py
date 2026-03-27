@@ -507,7 +507,7 @@ class Console:
         if current_model:
             model_info = f"{current_model.name} [dim]({current_model.provider})[/dim]"
         else:
-            model_info = f"{self._settings.model.name} [dim]({self._settings.model.provider})[/dim]"
+            model_info = "[dim]No model configured[/dim]"
 
         # Yolo mode indicator
         yolo_line = ""

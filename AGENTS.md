@@ -87,10 +87,11 @@ clanker/
 ---
 
 ## Configuration Sources
-Settings may come from:
-1. `~/.clanker/config.yaml` (preferred)
-2. Environment variables (`CLANKER_*`, provider-specific vars)
-3. CLI flags (`--provider`, `--model`, etc.)
+Settings come from:
+1. `~/.clanker/models.json` - Model configurations (provider, API keys, etc.)
+2. `~/.clanker/config.yaml` - General settings (safety, output, context management)
+3. Environment variables (`AZURE_OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`)
+4. CLI flags (`--provider`, `--model`, etc.)
 
 Agents should assume configuration is already loaded and valid.
 
@@ -99,9 +100,10 @@ Agents should assume configuration is already loaded and valid.
 ## LLM Provider Abstraction
 Clanker supports multiple providers via a unified interface:
 
-- **Azure OpenAI** (recommended)
-- **OpenAI**
-- **Anthropic (Claude)**
+- **AzureOpenAI** - Azure-hosted OpenAI models
+- **OpenAI** - Direct OpenAI API
+- **Anthropic** - Claude models with extended thinking support
+- **Ollama** - Local models
 
 Provider choice should not affect agent behavior, only model quality.
 

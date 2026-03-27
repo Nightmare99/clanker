@@ -81,8 +81,7 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
             if current:
                 console.print_info(f"Current model: {current.name} ({current.provider})")
             else:
-                settings = get_settings()
-                console.print_info(f"Current model: {settings.model.name} (from config.yaml)")
+                console.print_warning("No model configured.")
 
             if model_names:
                 console.print_info("\nAvailable models:")
@@ -113,16 +112,15 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
         console.print_info(f"Config file: {CONFIG_PATH}")
         console.print_info(f"Agent name: {settings.agent.name}")
 
-        # Show model info from JSON config if available
+        # Show model info from JSON config
         current_model = get_default_model()
         if current_model:
-            console.print_info(f"Model: {current_model.name} (JSON config)")
+            console.print_info(f"Model: {current_model.name}")
             console.print_info(f"Provider: {current_model.provider}")
             if current_model.model:
                 console.print_info(f"Model ID: {current_model.model}")
         else:
-            console.print_info(f"Model: {settings.model.name} (YAML config)")
-            console.print_info(f"Provider: {settings.model.provider}")
+            console.print_warning("No model configured. Run 'clanker' to set up.")
 
         if settings.mcp.enabled and settings.mcp.servers:
             enabled = [n for n, s in settings.mcp.servers.items() if s.enabled]
@@ -311,15 +309,14 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
             logger.info("Validating model config: %s (provider=%s)",
                        current_model.name, current_model.provider)
         else:
-            logger.info("Validating model config: provider=%s, model=%s",
-                       settings.model.provider, settings.model.name)
+            logger.warning("No model configured")
         # Validate model config by creating it
         create_model(settings)
         logger.info("Model configuration validated successfully")
     except ValueError as e:
         logger.error("Failed to validate model config: %s", e)
         console.print_error(str(e))
-        console.print_info("Please set your API key in the environment or config file.")
+        console.print_info("Run 'clanker' to run the setup wizard.")
         sys.exit(1)
 
     # Setup prompt history
@@ -347,9 +344,9 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
     # Track messages for saving
     conversation_messages = []
 
-    # Token tracking - use JSON model name if available
+    # Token tracking
     current_model = get_default_model()
-    tracker_model_name = current_model.name if current_model else settings.model.name
+    tracker_model_name = current_model.name if current_model else "unknown"
     token_tracker = SessionTokenTracker(model_name=tracker_model_name)
 
     while True:
@@ -474,9 +471,9 @@ def run_single_prompt(prompt: str, console: Console, settings: Settings) -> None
         console.print_error(str(e))
         sys.exit(1)
 
-    # Token tracking - use JSON model name if available
+    # Token tracking
     current_model = get_default_model()
-    tracker_model_name = current_model.name if current_model else settings.model.name
+    tracker_model_name = current_model.name if current_model else "unknown"
     token_tracker = SessionTokenTracker(model_name=tracker_model_name)
 
     state = {
@@ -542,7 +539,7 @@ class ClankerGroup(click.Group):
 @click.option(
     "--provider",
     "-p",
-    type=click.Choice(["anthropic", "openai", "azure", "azure_anthropic", "ollama"]),
+    type=click.Choice(["Anthropic", "OpenAI", "AzureOpenAI", "Ollama"]),
     default=None,
     help="LLM provider",
 )
@@ -690,13 +687,26 @@ def main(
         )
         logger.info("Clanker v%s starting", __version__)
         logger.info("Config loaded from: %s", CONFIG_PATH)
-        logger.debug("Settings: provider=%s, model=%s", settings.model.provider, settings.model.name)
+        current_model = get_default_model()
+        if current_model:
+            logger.debug("Using model: %s (%s)", current_model.name, current_model.provider)
+        else:
+            logger.debug("No model configured")
 
-    # Override settings from CLI args
-    if provider:
-        settings.model.provider = provider
-    if model:
-        settings.model.name = model
+    # Override model from CLI args by creating a temporary config
+    if provider or model:
+        from clanker.config.models import ModelConfig, add_model
+        current = get_default_model()
+        temp_model = ModelConfig(
+            name="cli-override",
+            provider=provider or (current.provider if current else "OpenAI"),
+            model=model or (current.model if current else None),
+            base_url=current.base_url if current else None,
+            deployment_name=current.deployment_name if current else None,
+            api_key=current.api_key if current else None,
+        )
+        add_model(temp_model)
+        set_default_model("cli-override")
 
     if prompt:
         run_single_prompt(prompt, console, settings)

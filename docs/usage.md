@@ -40,7 +40,7 @@ clanker --check-update
 clanker "Explain the code in src/main.py"
 
 # With specific provider
-clanker -p azure "Find all Python files in this project"
+clanker -p AzureOpenAI "Find all Python files in this project"
 ```
 
 ## Commands

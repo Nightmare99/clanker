@@ -2,11 +2,11 @@
 
 import os
 import time
-from pathlib import Path
 
 import click
 
 from clanker.config.settings import CONFIG_PATH, Settings
+from clanker.config.models import ModelConfig, add_model, MODELS_CONFIG_PATH
 
 
 def _print_banner():
@@ -46,10 +46,9 @@ def _print_step(step: int, total: int, title: str):
 def _detect_env_keys() -> dict:
     """Detect which API keys are already set in environment."""
     return {
-        "openai": bool(os.getenv("OPENAI_API_KEY")),
-        "anthropic": bool(os.getenv("ANTHROPIC_API_KEY")),
-        "azure": bool(os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT")),
-        "azure_anthropic": bool(os.getenv("ANTHROPIC_FOUNDRY_API_KEY")),
+        "OpenAI": bool(os.getenv("OPENAI_API_KEY")),
+        "Anthropic": bool(os.getenv("ANTHROPIC_API_KEY")),
+        "AzureOpenAI": bool(os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT")),
     }
 
 
@@ -71,7 +70,7 @@ def run_setup_wizard() -> Settings:
     click.secho("  Environment scan complete:", fg="green")
     for provider, found in detected_keys.items():
         status = click.style("✓ detected", fg="green") if found else click.style("○ not set", fg="bright_black")
-        click.echo(f"    {provider.upper():12} API key: {status}")
+        click.echo(f"    {provider:12} API key: {status}")
 
     click.echo()
     time.sleep(0.5)
@@ -93,24 +92,21 @@ def run_setup_wizard() -> Settings:
     _print_step(2, 4, "LLM PROVIDER SELECTION")
 
     # Suggest provider based on detected keys
-    default_provider = "azure"
-    if detected_keys["azure_anthropic"]:
-        default_provider = "azure_anthropic"
-    elif detected_keys["anthropic"]:
-        default_provider = "anthropic"
-    elif detected_keys["openai"]:
-        default_provider = "openai"
-    elif detected_keys["azure"]:
-        default_provider = "azure"
+    default_provider = "AzureOpenAI"
+    if detected_keys["Anthropic"]:
+        default_provider = "Anthropic"
+    elif detected_keys["OpenAI"]:
+        default_provider = "OpenAI"
+    elif detected_keys["AzureOpenAI"]:
+        default_provider = "AzureOpenAI"
 
     click.echo()
     click.echo("  Available providers:")
     providers = [
-        ("azure", "Azure OpenAI", "Enterprise-grade, your deployment"),
-        ("azure_anthropic", "Azure Anthropic", "Claude on Microsoft Foundry"),
-        ("openai", "OpenAI", "GPT-4o, GPT-4-turbo, etc."),
-        ("anthropic", "Anthropic", "Claude 3.5/4, extended thinking"),
-        ("ollama", "Ollama", "Local models, privacy-first"),
+        ("AzureOpenAI", "Azure OpenAI", "Enterprise-grade, your deployment"),
+        ("OpenAI", "OpenAI", "GPT-4o, GPT-4-turbo, etc."),
+        ("Anthropic", "Anthropic", "Claude 3.5/4, extended thinking"),
+        ("Ollama", "Ollama", "Local models, privacy-first"),
     ]
 
     for i, (key, name, desc) in enumerate(providers, 1):
@@ -121,7 +117,7 @@ def run_setup_wizard() -> Settings:
     click.echo()
     provider_choice = click.prompt(
         click.style("  Select provider", fg="white"),
-        type=click.Choice(["azure", "azure_anthropic", "openai", "anthropic", "ollama"]),
+        type=click.Choice(["AzureOpenAI", "OpenAI", "Anthropic", "Ollama"]),
         default=default_provider,
         show_default=True,
     )
@@ -133,124 +129,100 @@ def run_setup_wizard() -> Settings:
 
     # Suggest model based on provider
     default_models = {
-        "azure": "gpt-4o",
-        "azure_anthropic": "claude-sonnet-4-5",
-        "openai": "gpt-4o",
-        "anthropic": "claude-sonnet-4-20250514",
-        "ollama": "llama3.1:8b",
+        "AzureOpenAI": "gpt-4o",
+        "OpenAI": "gpt-4o",
+        "Anthropic": "claude-sonnet-4-20250514",
+        "Ollama": "llama3.1:8b",
     }
 
-    model_name = click.prompt(
-        click.style("  Model name", fg="white"),
+    model_id = click.prompt(
+        click.style("  Model ID", fg="white"),
         default=default_models.get(provider_choice, "gpt-4o"),
+        show_default=True,
+    )
+
+    # Display name for the model
+    model_display_name = click.prompt(
+        click.style("  Display name", fg="white"),
+        default=model_id,
         show_default=True,
     )
 
     # Azure OpenAI-specific config
     azure_deployment = None
-    if provider_choice == "azure":
+    azure_endpoint = None
+    if provider_choice == "AzureOpenAI":
         click.echo()
-        click.secho("  Azure OpenAI requires a deployment name.", fg="yellow")
+        click.secho("  Azure OpenAI requires a deployment name and endpoint.", fg="yellow")
         azure_deployment = click.prompt(
             click.style("  Deployment name", fg="white"),
-            default=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", model_name),
+            default=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", model_id),
+        )
+        azure_endpoint = click.prompt(
+            click.style("  Endpoint URL", fg="white"),
+            default=os.getenv("AZURE_OPENAI_ENDPOINT", ""),
         )
 
-        if not detected_keys["azure"]:
-            click.echo()
-            click.secho("  ⚠ Set these environment variables:", fg="yellow")
-            click.echo("    export AZURE_OPENAI_API_KEY='your-key'")
-            click.echo("    export AZURE_OPENAI_ENDPOINT='https://your-resource.openai.azure.com'")
-
-    # Azure Foundry Anthropic-specific config
-    azure_anthropic_resource = None
-    azure_anthropic_deployment = None
-    if provider_choice == "azure_anthropic":
-        click.echo()
-        click.secho("  Azure Foundry Anthropic uses your Azure resource endpoint.", fg="yellow")
-        azure_anthropic_resource = click.prompt(
-            click.style("  Resource name (e.g., my-ai-resource)", fg="white"),
-            default=os.getenv("ANTHROPIC_FOUNDRY_RESOURCE", ""),
-        )
-        azure_anthropic_deployment = click.prompt(
-            click.style("  Deployment name", fg="white"),
-            default=model_name,
-        )
-
-        if not detected_keys["azure_anthropic"]:
+        if not detected_keys["AzureOpenAI"]:
             click.echo()
             click.secho("  ⚠ Set this environment variable:", fg="yellow")
-            click.echo("    export ANTHROPIC_FOUNDRY_API_KEY='your-azure-api-key'")
+            click.echo("    export AZURE_OPENAI_API_KEY='your-key'")
 
-    # Anthropic thinking option (works for both anthropic and azure_anthropic)
+    # Anthropic thinking option
     thinking_enabled = False
-    if provider_choice in ("anthropic", "azure_anthropic"):
+    if provider_choice == "Anthropic":
         click.echo()
         thinking_enabled = click.confirm(
             click.style("  Enable extended thinking?", fg="white"),
             default=False,
         )
 
-    # Temperature (optional)
-    click.echo()
-    temp_input = click.prompt(
-        click.style("  Temperature (leave blank for default)", fg="white"),
-        default="",
-        show_default=False,
-    )
-    temperature = float(temp_input) if temp_input else None
-
     # ─────────────────────────────────────────────────────────────
     # Step 4: Finalize
     # ─────────────────────────────────────────────────────────────
     _print_step(4, 4, "FINALIZING CONFIGURATION")
 
-    # Build settings
+    # Build model config
+    model_config = ModelConfig(
+        name=model_display_name,
+        provider=provider_choice,
+        model=model_id,
+        deployment_name=azure_deployment,
+        base_url=azure_endpoint,
+        thinking_enabled=thinking_enabled,
+    )
+
+    # Build settings (for non-model config like agent name)
     settings = Settings()
     settings.agent.name = agent_name
-    settings.model.provider = provider_choice
-    settings.model.name = model_name
-
-    if temperature is not None:
-        settings.model.temperature = temperature
-
-    if azure_deployment:
-        settings.model.azure.deployment_name = azure_deployment
-
-    if azure_anthropic_resource:
-        settings.model.azure_anthropic.resource = azure_anthropic_resource
-    if azure_anthropic_deployment:
-        settings.model.azure_anthropic.deployment_name = azure_anthropic_deployment
-
-    if thinking_enabled:
-        settings.model.thinking_enabled = True
 
     # Show summary
     click.echo()
     click.secho("  Configuration summary:", fg="cyan")
     click.echo(f"    Agent:     {agent_name}")
     click.echo(f"    Provider:  {provider_choice}")
-    click.echo(f"    Model:     {model_name}")
+    click.echo(f"    Model:     {model_display_name} ({model_id})")
     if azure_deployment:
-        click.echo(f"    Azure deployment: {azure_deployment}")
-    if azure_anthropic_resource:
-        click.echo(f"    Azure Foundry resource: {azure_anthropic_resource}")
-    if azure_anthropic_deployment:
-        click.echo(f"    Azure Foundry deployment: {azure_anthropic_deployment}")
+        click.echo(f"    Deployment: {azure_deployment}")
+    if azure_endpoint:
+        click.echo(f"    Endpoint: {azure_endpoint}")
     if thinking_enabled:
         click.echo(f"    Extended thinking: enabled")
-    if temperature:
-        click.echo(f"    Temperature: {temperature}")
 
     click.echo()
 
     # Confirm and save
     if click.confirm(click.style("  Write configuration?", fg="white"), default=True):
+        # Save general settings to YAML
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         settings.save_yaml(CONFIG_PATH)
 
+        # Save model config to JSON
+        add_model(model_config)
+
         click.echo()
-        click.secho(f"  ✓ Configuration saved to {CONFIG_PATH}", fg="green")
+        click.secho(f"  ✓ Settings saved to {CONFIG_PATH}", fg="green")
+        click.secho(f"  ✓ Model config saved to {MODELS_CONFIG_PATH}", fg="green")
     else:
         click.secho("  ✗ Setup cancelled.", fg="red")
         raise SystemExit(1)
