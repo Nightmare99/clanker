@@ -1,6 +1,5 @@
 """Agent state definitions."""
 
-import operator
 from typing import Annotated
 
 from langchain_core.messages import AnyMessage

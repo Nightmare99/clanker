@@ -1,17 +1,14 @@
-"""Agent graph definition using LangGraph."""
+"""Agent creation using LangChain with SummarizationMiddleware."""
 
 import os
-from typing import Literal
 
+from langchain.agents import create_agent
+from langchain.agents.middleware import SummarizationMiddleware
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.graph import END, StateGraph
-from langgraph.prebuilt import ToolNode
 
 from clanker.agent.prompts import get_system_prompt
-from clanker.agent.state import AgentState
 from clanker.config import Settings, get_settings, get_default_model, create_llm_from_config
 from clanker.logging import get_logger
 from clanker.mcp import load_mcp_tools, load_mcp_tools_async
@@ -19,9 +16,6 @@ from clanker.tools import ALL_TOOLS
 
 # Module logger
 logger = get_logger("agent")
-
-# Maximum tool calls per turn to prevent infinite loops
-MAX_TOOL_CALLS = 20
 
 
 def _get_all_tools(settings: Settings) -> list:
@@ -127,7 +121,6 @@ def _create_model_from_settings(settings: Settings):
             )
 
         # Construct the Azure Foundry endpoint
-        # SDK appends /v1/messages, so base_url should NOT include /v1
         base_url = f"https://{resource}.services.ai.azure.com/anthropic"
         logger.info("Using Azure Foundry Anthropic: resource=%s, deployment=%s", resource, deployment)
 
@@ -135,7 +128,7 @@ def _create_model_from_settings(settings: Settings):
         if "max_tokens" not in optional_kwargs:
             optional_kwargs["max_tokens"] = 4096
 
-        # Enable extended thinking if configured (supported on Foundry)
+        # Enable extended thinking if configured
         if settings.model.thinking_enabled:
             optional_kwargs["thinking"] = {
                 "type": "enabled",
@@ -146,7 +139,6 @@ def _create_model_from_settings(settings: Settings):
                 settings.model.thinking_budget_tokens,
             )
 
-        # Azure Foundry requires specific headers
         return ChatAnthropic(
             model=deployment,
             api_key=api_key,
@@ -200,117 +192,58 @@ def _create_model_from_settings(settings: Settings):
         raise ValueError(f"Unsupported provider: {provider}")
 
 
-def _agent_node(state: AgentState, model) -> dict:
-    """Main agent reasoning node."""
-    messages = state["messages"]
-    working_dir = state.get("working_directory", os.getcwd())
-
-    # Add system prompt if not present
-    if not messages or not isinstance(messages[0], SystemMessage):
-        # Extract user query for memory retrieval
-        user_query = None
-        for msg in messages:
-            if isinstance(msg, HumanMessage):
-                user_query = msg.content if isinstance(msg.content, str) else str(msg.content)
-                break
-
-        system_msg = SystemMessage(content=get_system_prompt(working_dir, user_query=user_query))
-        messages = [system_msg] + list(messages)
-
-    response = model.invoke(messages)
-    return {"messages": [response]}
-
-
-def _should_continue(state: AgentState) -> Literal["tools", "end"]:
-    """Determine whether to continue with tools or end."""
-    messages = state["messages"]
-    last_message = messages[-1]
-
-    # Check tool call count to prevent infinite loops
-    tool_count = state.get("tool_calls_count", 0)
-    if tool_count >= MAX_TOOL_CALLS:
-        return "end"
-
-    # Check if the last message has tool calls
-    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-        return "tools"
-
-    return "end"
-
-
-def _increment_tool_count(state: AgentState) -> dict:
-    """Increment the tool call counter."""
-    current = state.get("tool_calls_count", 0)
-    return {"tool_calls_count": current + 1}
-
-
 def create_agent_graph(
     settings: Settings | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
 ):
-    """Create the agent graph.
+    """Create an agent with SummarizationMiddleware.
 
     Args:
         settings: Optional settings override.
         checkpointer: Optional checkpointer for persistence.
 
     Returns:
-        Compiled LangGraph agent.
+        Compiled agent with automatic summarization.
     """
     settings = settings or get_settings()
 
     # Get all tools (built-in + MCP)
     all_tools = _get_all_tools(settings)
 
-    # Create model and bind tools
+    # Create model
     model = create_model(settings)
-    model_with_tools = model.bind_tools(all_tools)
 
-    # Create tool node
-    tool_node = ToolNode(all_tools)
-
-    # Build the graph
-    workflow = StateGraph(AgentState)
-
-    # Add nodes
-    workflow.add_node("agent", lambda state: _agent_node(state, model_with_tools))
-    workflow.add_node("tools", tool_node)
-
-    # Set entry point
-    workflow.set_entry_point("agent")
-
-    # Add conditional edges
-    workflow.add_conditional_edges(
-        "agent",
-        _should_continue,
-        {
-            "tools": "tools",
-            "end": END,
-        },
+    # Create summarization middleware using the same model
+    summarization = SummarizationMiddleware(
+        model=model,  # Use the same configured model
+        trigger=("tokens", 8000),  # Trigger when exceeding 8k tokens
+        keep=("messages", settings.context.keep_recent_turns * 2),  # Keep recent turns
     )
 
-    # Tools always go back to agent
-    workflow.add_edge("tools", "agent")
+    # Create agent with middleware
+    agent = create_agent(
+        model=model,
+        tools=all_tools,
+        middleware=[summarization],
+        checkpointer=checkpointer,
+        system_prompt=get_system_prompt(),
+    )
 
-    # Compile with optional checkpointer
-    return workflow.compile(checkpointer=checkpointer)
+    return agent
 
 
 async def create_agent_graph_async(
     settings: Settings | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
 ):
-    """Create the agent graph with async MCP tool loading.
-
-    This version properly loads MCP tools in the async context, ensuring
-    the MCP client is created in the same event loop where tools will be invoked.
+    """Create an agent with async MCP tool loading and SummarizationMiddleware.
 
     Args:
         settings: Optional settings override.
         checkpointer: Optional checkpointer for persistence.
 
     Returns:
-        Tuple of (compiled_graph, mcp_client). Keep mcp_client alive while using graph.
+        Tuple of (agent, mcp_client). Keep mcp_client alive while using agent.
     """
     settings = settings or get_settings()
 
@@ -330,66 +263,23 @@ async def create_agent_graph_async(
 
     logger.debug("Total tools available: %d", len(tools))
 
-    # Create model and bind tools
+    # Create model
     model = create_model(settings)
-    model_with_tools = model.bind_tools(tools)
 
-    # Create tool node
-    tool_node = ToolNode(tools)
-
-    # Build the graph
-    workflow = StateGraph(AgentState)
-
-    # Add nodes
-    workflow.add_node("agent", lambda state: _agent_node(state, model_with_tools))
-    workflow.add_node("tools", tool_node)
-
-    # Set entry point
-    workflow.set_entry_point("agent")
-
-    # Add conditional edges
-    workflow.add_conditional_edges(
-        "agent",
-        _should_continue,
-        {
-            "tools": "tools",
-            "end": END,
-        },
+    # Create summarization middleware using the same model
+    summarization = SummarizationMiddleware(
+        model=model,  # Use the same configured model
+        trigger=("tokens", 8000),  # Trigger when exceeding 8k tokens
+        keep=("messages", settings.context.keep_recent_turns * 2),  # Keep recent turns
     )
 
-    # Tools always go back to agent
-    workflow.add_edge("tools", "agent")
-
-    # Compile with optional checkpointer
-    compiled = workflow.compile(checkpointer=checkpointer)
-    return compiled, mcp_client
-
-
-def create_simple_agent(
-    settings: Settings | None = None,
-    checkpointer: BaseCheckpointSaver | None = None,
-):
-    """Create a simple agent using LangGraph's prebuilt ReAct agent.
-
-    This is an alternative to create_agent_graph that uses the prebuilt
-    create_react_agent for simpler use cases.
-
-    Args:
-        settings: Optional settings override.
-        checkpointer: Optional checkpointer for persistence.
-
-    Returns:
-        Compiled LangGraph agent.
-    """
-    from langgraph.prebuilt import create_react_agent
-
-    settings = settings or get_settings()
-    model = create_model(settings)
-    all_tools = _get_all_tools(settings)
-
-    return create_react_agent(
-        model,
-        all_tools,
-        prompt=get_system_prompt(),
+    # Create agent with middleware
+    agent = create_agent(
+        model=model,
+        tools=tools,
+        middleware=[summarization],
         checkpointer=checkpointer,
+        system_prompt=get_system_prompt(),
     )
+
+    return agent, mcp_client
