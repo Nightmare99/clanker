@@ -1,5 +1,6 @@
 """Console output management using Rich."""
 
+import json
 import random
 from contextlib import contextmanager
 
@@ -229,34 +230,144 @@ class Console:
 
         self._console.print(text)
 
-    def print_tool_result(self, result: str, max_lines: int = 3, max_chars: int = 200) -> None:
-        """Print a tool result in muted grey, truncated."""
+    def _parse_tool_json(self, result: str) -> dict | None:
+        """Try to parse a tool result as JSON. Returns None if not valid JSON."""
+        try:
+            parsed = json.loads(result)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+        return None
+
+    def _print_dim(self, text_str: str) -> None:
+        """Print a short dim/muted line with indent."""
+        text = Text()
+        text.append("    ", style="dim")
+        text.append(text_str, style="dim")
+        self._console.print(text)
+
+    def print_tool_result(self, result: str, tool_name: str = "", max_lines: int = 4, max_chars: int = 300) -> None:
+        """Print a smart, per-tool summary of a tool result in muted grey."""
         if not self._settings.output.show_tool_calls:
             return
 
-        # Clean and truncate the result
         result = result.strip()
         if not result:
             return
 
+        # ── Tools whose output is already shown as a diff / content block ──────
+        # write_file, append_file, edit_file: diff already printed above the result
+        if tool_name in ("write_file", "append_file", "edit_file"):
+            return
+
+        parsed = self._parse_tool_json(result)
+
+        # ── read_file: show the actual file content, not the JSON wrapper ───────
+        if tool_name == "read_file":
+            if parsed and parsed.get("ok"):
+                content = parsed.get("content", "")
+                if not content:
+                    return
+                lines = content.splitlines()
+                preview_lines = lines[:max_lines]
+                preview = "\n".join(preview_lines)
+                if len(preview) > max_chars:
+                    preview = preview[:max_chars] + "…"
+                suffix = f" (+{len(lines) - max_lines} lines)" if len(lines) > max_lines else ""
+                self._print_dim(preview + suffix)
+            elif parsed and not parsed.get("ok"):
+                self._print_dim(str(parsed.get("message", result))[:max_chars])
+            return
+
+        # ── bash: show stdout/stderr trimmed ────────────────────────────────────
+        if tool_name == "bash":
+            if parsed:
+                # bash tool returns {"ok": bool, "output": "...", ...}
+                output = parsed.get("output", "") or parsed.get("stdout", "") or parsed.get("stderr", "")
+            else:
+                output = result
+            output = output.strip()
+            if not output:
+                return
+            lines = output.splitlines()
+            preview = "\n".join(lines[:max_lines])
+            if len(preview) > max_chars:
+                preview = preview[:max_chars] + "…"
+            suffix = f" (+{len(lines) - max_lines} lines)" if len(lines) > max_lines else ""
+            self._print_dim(preview + suffix)
+            return
+
+        # ── glob_search: "N files found" ────────────────────────────────────────
+        if tool_name == "glob_search":
+            if parsed and parsed.get("ok"):
+                files = parsed.get("files", parsed.get("results", []))
+                n = len(files) if isinstance(files, list) else 0
+                if n == 0:
+                    self._print_dim("No files found")
+                elif n == 1:
+                    self._print_dim(str(files[0]))
+                else:
+                    self._print_dim(f"{n} files found — {files[0]}, {files[1]}" + (", …" if n > 2 else ""))
+            return
+
+        # ── grep_search: "N matches" ─────────────────────────────────────────────
+        if tool_name == "grep_search":
+            if parsed and parsed.get("ok"):
+                matches = parsed.get("matches", parsed.get("results", []))
+                n = len(matches) if isinstance(matches, list) else 0
+                if n == 0:
+                    self._print_dim("No matches")
+                else:
+                    self._print_dim(f"{n} match{'es' if n != 1 else ''}")
+            return
+
+        # ── list_directory: "N items" ────────────────────────────────────────────
+        if tool_name == "list_directory":
+            if parsed and parsed.get("ok"):
+                items = parsed.get("items", [])
+                n = len(items) if isinstance(items, list) else 0
+                self._print_dim(f"{n} item{'s' if n != 1 else ''}")
+            return
+
+        # ── memory tools ─────────────────────────────────────────────────────────
+        if tool_name == "remember":
+            if parsed and parsed.get("ok"):
+                mem_id = parsed.get("memory_id", "")
+                self._print_dim(f"Saved{f' ({mem_id})' if mem_id else ''}")
+            return
+
+        if tool_name == "recall":
+            if parsed and parsed.get("ok"):
+                count = parsed.get("count", 0)
+                self._print_dim(f"{count} memor{'ies' if count != 1 else 'y'} found")
+            return
+
+        if tool_name == "forget":
+            if parsed and parsed.get("ok"):
+                self._print_dim("Memory deleted")
+            return
+
+        if tool_name == "list_memories":
+            if parsed and parsed.get("ok"):
+                count = parsed.get("count", 0)
+                self._print_dim(f"{count} memor{'ies' if count != 1 else 'y'}")
+            return
+
+        # ── fallback: raw truncated output (MCP tools, etc.) ────────────────────
         lines = result.split('\n')
         if len(lines) > max_lines:
-            display_lines = lines[:max_lines]
-            display = '\n'.join(display_lines)
-            suffix = f"  ... (+{len(lines) - max_lines} lines)"
+            display = '\n'.join(lines[:max_lines])
+            suffix = f"  … (+{len(lines) - max_lines} lines)"
         else:
             display = result
             suffix = ""
-
-        # Truncate if still too long
         if len(display) > max_chars:
-            display = display[:max_chars] + "..."
+            display = display[:max_chars] + "…"
             suffix = ""
-
-        # Print with indentation and muted style
         text = Text()
-        text.append("    ", style="dim")  # Indent
-        text.append(display.replace('\n', '\n    '), style="dim")  # Keep indent on newlines
+        text.append("    ", style="dim")
+        text.append(display.replace('\n', '\n    '), style="dim")
         if suffix:
             text.append(suffix, style="dim italic")
         self._console.print(text)

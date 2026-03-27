@@ -210,7 +210,7 @@ def stream_agent_response_sync(
                             elif not isinstance(tool_output, str):
                                 tool_output = str(tool_output)
                             if tool_output and tool_output.strip():
-                                console.print_tool_result(tool_output)
+                                console.print_tool_result(tool_output, tool_name=tool_name_end)
                         # Restart loading while waiting for next model response
                         start_loading()
 
