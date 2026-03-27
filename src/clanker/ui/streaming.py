@@ -102,8 +102,12 @@ def stream_agent_response_sync(
         summarization_spinner_shown = False
 
         # Token tracking
+        # input_tokens: overwritten each call (last call re-sends full history)
+        # output_tokens: overwritten each call (last input already encodes prior outputs)
+        # cumulative_output_tokens: summed across all calls (for cost accounting)
         last_input_tokens = 0
-        total_output_tokens = 0
+        last_output_tokens = 0
+        cumulative_output_tokens = 0
         last_cache_read_tokens = 0
         last_cache_creation_tokens = 0
         model_name = ""
@@ -342,7 +346,8 @@ def stream_agent_response_sync(
                             if hasattr(output, "usage_metadata") and output.usage_metadata:
                                 usage = output.usage_metadata
                                 last_input_tokens = usage.get("input_tokens", 0)
-                                total_output_tokens += usage.get("output_tokens", 0)
+                                last_output_tokens = usage.get("output_tokens", 0)
+                                cumulative_output_tokens += last_output_tokens
                                 last_cache_read_tokens = usage.get("cache_read_input_tokens", 0)
                                 last_cache_creation_tokens = usage.get("cache_creation_input_tokens", 0)
 
@@ -351,16 +356,19 @@ def stream_agent_response_sync(
                                 usage = meta.get("usage", {})
                                 if usage:
                                     last_input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
-                                    total_output_tokens += usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+                                    last_output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+                                    cumulative_output_tokens += last_output_tokens
 
                                 if not usage and "token_usage" in meta:
                                     usage = meta.get("token_usage", {})
                                     last_input_tokens = usage.get("prompt_tokens", 0)
-                                    total_output_tokens += usage.get("completion_tokens", 0)
+                                    last_output_tokens = usage.get("completion_tokens", 0)
+                                    cumulative_output_tokens += last_output_tokens
 
                                 if not usage:
                                     last_input_tokens = meta.get("prompt_tokens", 0)
-                                    total_output_tokens += meta.get("completion_tokens", 0)
+                                    last_output_tokens = meta.get("completion_tokens", 0)
+                                    cumulative_output_tokens += last_output_tokens
 
         except CommandRejectedError as e:
             stop_loading()
@@ -368,7 +376,20 @@ def stream_agent_response_sync(
             return StreamResult(
                 response="",
                 input_tokens=last_input_tokens,
-                output_tokens=total_output_tokens,
+                output_tokens=last_output_tokens,
+                cache_read_tokens=last_cache_read_tokens,
+                cache_creation_tokens=last_cache_creation_tokens,
+                model_name=model_name,
+                summarization_occurred=summarization_detected,
+            )
+
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            stop_loading()
+            rich_console.print("\n[bold yellow]*BZZZT*[/bold yellow] Agent halted. Control returned to you. [bold yellow]*CLANK*[/bold yellow]")
+            return StreamResult(
+                response=current_response,
+                input_tokens=last_input_tokens,
+                output_tokens=last_output_tokens,
                 cache_read_tokens=last_cache_read_tokens,
                 cache_creation_tokens=last_cache_creation_tokens,
                 model_name=model_name,
@@ -395,12 +416,16 @@ def stream_agent_response_sync(
         return StreamResult(
             response=current_response,
             input_tokens=last_input_tokens,
-            output_tokens=total_output_tokens,
+            output_tokens=last_output_tokens,
             cache_read_tokens=last_cache_read_tokens,
             cache_creation_tokens=last_cache_creation_tokens,
             model_name=model_name,
             summarization_occurred=summarization_detected,
         )
 
-    # Run the async function
-    return asyncio.run(_stream_async())
+    # Run the async function — KeyboardInterrupt (Ctrl+C) may surface here
+    # if it fires between asyncio yield points; catch it and return a clean result.
+    try:
+        return asyncio.run(_stream_async())
+    except KeyboardInterrupt:
+        return StreamResult(response="")

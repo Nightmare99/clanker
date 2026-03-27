@@ -625,16 +625,10 @@ Commands:
             cache_read: Tokens read from cache (Anthropic).
             cache_creation: Tokens used for cache creation (Anthropic).
         """
-        total = input_tokens + output_tokens
         remaining = max(0.0, 100.0 - context_used_percent)
 
         text = Text()
         text.append("  [", style="dim")
-        text.append(f"{total:,}", style="cyan")
-        text.append(" tokens", style="dim")
-
-        # Show breakdown
-        text.append(" (", style="dim")
         text.append(f"in:{input_tokens:,}", style="dim green")
         text.append(" ", style="dim")
         text.append(f"out:{output_tokens:,}", style="dim yellow")
@@ -643,8 +637,6 @@ Commands:
         if cache_read > 0:
             text.append(" ", style="dim")
             text.append(f"cache:{cache_read:,}", style="dim magenta")
-
-        text.append(")", style="dim")
 
         # Context remaining with color coding
         text.append(" | ", style="dim")
