@@ -435,14 +435,6 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
                         result.cache_read_tokens,
                         result.cache_creation_tokens,
                     )
-                    if settings.output.show_token_usage:
-                        console.print_token_usage(
-                            result.input_tokens,
-                            result.output_tokens,
-                            token_tracker.context_used_percent,
-                            result.cache_read_tokens,
-                            result.cache_creation_tokens,
-                        )
 
                 # Track AI response
                 if result.response:
@@ -451,7 +443,8 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
                     # Auto-save after each exchange
                     session_manager.save_conversation_snapshot(conversation_messages)
 
-                # Check if context compaction is needed
+                # Check if context compaction is needed - do this BEFORE displaying
+                # token usage so the display reflects the post-compaction state.
                 if should_compact(token_tracker.context_used_percent):
                     logger.info("Context compaction triggered at %.1f%% usage",
                                token_tracker.context_used_percent)
@@ -465,15 +458,28 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
                         conversation_messages = compacted_messages
                         # Start a new session/thread with compacted context
                         session_manager.new_session()
-                        # Reset token tracker since we've compacted
-                        # Estimate new context usage (rough approximation)
+                        # Reset token tracker since we've compacted.
+                        # Use the active model name (JSON config takes priority over yaml).
+                        active_model = get_default_model()
+                        tracker_model = active_model.name if active_model else settings.model.name
+                        # Estimate new context usage from message lengths.
                         estimated_tokens = sum(
                             len(m.content) // 4 if isinstance(m.content, str) else 100
                             for m in conversation_messages
                         )
-                        token_tracker = SessionTokenTracker(model_name=settings.model.name)
+                        token_tracker = SessionTokenTracker(model_name=tracker_model)
                         token_tracker.current_context_tokens = estimated_tokens
                         logger.info("Context compacted, new session started, estimated tokens: %d", estimated_tokens)
+
+                # Show token usage after any compaction so the % reflects current state.
+                if (result.input_tokens > 0 or result.output_tokens > 0) and settings.output.show_token_usage:
+                    console.print_token_usage(
+                        result.input_tokens,
+                        result.output_tokens,
+                        token_tracker.context_used_percent,
+                        result.cache_read_tokens,
+                        result.cache_creation_tokens,
+                    )
 
                 logger.debug("Agent response completed successfully")
             except Exception as e:

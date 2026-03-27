@@ -129,16 +129,19 @@ class SessionTokenTracker:
         """Record token usage for a conversation turn.
 
         Args:
-            input_tokens: Tokens used for input/prompt (includes full context).
-            output_tokens: Tokens generated in response.
-            cache_read: Tokens read from cache (Anthropic).
-            cache_creation: Tokens used for cache creation (Anthropic).
+            input_tokens: Tokens from the LAST LLM call in the turn (full context).
+                          Each LLM call re-sends the full conversation history so we
+                          use only the final call's input to avoid double-counting.
+            output_tokens: Total output tokens across all LLM calls in the turn.
+            cache_read: Cache-read tokens from the last LLM call (Anthropic).
+            cache_creation: Cache-creation tokens from the last LLM call (Anthropic).
 
         Returns:
             TokenUsage for this turn with cumulative stats.
         """
-        # input_tokens represents the FULL context sent to the model
-        # So current context = last input + last output (which becomes next input)
+        # input_tokens is the LAST call's input, which already encodes the full
+        # conversation history.  Adding output_tokens gives the context size the
+        # model will see on the NEXT turn (history + this response).
         self.current_context_tokens = input_tokens + output_tokens
         self.total_output += output_tokens
 

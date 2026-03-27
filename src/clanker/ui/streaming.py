@@ -93,10 +93,14 @@ def stream_agent_response_sync(
         first_content_received = False
 
         # Token tracking
-        total_input_tokens = 0
-        total_output_tokens = 0
-        cache_read_tokens = 0
-        cache_creation_tokens = 0
+        # last_input_tokens: input tokens from the FINAL LLM call only.
+        # Each LLM call re-sends the full conversation history, so summing
+        # across calls would multiply-count it.  We keep only the last value
+        # for context-window accounting.
+        last_input_tokens = 0
+        total_output_tokens = 0   # summed across all LLM calls (each is new)
+        last_cache_read_tokens = 0
+        last_cache_creation_tokens = 0
         model_name = ""
 
         def start_loading():
@@ -145,12 +149,10 @@ def stream_agent_response_sync(
 
         # Register the notify callback so the agent can push status updates
         # to the console mid-execution (before the graph runs).
+        # The spinner is stopped before notify fires (on_tool_start) so the
+        # message prints cleanly with no competing Live display.
         def _notify_callback(message: str, level: str) -> None:
-            stop_loading()
             console.print_notify(message, level)
-            # Restart spinner after the notification so it resumes while
-            # the agent keeps working.
-            start_loading()
 
         set_notify_callback(_notify_callback)
 
@@ -188,6 +190,8 @@ def stream_agent_response_sync(
                         # Skip result display for notify - it already printed
                         tool_name_end = event.get("name", "")
                         if tool_name_end == "notify":
+                            # Restart loading so the spinner shows while waiting
+                            # for the next model response after a notify call.
                             start_loading()
                             continue
                         # Show tool output (truncated, muted)
@@ -331,11 +335,15 @@ def stream_agent_response_sync(
                             # Get usage from usage_metadata (preferred - works for most providers)
                             if hasattr(output, "usage_metadata") and output.usage_metadata:
                                 usage = output.usage_metadata
-                                total_input_tokens += usage.get("input_tokens", 0)
+                                # Input tokens: OVERWRITE (not accumulate) - each LLM call
+                                # re-sends the full conversation history so the latest value
+                                # is what represents our actual context footprint.
+                                last_input_tokens = usage.get("input_tokens", 0)
+                                # Output tokens: accumulate - each call produces genuinely new tokens.
                                 total_output_tokens += usage.get("output_tokens", 0)
-                                # Anthropic cache tokens
-                                cache_read_tokens += usage.get("cache_read_input_tokens", 0)
-                                cache_creation_tokens += usage.get("cache_creation_input_tokens", 0)
+                                # Anthropic cache tokens (overwrite - from final call)
+                                last_cache_read_tokens = usage.get("cache_read_input_tokens", 0)
+                                last_cache_creation_tokens = usage.get("cache_creation_input_tokens", 0)
 
                             # Fallback to response_metadata for Azure OpenAI and others
                             elif hasattr(output, "response_metadata"):
@@ -344,18 +352,18 @@ def stream_agent_response_sync(
                                 # Try "usage" key first (standard format)
                                 usage = meta.get("usage", {})
                                 if usage:
-                                    total_input_tokens += usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
+                                    last_input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
                                     total_output_tokens += usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
 
                                 # Azure OpenAI may have token_usage at top level
                                 if not usage and "token_usage" in meta:
                                     usage = meta.get("token_usage", {})
-                                    total_input_tokens += usage.get("prompt_tokens", 0)
+                                    last_input_tokens = usage.get("prompt_tokens", 0)
                                     total_output_tokens += usage.get("completion_tokens", 0)
 
                                 # Some Azure responses have it directly in metadata
                                 if not usage:
-                                    total_input_tokens += meta.get("prompt_tokens", 0)
+                                    last_input_tokens = meta.get("prompt_tokens", 0)
                                     total_output_tokens += meta.get("completion_tokens", 0)
 
         except CommandRejectedError as e:
@@ -363,10 +371,10 @@ def stream_agent_response_sync(
             rich_console.print(f"\n[bold yellow]Operation cancelled:[/bold yellow] {e}")
             return StreamResult(
                 response="",
-                input_tokens=total_input_tokens,
+                input_tokens=last_input_tokens,
                 output_tokens=total_output_tokens,
-                cache_read_tokens=cache_read_tokens,
-                cache_creation_tokens=cache_creation_tokens,
+                cache_read_tokens=last_cache_read_tokens,
+                cache_creation_tokens=last_cache_creation_tokens,
                 model_name=model_name,
             )
 
@@ -390,10 +398,10 @@ def stream_agent_response_sync(
 
         return StreamResult(
             response=current_response,
-            input_tokens=total_input_tokens,
+            input_tokens=last_input_tokens,
             output_tokens=total_output_tokens,
-            cache_read_tokens=cache_read_tokens,
-            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=last_cache_read_tokens,
+            cache_creation_tokens=last_cache_creation_tokens,
             model_name=model_name,
         )
 

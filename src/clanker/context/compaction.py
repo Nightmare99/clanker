@@ -129,23 +129,39 @@ async def compact_context_async(
         len(to_compact), len(to_keep)
     )
 
-    if console:
-        console.print_info(f"Compacting context ({context_used_percent:.0f}% used)...")
-
     # Format messages for summarization
     conversation_text = format_messages_for_summary(to_compact)
 
-    # Generate summary
+    # Generate summary - show a spinner so the user knows what's happening
+    # (this is a blocking LLM call that can take several seconds).
     try:
         summary_prompt = SUMMARY_PROMPT.format(conversation=conversation_text)
-        response = await model.ainvoke([HumanMessage(content=summary_prompt)])
+
+        if console:
+            from rich.live import Live
+            from rich.spinner import Spinner
+            from rich.text import Text
+
+            spinner = Spinner("dots", text=Text(
+                f"  *WHIRR* Compressing {len(to_compact)} messages into memory banks"
+                f" ({context_used_percent:.0f}% ctx used)...",
+                style="cyan",
+            ))
+            with Live(spinner, console=console._console, refresh_per_second=10, transient=True):
+                response = await model.ainvoke([HumanMessage(content=summary_prompt)])
+        else:
+            response = await model.ainvoke([HumanMessage(content=summary_prompt)])
+
         summary = response.content if isinstance(response.content, str) else str(response.content)
 
         logger.info("Context compacted: %d chars summarized to %d chars",
                    len(conversation_text), len(summary))
 
         if console:
-            console.print_info(f"Compacted {len(to_compact)} messages into summary")
+            console.print_success(
+                f"*CLANK* Context compacted — {len(to_compact)} messages summarized, "
+                f"keeping {len(to_keep)} recent."
+            )
 
         # Create new message list with summary
         summary_message = SystemMessage(
