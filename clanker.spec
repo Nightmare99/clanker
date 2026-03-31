@@ -60,6 +60,9 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
+        # Readline - causes symbol conflicts with system shell
+        'readline',
+        'gnureadline',
         # GUI/plotting - not needed
         'tkinter',
         'matplotlib',
