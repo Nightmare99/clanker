@@ -55,6 +55,10 @@ a = Analysis(
         # SQLite for checkpointing
         'sqlite3',
         'aiosqlite',
+        # GitHub Copilot SDK
+        'copilot',
+        'copilot.generated',
+        'copilot.generated.session_events',
     ],
     hookspath=[],
     hooksconfig={},

@@ -45,17 +45,69 @@
 - MCP tools require async execution - ensure you're using the latest version
 - Test the server connection via `clanker config` web UI
 
+## GitHub Copilot Issues
+
+### "github-copilot-sdk not installed"
+
+Install the Copilot SDK:
+```bash
+pip install github-copilot-sdk
+```
+
+### "Copilot not authenticated" / "No Copilot token found"
+
+Authenticate with GitHub:
+```bash
+# Option 1: Start with --copilot (will prompt automatically)
+clanker --copilot
+
+# Option 2: Run /gh-login from any session
+❯ /gh-login
+```
+
+### Token expired
+
+Copilot tokens expire after ~8 hours. Re-authenticate:
+```bash
+❯ /gh-login
+```
+
+### Model not available
+
+Your GitHub Copilot subscription may not include all models. Check available models:
+```
+❯ /model
+```
+
+### Session not found on restore
+
+Copilot sessions may expire or be cleaned up by the SDK. Start a new session with `/clear`.
+
+### Can't switch between BYOK and Copilot
+
+Modes are mutually exclusive. You must exit and restart with the appropriate flag:
+```bash
+clanker           # BYOK mode
+clanker --copilot # Copilot mode
+```
+
+### Web config UI doesn't show Copilot settings
+
+The web configuration UI (`clanker config`) only manages BYOK mode settings. Copilot mode uses GitHub's infrastructure and doesn't require local configuration.
+
 ## General Issues
 
 ### Conversation not persisting
 
-- Check that `~/.clanker/` directory exists and is writable
-- Conversations are stored in `.clanker/conversations/` in your working directory
+- **BYOK mode**: Conversations are stored in `.clanker/conversations/` in your working directory
+- **Copilot mode**: Sessions are stored in `~/.copilot/session-state/` by the SDK
+- Check that the directories exist and are writable
 
 ### High memory usage
 
 - Long conversations accumulate context; use `/clear` to reset
-- Summarization kicks in automatically at the configured threshold (default 80%)
+- **BYOK mode**: Summarization kicks in at the configured threshold (default 80%)
+- **Copilot mode**: SDK handles infinite sessions with automatic compaction
 
 ### Logs not appearing
 

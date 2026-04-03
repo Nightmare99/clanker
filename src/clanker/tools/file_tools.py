@@ -62,11 +62,12 @@ def read_file(file_path: str, offset: int = 0, limit: int = MAX_LINES_DEFAULT) -
         return {"ok": False, "error": f"Error reading file: {e}"}
 
     if not lines_out:
-        return {"ok": True, "content": "(no lines at this offset)"}
+        return {"ok": True, "content": "(no lines at this offset)", "path": file_path}
 
     return {
         "ok": True,
         "content": "\n".join(lines_out),
+        "path": file_path,
         "offset": offset,
         "lines": total_read,
     }
