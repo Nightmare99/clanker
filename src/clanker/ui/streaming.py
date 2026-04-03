@@ -45,6 +45,10 @@ class StreamResult:
     cache_creation_tokens: int = 0
     model_name: str = ""
     summarization_occurred: bool = False
+    # Copilot-specific: premium requests quota info
+    quota_remaining: float | None = None  # Percentage remaining (0-100)
+    quota_used: int | None = None  # Requests used
+    quota_limit: int | None = None  # Total requests limit
 
     @property
     def total_tokens(self) -> int:
@@ -555,6 +559,13 @@ def stream_copilot_response_sync(
                 elif event_type == "assistant.usage":
                     usage_data['input_tokens'] = getattr(event.data, 'input_tokens', 0)
                     usage_data['output_tokens'] = getattr(event.data, 'output_tokens', 0)
+                    # Capture quota snapshots if available (premium requests remaining)
+                    quota_snapshots = getattr(event.data, 'quota_snapshots', None) or getattr(event.data, 'quotaSnapshots', None)
+                    if quota_snapshots:
+                        usage_data['quota_snapshots'] = quota_snapshots
+                    copilot_usage = getattr(event.data, 'copilot_usage', None) or getattr(event.data, 'copilotUsage', None)
+                    if copilot_usage:
+                        usage_data['copilot_usage'] = copilot_usage
                 elif event_type == "tool.execution_start":
                     tool_name = getattr(event.data, 'tool_name', None) or getattr(event.data, 'toolName', 'unknown')
                     arguments = (
@@ -615,6 +626,28 @@ def stream_copilot_response_sync(
             last_input_tokens = usage_data.get("input_tokens", 0)
             last_output_tokens = usage_data.get("output_tokens", 0)
 
+            # Extract quota info if available (premium_interactions)
+            quota_remaining = None
+            quota_used = None
+            quota_limit = None
+            quota_snapshots = usage_data.get("quota_snapshots")
+            if quota_snapshots:
+                # Look for premium_interactions quota
+                snapshot = quota_snapshots.get("premium_interactions")
+                if snapshot:
+                    # QuotaSnapshot object has these attributes
+                    remaining_pct = getattr(snapshot, 'remaining_percentage', None)
+                    used = getattr(snapshot, 'used_requests', None)
+                    limit = getattr(snapshot, 'entitlement_requests', None)
+                    is_unlimited = getattr(snapshot, 'is_unlimited_entitlement', False)
+
+                    if not is_unlimited and remaining_pct is not None:
+                        quota_remaining = float(remaining_pct)
+                        if used is not None:
+                            quota_used = int(used)
+                        if limit is not None and limit > 0:
+                            quota_limit = int(limit)
+
         except CommandRejectedError as e:
             stop_loading()
             rich_console.print(f"\n[bold yellow]Operation cancelled:[/bold yellow] {e}")
@@ -649,6 +682,9 @@ def stream_copilot_response_sync(
             input_tokens=last_input_tokens,
             output_tokens=last_output_tokens,
             model_name=model,
+            quota_remaining=quota_remaining,
+            quota_used=quota_used,
+            quota_limit=quota_limit,
         )
 
     # Run using persistent loop

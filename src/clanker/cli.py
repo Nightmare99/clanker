@@ -824,14 +824,12 @@ def run_copilot_interactive(
                         result.cache_creation_tokens,
                     )
 
-                # Show token usage
-                if (result.input_tokens > 0 or result.output_tokens > 0) and settings.output.show_token_usage:
-                    console.print_token_usage(
-                        result.input_tokens,
-                        result.output_tokens,
-                        token_tracker.context_used_percent,
-                        result.cache_read_tokens,
-                        result.cache_creation_tokens,
+                # Show usage (Copilot mode shows premium requests remaining)
+                if result.quota_remaining is not None and settings.output.show_token_usage:
+                    console.print_copilot_usage(
+                        result.quota_remaining,
+                        result.quota_used,
+                        result.quota_limit,
                     )
 
                 logger.debug("Copilot response completed successfully")
@@ -895,22 +893,13 @@ def run_copilot_single_prompt(
             console,
         )
 
-        # Display token usage
-        if result.input_tokens > 0 or result.output_tokens > 0:
-            token_tracker.add_turn(
-                result.input_tokens,
-                result.output_tokens,
-                result.cache_read_tokens,
-                result.cache_creation_tokens,
+        # Display usage (Copilot mode shows premium requests remaining)
+        if result.quota_remaining is not None and settings.output.show_token_usage:
+            console.print_copilot_usage(
+                result.quota_remaining,
+                result.quota_used,
+                result.quota_limit,
             )
-            if settings.output.show_token_usage:
-                console.print_token_usage(
-                    result.input_tokens,
-                    result.output_tokens,
-                    token_tracker.context_used_percent,
-                    result.cache_read_tokens,
-                    result.cache_creation_tokens,
-                )
     except Exception as e:
         console.print_error(f"Copilot error: {e}")
         sys.exit(1)

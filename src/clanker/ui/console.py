@@ -805,3 +805,41 @@ Commands:
         text.append("]", style="dim")
 
         self._console.print(text)
+
+    def print_copilot_usage(
+        self,
+        quota_remaining: float | None = None,
+        quota_used: int | None = None,
+        quota_limit: int | None = None,
+    ) -> None:
+        """Print Copilot usage with premium requests remaining.
+
+        Args:
+            quota_remaining: Percentage of premium requests remaining (0-100).
+            quota_used: Number of premium requests used.
+            quota_limit: Total premium requests limit.
+        """
+        text = Text()
+        text.append("  [", style="dim")
+
+        if quota_remaining is not None:
+            # Color based on remaining quota
+            if quota_remaining > 50:
+                quota_style = "green"
+            elif quota_remaining > 20:
+                quota_style = "yellow"
+            else:
+                quota_style = "red"
+
+            text.append(f"{quota_remaining:.0f}%", style=quota_style)
+            text.append(" premium remaining", style="dim")
+
+            # Show used/limit if available
+            if quota_used is not None and quota_limit is not None:
+                text.append(f" ({quota_used}/{quota_limit})", style="dim")
+        else:
+            text.append("quota: n/a", style="dim")
+
+        text.append("]", style="dim")
+
+        self._console.print(text)
