@@ -1,5 +1,6 @@
 """Streaming output handler for real-time responses."""
 
+import asyncio
 import os
 import sys
 from contextlib import contextmanager
@@ -8,7 +9,29 @@ from dataclasses import dataclass
 from clanker.config import Settings
 from clanker.tools.bash_tools import CommandRejectedError
 from clanker.tools.notify_tools import set_notify_callback
+from clanker.providers import set_tool_call_callback, get_tool_call_callback
 from clanker.runtime import is_yolo_mode
+from clanker.ui.tool_display import ToolDisplayHandler, normalize_tool_output
+
+# Persistent event loop for maintaining Copilot session across messages
+_persistent_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _get_or_create_loop() -> asyncio.AbstractEventLoop:
+    """Get or create a persistent event loop for the session."""
+    global _persistent_loop
+    if _persistent_loop is None or _persistent_loop.is_closed():
+        _persistent_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_persistent_loop)
+    return _persistent_loop
+
+
+def cleanup_event_loop() -> None:
+    """Clean up the persistent event loop. Call on exit."""
+    global _persistent_loop
+    if _persistent_loop is not None and not _persistent_loop.is_closed():
+        _persistent_loop.close()
+        _persistent_loop = None
 
 
 @dataclass
@@ -22,6 +45,10 @@ class StreamResult:
     cache_creation_tokens: int = 0
     model_name: str = ""
     summarization_occurred: bool = False
+    # Copilot-specific: premium requests quota info
+    quota_remaining: float | None = None  # Percentage remaining (0-100)
+    quota_used: int | None = None  # Requests used
+    quota_limit: int | None = None  # Total requests limit
 
     @property
     def total_tokens(self) -> int:
@@ -68,8 +95,6 @@ def stream_agent_response_sync(
     Returns:
         StreamResult with response text and token usage.
     """
-    import asyncio
-
     async def _stream_async() -> StreamResult:
         from rich.live import Live
         from rich.spinner import Spinner
@@ -82,7 +107,6 @@ def stream_agent_response_sync(
         current_response = ""  # Buffer for current model run
         current_thinking = ""  # Buffer for thinking content
         shown_tool_calls: set[str] = set()
-        pending_tools: list[tuple[str, dict]] = []  # Collect parallel tool calls
         current_model_run: str | None = None  # Track current model run_id
         thinking_shown = False
         in_think_tag = False  # Track if we're inside <think>...</think> tags
@@ -135,39 +159,22 @@ def stream_agent_response_sync(
                 spinner = Spinner("dots", text=Text(f" {message}", style="cyan"))
                 loading_live.update(spinner)
 
-        def show_tool(tool_name: str, tool_input: dict):
-            """Display a single tool call with details."""
-            console.print_tool_use(tool_name, tool_input)
-            if tool_name == "edit_file":
-                old_str = tool_input.get("old_string", "")
-                new_str = tool_input.get("new_string", "")
-                if old_str or new_str:
-                    console.print_edit_diff(old_str, new_str)
-            elif tool_name == "write_file":
-                content = tool_input.get("content", "")
-                if content:
-                    console.print_write_content(content, is_append=False)
-            elif tool_name == "append_file":
-                content = tool_input.get("content", "")
-                if content:
-                    console.print_write_content(content, is_append=True)
-
-        def flush_pending_tools():
-            """Display any pending tool calls."""
-            nonlocal pending_tools
-            if not pending_tools:
-                return
-            if len(pending_tools) > 1:
-                console.print_parallel_tools(pending_tools)
-            else:
-                show_tool(*pending_tools[0])
-            pending_tools = []
+        # Unified tool display handler for all providers
+        tool_handler = ToolDisplayHandler(
+            console=console,
+            show_tool_calls=settings.output.show_tool_calls,
+            on_tool_start=stop_loading,
+            on_tool_end=start_loading,
+        )
 
         # Register the notify callback
         def _notify_callback(message: str, level: str) -> None:
             console.print_notify(message, level)
 
         set_notify_callback(_notify_callback)
+
+        # Register unified tool callback for Copilot SDK
+        set_tool_call_callback(tool_handler.create_callback())
 
         try:
             # Start loading spinner
@@ -179,7 +186,7 @@ def stream_agent_response_sync(
                 ):
                     event_type = event.get("event", "")
 
-                    # Collect tool calls
+                    # Show tool calls immediately (don't batch)
                     if event_type == "on_tool_start":
                         tools_started = True
                         stop_loading()
@@ -195,12 +202,11 @@ def stream_agent_response_sync(
                                 # Skip notify - the tool itself handles display
                                 if tool_name == "notify":
                                     continue
-                                pending_tools.append((tool_name, tool_input))
+                                # Show tool immediately for proper interleaving
+                                tool_handler.show_tool(tool_name, tool_input)
 
-                    # Flush tools when execution completes
+                    # Show tool result
                     elif event_type == "on_tool_end":
-                        if pending_tools:
-                            flush_pending_tools()
                         tool_name_end = event.get("name", "")
                         if tool_name_end == "notify":
                             start_loading()
@@ -208,17 +214,10 @@ def stream_agent_response_sync(
                         # Show tool output
                         if settings.output.show_tool_calls:
                             data = event.get("data", {})
-                            tool_output = data.get("output")
-                            if tool_output is None:
-                                tool_output = ""
-                            elif hasattr(tool_output, "content"):
-                                tool_output = tool_output.content
-                            if isinstance(tool_output, list):
-                                tool_output = "\n".join(str(item) for item in tool_output)
-                            elif not isinstance(tool_output, str):
-                                tool_output = str(tool_output)
-                            if tool_output and tool_output.strip():
-                                console.print_tool_result(tool_output, tool_name=tool_name_end)
+                            tool_output = normalize_tool_output(data.get("output"))
+                            tool_handler.show_tool_result(tool_name_end, tool_output)
+                        # Clear tracking so tool can be called again
+                        tool_handler.clear_tool_tracking(tool_name_end)
                         start_loading()
 
                     # Track model calls to detect summarization
@@ -241,8 +240,8 @@ def stream_agent_response_sync(
                                 console.print_info("*WHIRR* Compressing memory banks...")
                                 start_loading()
 
-                            if pending_tools:
-                                flush_pending_tools()
+                            if tool_handler.has_pending_tools():
+                                tool_handler.flush_pending_tools()
                             current_response = ""
                             current_thinking = ""
                             thinking_shown = False
@@ -399,6 +398,7 @@ def stream_agent_response_sync(
         finally:
             stop_loading()
             set_notify_callback(None)
+            set_tool_call_callback(None)
 
         # If we buffered thinking but never saw </think>, treat it as response
         if current_thinking and not think_tag_closed and not current_response:
@@ -423,9 +423,273 @@ def stream_agent_response_sync(
             summarization_occurred=summarization_detected,
         )
 
-    # Run the async function — KeyboardInterrupt (Ctrl+C) may surface here
-    # if it fires between asyncio yield points; catch it and return a clean result.
+    # Run the async function using persistent loop to maintain Copilot session
+    # KeyboardInterrupt (Ctrl+C) may surface here if it fires between asyncio yield points
     try:
-        return asyncio.run(_stream_async())
+        loop = _get_or_create_loop()
+        return loop.run_until_complete(_stream_async())
+    except KeyboardInterrupt:
+        return StreamResult(response="")
+
+
+def stream_copilot_response_sync(
+    settings: Settings,
+    copilot_manager,
+    prompt: str,
+    model: str,
+    working_directory: str,
+    console,
+) -> StreamResult:
+    """Stream a response using Copilot SDK directly.
+
+    Uses Copilot's native session management instead of LangGraph.
+
+    Args:
+        settings: Application settings.
+        copilot_manager: CopilotSessionManager instance.
+        prompt: User's message.
+        model: Copilot model ID.
+        working_directory: Current working directory.
+        console: Console instance for output.
+
+    Returns:
+        StreamResult with response text and token usage.
+    """
+    async def _stream_copilot_async() -> StreamResult:
+        from rich.live import Live
+        from rich.spinner import Spinner
+        from rich.text import Text
+
+        from clanker.agent.prompts import get_system_prompt
+        from clanker.tools import ALL_TOOLS
+        from clanker.mcp import load_mcp_tools_async
+        from clanker.providers.github_copilot import _convert_langchain_tools_to_copilot
+
+        rich_console = console._console
+        current_response = ""
+
+        # Token tracking
+        last_input_tokens = 0
+        last_output_tokens = 0
+
+        # Loading state
+        loading_live: Live | None = None
+
+        def start_loading(message: str | None = None):
+            nonlocal loading_live
+            if loading_live is None:
+                msg = message or console.get_loading_message()
+                spinner = Spinner("dots", text=Text(f" {msg}", style="cyan"))
+                loading_live = Live(spinner, console=rich_console, refresh_per_second=10, transient=True)
+                loading_live.start()
+
+        def stop_loading():
+            nonlocal loading_live
+            if loading_live is not None:
+                loading_live.stop()
+                loading_live = None
+
+        # Tool display handler
+        tool_handler = ToolDisplayHandler(
+            console=console,
+            show_tool_calls=settings.output.show_tool_calls,
+            on_tool_start=stop_loading,
+            on_tool_end=start_loading,
+        )
+
+        # Register notify callback
+        def _notify_callback(message: str, level: str) -> None:
+            console.print_notify(message, level)
+
+        set_notify_callback(_notify_callback)
+
+        # Register tool callback for Copilot SDK
+        set_tool_call_callback(tool_handler.create_callback())
+
+        try:
+            # Load all tools
+            tools = list(ALL_TOOLS)
+
+            # Load MCP tools asynchronously
+            mcp_client = None
+            if settings.mcp.enabled:
+                try:
+                    mcp_client, mcp_tools = await load_mcp_tools_async(settings)
+                    tools.extend(mcp_tools)
+                except Exception as e:
+                    from clanker.logging import get_logger
+                    get_logger("streaming").warning("Failed to load MCP tools: %s", e)
+
+            # Convert tools to Copilot format
+            copilot_tools = _convert_langchain_tools_to_copilot(tools)
+
+            # Get system prompt
+            system_prompt = get_system_prompt()
+
+            # Start loading
+            start_loading()
+
+            # Get or create session
+            session = await copilot_manager.get_or_create_session(
+                model=model,
+                tools=copilot_tools,
+                system_message=system_prompt,
+            )
+
+            # Event handler for streaming - use mutable containers to share state
+            content_parts = []
+            usage_data = {}
+            done_event = asyncio.Event()
+            error_holder = [None]  # Use list to allow mutation in nested function
+
+            def handle_event(event):
+                event_type = event.type.value if hasattr(event.type, 'value') else str(event.type)
+
+                if event_type == "assistant.message_delta":
+                    delta = getattr(event.data, 'delta_content', None) or ""
+                    if delta:
+                        stop_loading()
+                        content_parts.append(delta)
+                elif event_type == "assistant.message":
+                    content = getattr(event.data, 'content', None)
+                    if content:
+                        stop_loading()
+                        content_parts.clear()
+                        content_parts.append(content)
+                elif event_type == "assistant.usage":
+                    usage_data['input_tokens'] = getattr(event.data, 'input_tokens', 0)
+                    usage_data['output_tokens'] = getattr(event.data, 'output_tokens', 0)
+                    # Capture quota snapshots if available (premium requests remaining)
+                    quota_snapshots = getattr(event.data, 'quota_snapshots', None) or getattr(event.data, 'quotaSnapshots', None)
+                    if quota_snapshots:
+                        usage_data['quota_snapshots'] = quota_snapshots
+                    copilot_usage = getattr(event.data, 'copilot_usage', None) or getattr(event.data, 'copilotUsage', None)
+                    if copilot_usage:
+                        usage_data['copilot_usage'] = copilot_usage
+                elif event_type == "tool.execution_start":
+                    tool_name = getattr(event.data, 'tool_name', None) or getattr(event.data, 'toolName', 'unknown')
+                    arguments = (
+                        getattr(event.data, 'arguments', None) or
+                        getattr(event.data, 'toolArgs', None) or
+                        getattr(event.data, 'tool_args', None) or
+                        {}
+                    )
+                    if hasattr(arguments, 'model_dump'):
+                        arguments = arguments.model_dump()
+                    elif hasattr(arguments, '__dict__'):
+                        arguments = vars(arguments)
+
+                    callback = get_tool_call_callback()
+                    if callback:
+                        try:
+                            callback(tool_name, arguments, None)
+                        except Exception:
+                            pass
+                elif event_type == "tool.execution_complete":
+                    tool_name = getattr(event.data, 'tool_name', None) or getattr(event.data, 'toolName', 'unknown')
+                    result = getattr(event.data, 'result', None)
+                    result_str = normalize_tool_output(result)
+
+                    callback = get_tool_call_callback()
+                    if callback and result_str:
+                        try:
+                            callback(tool_name, {}, result_str)
+                        except Exception:
+                            pass
+                elif event_type == "session.idle":
+                    done_event.set()
+                elif event_type == "session.error":
+                    error_holder[0] = getattr(event.data, 'message', 'Unknown error')
+                    done_event.set()
+
+            # Clear any existing handlers and register fresh one
+            # This prevents handler accumulation when session is reused
+            if hasattr(session, '_event_handlers'):
+                session._event_handlers.clear()
+            session.on(handle_event)
+
+            # Send message and wait
+            with _suppress_subprocess_stderr():
+                response = await session.send_and_wait(prompt)
+
+            # Extract content if events didn't capture it
+            if not content_parts and response:
+                if hasattr(response, 'data') and hasattr(response.data, 'content'):
+                    content_parts = [response.data.content]
+                elif hasattr(response, 'content'):
+                    content_parts = [response.content]
+
+            if error_holder[0]:
+                raise RuntimeError(f"Session error: {error_holder[0]}")
+
+            current_response = "".join(content_parts)
+            last_input_tokens = usage_data.get("input_tokens", 0)
+            last_output_tokens = usage_data.get("output_tokens", 0)
+
+            # Extract quota info if available (premium_interactions)
+            quota_remaining = None
+            quota_used = None
+            quota_limit = None
+            quota_snapshots = usage_data.get("quota_snapshots")
+            if quota_snapshots:
+                # Look for premium_interactions quota
+                snapshot = quota_snapshots.get("premium_interactions")
+                if snapshot:
+                    # QuotaSnapshot object has these attributes
+                    remaining_pct = getattr(snapshot, 'remaining_percentage', None)
+                    used = getattr(snapshot, 'used_requests', None)
+                    limit = getattr(snapshot, 'entitlement_requests', None)
+                    is_unlimited = getattr(snapshot, 'is_unlimited_entitlement', False)
+
+                    if not is_unlimited and remaining_pct is not None:
+                        quota_remaining = float(remaining_pct)
+                        if used is not None:
+                            quota_used = int(used)
+                        if limit is not None and limit > 0:
+                            quota_limit = int(limit)
+
+        except CommandRejectedError as e:
+            stop_loading()
+            rich_console.print(f"\n[bold yellow]Operation cancelled:[/bold yellow] {e}")
+            return StreamResult(
+                response="",
+                input_tokens=last_input_tokens,
+                output_tokens=last_output_tokens,
+                model_name=model,
+            )
+
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            stop_loading()
+            rich_console.print("\n[bold yellow]*BZZZT*[/bold yellow] Agent halted. Control returned to you. [bold yellow]*CLANK*[/bold yellow]")
+            return StreamResult(
+                response=current_response,
+                input_tokens=last_input_tokens,
+                output_tokens=last_output_tokens,
+                model_name=model,
+            )
+
+        finally:
+            stop_loading()
+            set_notify_callback(None)
+            set_tool_call_callback(None)
+
+        # Print final response
+        if current_response.strip():
+            rich_console.print(current_response)
+
+        return StreamResult(
+            response=current_response,
+            input_tokens=last_input_tokens,
+            output_tokens=last_output_tokens,
+            model_name=model,
+            quota_remaining=quota_remaining,
+            quota_used=quota_used,
+            quota_limit=quota_limit,
+        )
+
+    # Run using persistent loop
+    try:
+        loop = _get_or_create_loop()
+        return loop.run_until_complete(_stream_copilot_async())
     except KeyboardInterrupt:
         return StreamResult(response="")

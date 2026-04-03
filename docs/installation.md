@@ -115,9 +115,26 @@ rm ~/.local/bin/clanker
 rm -rf ~/.clanker  # Remove config (optional)
 ```
 
+## Optional: GitHub Copilot Support
+
+To use GitHub Copilot mode, install the Copilot SDK:
+
+```bash
+pip install github-copilot-sdk
+```
+
+Then start with Copilot mode:
+```bash
+clanker --copilot
+```
+
+See [Copilot Mode](copilot.md) for details.
+
 ## Configuration
 
 After installation, run `clanker` to start the setup wizard, or:
+
+### BYOK Mode (Bring Your Own Key)
 
 1. Set your API key:
    ```bash
@@ -129,3 +146,11 @@ After installation, run `clanker` to start the setup wizard, or:
 2. Run `clanker config` to open the web-based configuration UI
 
 See [Configuration](configuration.md) for detailed setup options.
+
+### Copilot Mode
+
+1. Install the SDK: `pip install github-copilot-sdk`
+2. Run: `clanker --copilot`
+3. Follow the GitHub authentication prompts
+
+See [Copilot Mode](copilot.md) for details.

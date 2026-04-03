@@ -2,6 +2,8 @@
 
 Clanker can be configured via config file, web UI, or environment variables.
 
+> **Note**: This documentation covers **BYOK (Bring Your Own Key) mode** configuration. For GitHub Copilot mode, see [Copilot Mode](copilot.md). Copilot mode uses GitHub's infrastructure and does not require the configuration described here.
+
 ## Models Configuration (Recommended)
 
 The recommended way to configure LLM providers is using the JSON-based models config at `~/.clanker/models.json`. This allows you to:

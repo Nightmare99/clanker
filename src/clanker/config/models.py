@@ -14,7 +14,7 @@ logger = get_logger("config.models")
 # Models config file path
 MODELS_CONFIG_PATH = Path.home() / ".clanker" / "models.json"
 
-ProviderType = Literal["AzureOpenAI", "OpenAI", "Anthropic", "Ollama"]
+ProviderType = Literal["AzureOpenAI", "OpenAI", "Anthropic", "Ollama", "GitHubCopilot"]
 
 
 class ModelConfig(BaseModel):
@@ -281,6 +281,29 @@ def create_llm_from_config(model_config: ModelConfig):
         return ChatOllama(
             base_url=base_url,
             model=model_name,
+        )
+
+    elif provider == "GitHubCopilot":
+        from clanker.providers.github_copilot import ChatGitHubCopilot
+
+        model_id = model_config.model or "gpt-4.1"
+
+        # Token limits for known Copilot models
+        token_limits = {
+            "gpt-4.1": 128000,
+            "gpt-4o": 128000,
+            "gpt-4o-mini": 128000,
+            "o1": 200000,
+            "o3": 200000,
+            "claude-sonnet-4": 200000,
+        }
+        max_tokens = token_limits.get(model_id, 128000)
+
+        return ChatGitHubCopilot(
+            model=model_id,
+            streaming=True,
+            max_input_tokens=max_tokens,
+            profile={"max_input_tokens": max_tokens},
         )
 
     else:
