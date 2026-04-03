@@ -23,12 +23,22 @@ from clanker.config.models import (
 router = APIRouter(tags=["config"])
 
 
+class ModeInfo(BaseModel):
+    """Information about the current operational mode."""
+
+    mode: str  # "byok" or "copilot"
+    mode_label: str
+    notice: str
+    copilot_available: bool
+
+
 class ConfigResponse(BaseModel):
     """Configuration response model."""
 
     config: dict[str, Any]
     config_path: str
     env_status: dict[str, bool]
+    mode_info: ModeInfo
 
 
 class ConfigUpdateRequest(BaseModel):
@@ -65,6 +75,28 @@ def mask_key(key: str | None) -> str | None:
     return f"{key[:4]}...{key[-4:]}"
 
 
+def get_mode_info() -> ModeInfo:
+    """Get information about operational modes."""
+    # Check if Copilot SDK is available
+    copilot_available = False
+    try:
+        from clanker.providers.github_copilot import is_copilot_available
+        copilot_available = is_copilot_available()
+    except ImportError:
+        pass
+
+    return ModeInfo(
+        mode="byok",
+        mode_label="BYOK Mode (Bring Your Own Key)",
+        notice=(
+            "This configuration UI manages settings for BYOK mode only. "
+            "For GitHub Copilot mode, use 'clanker --copilot' from the command line. "
+            "Copilot mode uses GitHub's infrastructure and does not require API keys or model configuration here."
+        ),
+        copilot_available=copilot_available,
+    )
+
+
 @router.get("/config", response_model=ConfigResponse)
 async def get_config() -> ConfigResponse:
     """Get current configuration."""
@@ -82,7 +114,17 @@ async def get_config() -> ConfigResponse:
         config=config_dict,
         config_path=str(CONFIG_PATH),
         env_status=get_env_status(),
+        mode_info=get_mode_info(),
     )
+
+
+@router.get("/mode-info", response_model=ModeInfo)
+async def get_mode_info_endpoint() -> ModeInfo:
+    """Get information about operational modes.
+
+    Returns details about BYOK vs Copilot mode and whether Copilot is available.
+    """
+    return get_mode_info()
 
 
 @router.put("/config", response_model=MessageResponse)

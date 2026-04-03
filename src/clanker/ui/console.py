@@ -618,19 +618,29 @@ class Console:
         panel = Panel(content, title=title, border_style=style)
         self._console.print(panel)
 
-    def print_welcome(self) -> None:
-        """Print welcome message."""
+    def print_welcome(self, copilot_model: str | None = None) -> None:
+        """Print welcome message.
+
+        Args:
+            copilot_model: Optional Copilot model name (for Copilot mode).
+        """
         from clanker.config import get_default_model
-        from clanker.runtime import is_yolo_mode
+        from clanker.runtime import is_yolo_mode, is_copilot_mode
 
         agent_name = self._settings.agent.name
 
-        # Get current model info
-        current_model = get_default_model()
-        if current_model:
-            model_info = f"{current_model.name} [dim]({current_model.provider})[/dim]"
+        # Get current model info based on mode
+        if is_copilot_mode():
+            model_name = copilot_model or "gpt-4.1"
+            model_info = f"{model_name} [dim](GitHub Copilot)[/dim]"
+            mode_line = "\n  [bold green]COPILOT MODE[/bold green] [dim]- using GitHub Copilot SDK[/dim]"
         else:
-            model_info = "[dim]No model configured[/dim]"
+            current_model = get_default_model()
+            if current_model:
+                model_info = f"{current_model.name} [dim]({current_model.provider})[/dim]"
+            else:
+                model_info = "[dim]No model configured[/dim]"
+            mode_line = ""
 
         # Yolo mode indicator
         yolo_line = ""
@@ -639,19 +649,19 @@ class Console:
 
         welcome = f"""
 [bold cyan]
-   █████████  █████       ██████   █████ █████   ████ ███████████  
-  ███░░░░░███░░███       ░░██████ ░░███ ░░███   ███░ ░░███░░░░░███ 
- ███     ░░░  ░███        ░███░███ ░███  ░███  ███    ░███    ░███ 
-░███          ░███        ░███░░███░███  ░███████     ░██████████  
-░███          ░███        ░███ ░░██████  ░███░░███    ░███░░░░░███ 
-░░███     ███ ░███      █ ░███  ░░█████  ░███ ░░███   ░███    ░███ 
+   █████████  █████       ██████   █████ █████   ████ ███████████
+  ███░░░░░███░░███       ░░██████ ░░███ ░░███   ███░ ░░███░░░░░███
+ ███     ░░░  ░███        ░███░███ ░███  ░███  ███    ░███    ░███
+░███          ░███        ░███░░███░███  ░███████     ░██████████
+░███          ░███        ░███ ░░██████  ░███░░███    ░███░░░░░███
+░░███     ███ ░███      █ ░███  ░░█████  ░███ ░░███   ░███    ░███
  ░░█████████  ███████████ █████  ░░█████ █████ ░░████ █████   █████
-  ░░░░░░░░░  ░░░░░░░░░░░ ░░░░░    ░░░░░ ░░░░░   ░░░░ ░░░░░   ░░░░░ 
+  ░░░░░░░░░  ░░░░░░░░░░░ ░░░░░    ░░░░░ ░░░░░   ░░░░ ░░░░░   ░░░░░
 [/bold cyan]
 
 [dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]
   Systems online. Circuits humming. Ready to build.
-  Model: [bold cyan]{model_info}[/bold cyan]{yolo_line}
+  Model: [bold cyan]{model_info}[/bold cyan]{mode_line}{yolo_line}
 [dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]
 
 Commands:
@@ -666,8 +676,12 @@ Commands:
 
     def print_help(self) -> None:
         """Print help information."""
-        help_text = """
-[bold cyan]*WHIRR*[/bold cyan] [bold]CLANKER HELP SUBSYSTEM[/bold]
+        from clanker.runtime import is_copilot_mode
+
+        mode_indicator = "[bold green]COPILOT MODE[/bold green]" if is_copilot_mode() else "[bold blue]BYOK MODE[/bold blue]"
+
+        help_text = f"""
+[bold cyan]*WHIRR*[/bold cyan] [bold]CLANKER HELP SUBSYSTEM[/bold] - {mode_indicator}
 
 [bold]System Commands:[/bold]
   /help       Display this help matrix
@@ -698,9 +712,22 @@ Commands:
   • I act first, explain after. No hesitation.
   • Ask me to remember project preferences.
   • Use /restore to continue past conversations.
-
-[dim]*CLANK* Systems ready for input. *BZZZT*[/dim]
 """
+        if is_copilot_mode():
+            help_text += """
+[bold green]Copilot Mode Notes:[/bold green]
+  • Session history managed by Copilot SDK
+  • Infinite sessions with auto-compaction
+  • /model shows only Copilot models
+"""
+        else:
+            help_text += """
+[bold blue]BYOK Mode Notes:[/bold blue]
+  • Use 'clanker --copilot' for Copilot mode
+  • /model shows only configured BYOK models
+"""
+
+        help_text += "\n[dim]*CLANK* Systems ready for input. *BZZZT*[/dim]\n"
         self._console.print(help_text)
 
     def clear(self) -> None:

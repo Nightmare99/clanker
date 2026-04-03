@@ -1,5 +1,16 @@
 # Usage
 
+## Operational Modes
+
+Clanker supports two modes:
+
+| Mode | Command | Description |
+|------|---------|-------------|
+| **BYOK** | `clanker` | Bring Your Own Key - uses your configured API keys |
+| **Copilot** | `clanker --copilot` | Uses GitHub Copilot with native SDK session management |
+
+See [Copilot Mode](copilot.md) for details on using GitHub Copilot.
+
 ## CLI Flags
 
 | Flag | Short | Description |
@@ -8,20 +19,27 @@
 | `--version` | `-v` | Show version and exit |
 | `--check-update` | | Check for updates and exit |
 | `--model <name>` | `-m` | Use a specific model |
-| `--provider <name>` | `-p` | Use a specific provider |
+| `--provider <name>` | `-p` | Use a specific provider (BYOK mode only) |
 | `--resume <id>` | `-r` | Resume a previous session |
 | `--history` | | List past conversations |
 | `--memories` | | Show stored memories |
 | `--yolo` | | Skip bash command approval |
+| `--copilot` | | Use GitHub Copilot mode |
 
 ## Interactive Mode
 
 ```bash
-# Start with default model
+# Start with default model (BYOK mode)
 clanker
+
+# Start in Copilot mode
+clanker --copilot
 
 # Start with a specific model (from models.json)
 clanker -m "Claude Sonnet"
+
+# Copilot mode with specific model
+clanker --copilot -m claude-sonnet-4
 
 # Resume a previous session
 clanker --resume <session-id>

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from clanker.config import Settings
 from clanker.tools.bash_tools import CommandRejectedError
 from clanker.tools.notify_tools import set_notify_callback
-from clanker.providers import set_tool_call_callback
+from clanker.providers import set_tool_call_callback, get_tool_call_callback
 from clanker.runtime import is_yolo_mode
 from clanker.ui.tool_display import ToolDisplayHandler, normalize_tool_output
 
@@ -424,5 +424,236 @@ def stream_agent_response_sync(
     try:
         loop = _get_or_create_loop()
         return loop.run_until_complete(_stream_async())
+    except KeyboardInterrupt:
+        return StreamResult(response="")
+
+
+def stream_copilot_response_sync(
+    settings: Settings,
+    copilot_manager,
+    prompt: str,
+    model: str,
+    working_directory: str,
+    console,
+) -> StreamResult:
+    """Stream a response using Copilot SDK directly.
+
+    Uses Copilot's native session management instead of LangGraph.
+
+    Args:
+        settings: Application settings.
+        copilot_manager: CopilotSessionManager instance.
+        prompt: User's message.
+        model: Copilot model ID.
+        working_directory: Current working directory.
+        console: Console instance for output.
+
+    Returns:
+        StreamResult with response text and token usage.
+    """
+    async def _stream_copilot_async() -> StreamResult:
+        from rich.live import Live
+        from rich.spinner import Spinner
+        from rich.text import Text
+
+        from clanker.agent.prompts import get_system_prompt
+        from clanker.tools import ALL_TOOLS
+        from clanker.mcp import load_mcp_tools_async
+        from clanker.providers.github_copilot import _convert_langchain_tools_to_copilot
+
+        rich_console = console._console
+        current_response = ""
+
+        # Token tracking
+        last_input_tokens = 0
+        last_output_tokens = 0
+
+        # Loading state
+        loading_live: Live | None = None
+
+        def start_loading(message: str | None = None):
+            nonlocal loading_live
+            if loading_live is None:
+                msg = message or console.get_loading_message()
+                spinner = Spinner("dots", text=Text(f" {msg}", style="cyan"))
+                loading_live = Live(spinner, console=rich_console, refresh_per_second=10, transient=True)
+                loading_live.start()
+
+        def stop_loading():
+            nonlocal loading_live
+            if loading_live is not None:
+                loading_live.stop()
+                loading_live = None
+
+        # Tool display handler
+        tool_handler = ToolDisplayHandler(
+            console=console,
+            show_tool_calls=settings.output.show_tool_calls,
+            on_tool_start=stop_loading,
+            on_tool_end=start_loading,
+        )
+
+        # Register notify callback
+        def _notify_callback(message: str, level: str) -> None:
+            console.print_notify(message, level)
+
+        set_notify_callback(_notify_callback)
+
+        # Register tool callback for Copilot SDK
+        set_tool_call_callback(tool_handler.create_callback())
+
+        try:
+            # Load all tools
+            tools = list(ALL_TOOLS)
+
+            # Load MCP tools asynchronously
+            mcp_client = None
+            if settings.mcp.enabled:
+                try:
+                    mcp_client, mcp_tools = await load_mcp_tools_async(settings)
+                    tools.extend(mcp_tools)
+                except Exception as e:
+                    from clanker.logging import get_logger
+                    get_logger("streaming").warning("Failed to load MCP tools: %s", e)
+
+            # Convert tools to Copilot format
+            copilot_tools = _convert_langchain_tools_to_copilot(tools)
+
+            # Get system prompt
+            system_prompt = get_system_prompt()
+
+            # Start loading
+            start_loading()
+
+            # Get or create session
+            session = await copilot_manager.get_or_create_session(
+                model=model,
+                tools=copilot_tools,
+                system_message=system_prompt,
+            )
+
+            # Event handler for streaming - use mutable containers to share state
+            content_parts = []
+            usage_data = {}
+            done_event = asyncio.Event()
+            error_holder = [None]  # Use list to allow mutation in nested function
+
+            def handle_event(event):
+                event_type = event.type.value if hasattr(event.type, 'value') else str(event.type)
+
+                if event_type == "assistant.message_delta":
+                    delta = getattr(event.data, 'delta_content', None) or ""
+                    if delta:
+                        stop_loading()
+                        content_parts.append(delta)
+                elif event_type == "assistant.message":
+                    content = getattr(event.data, 'content', None)
+                    if content:
+                        stop_loading()
+                        content_parts.clear()
+                        content_parts.append(content)
+                elif event_type == "assistant.usage":
+                    usage_data['input_tokens'] = getattr(event.data, 'input_tokens', 0)
+                    usage_data['output_tokens'] = getattr(event.data, 'output_tokens', 0)
+                elif event_type == "tool.execution_start":
+                    tool_name = getattr(event.data, 'tool_name', None) or getattr(event.data, 'toolName', 'unknown')
+                    arguments = (
+                        getattr(event.data, 'arguments', None) or
+                        getattr(event.data, 'toolArgs', None) or
+                        getattr(event.data, 'tool_args', None) or
+                        {}
+                    )
+                    if hasattr(arguments, 'model_dump'):
+                        arguments = arguments.model_dump()
+                    elif hasattr(arguments, '__dict__'):
+                        arguments = vars(arguments)
+
+                    callback = get_tool_call_callback()
+                    if callback:
+                        try:
+                            callback(tool_name, arguments, None)
+                        except Exception:
+                            pass
+                elif event_type == "tool.execution_complete":
+                    tool_name = getattr(event.data, 'tool_name', None) or getattr(event.data, 'toolName', 'unknown')
+                    result = getattr(event.data, 'result', None)
+                    result_str = normalize_tool_output(result)
+
+                    callback = get_tool_call_callback()
+                    if callback and result_str:
+                        try:
+                            callback(tool_name, {}, result_str)
+                        except Exception:
+                            pass
+                elif event_type == "session.idle":
+                    done_event.set()
+                elif event_type == "session.error":
+                    error_holder[0] = getattr(event.data, 'message', 'Unknown error')
+                    done_event.set()
+
+            # Clear any existing handlers and register fresh one
+            # This prevents handler accumulation when session is reused
+            if hasattr(session, '_event_handlers'):
+                session._event_handlers.clear()
+            session.on(handle_event)
+
+            # Send message and wait
+            with _suppress_subprocess_stderr():
+                response = await session.send_and_wait(prompt)
+
+            # Extract content if events didn't capture it
+            if not content_parts and response:
+                if hasattr(response, 'data') and hasattr(response.data, 'content'):
+                    content_parts = [response.data.content]
+                elif hasattr(response, 'content'):
+                    content_parts = [response.content]
+
+            if error_holder[0]:
+                raise RuntimeError(f"Session error: {error_holder[0]}")
+
+            current_response = "".join(content_parts)
+            last_input_tokens = usage_data.get("input_tokens", 0)
+            last_output_tokens = usage_data.get("output_tokens", 0)
+
+        except CommandRejectedError as e:
+            stop_loading()
+            rich_console.print(f"\n[bold yellow]Operation cancelled:[/bold yellow] {e}")
+            return StreamResult(
+                response="",
+                input_tokens=last_input_tokens,
+                output_tokens=last_output_tokens,
+                model_name=model,
+            )
+
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            stop_loading()
+            rich_console.print("\n[bold yellow]*BZZZT*[/bold yellow] Agent halted. Control returned to you. [bold yellow]*CLANK*[/bold yellow]")
+            return StreamResult(
+                response=current_response,
+                input_tokens=last_input_tokens,
+                output_tokens=last_output_tokens,
+                model_name=model,
+            )
+
+        finally:
+            stop_loading()
+            set_notify_callback(None)
+            set_tool_call_callback(None)
+
+        # Print final response
+        if current_response.strip():
+            rich_console.print(current_response)
+
+        return StreamResult(
+            response=current_response,
+            input_tokens=last_input_tokens,
+            output_tokens=last_output_tokens,
+            model_name=model,
+        )
+
+    # Run using persistent loop
+    try:
+        loop = _get_or_create_loop()
+        return loop.run_until_complete(_stream_copilot_async())
     except KeyboardInterrupt:
         return StreamResult(response="")

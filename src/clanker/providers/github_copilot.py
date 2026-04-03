@@ -248,6 +248,7 @@ async def _ensure_client() -> Any:
     if _copilot_client is None:
         try:
             from copilot import CopilotClient
+            from copilot.types import SubprocessConfig
         except ImportError:
             raise ImportError(
                 "github-copilot-sdk is not installed. "
@@ -262,14 +263,14 @@ async def _ensure_client() -> Any:
             logger.info("No Copilot token found, starting device flow authentication")
             token = authenticate_copilot_sync()
 
-        # Set token in environment for SDK to pick up
-        os.environ["GH_TOKEN"] = token
-        logger.debug("Set GH_TOKEN environment variable for Copilot SDK")
-
-        # Use default client - it reads token from environment
-        _copilot_client = CopilotClient()
+        # Pass token directly via SubprocessConfig
+        config = SubprocessConfig(
+            github_token=token,
+            use_logged_in_user=False,
+        )
+        _copilot_client = CopilotClient(config)
         _copilot_loop_id = current_loop_id
-        logger.info("GitHub Copilot client initialized")
+        logger.info("GitHub Copilot client initialized with explicit token")
 
         await _copilot_client.start()
         _copilot_initialized = True
