@@ -180,9 +180,12 @@ def stream_agent_response_sync(
             # Start loading spinner
             start_loading()
 
+            # Add recursion limit to config (default 100 is too low for complex tasks)
+            stream_config = {**config, "recursion_limit": 500}
+
             with _suppress_subprocess_stderr():
                 async for event in graph.astream_events(
-                    state, config=config, version="v2"
+                    state, config=stream_config, version="v2"
                 ):
                     event_type = event.get("event", "")
 
