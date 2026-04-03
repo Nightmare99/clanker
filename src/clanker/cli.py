@@ -31,7 +31,7 @@ from clanker.logging import get_logger, setup_logging
 from clanker.memory.checkpointer import SessionManager
 from clanker.memory.memories import get_memory_store
 from clanker.ui.console import Console
-from clanker.ui.streaming import StreamResult, stream_agent_response_sync
+from clanker.ui.streaming import StreamResult, stream_agent_response_sync, cleanup_event_loop
 from clanker.ui.token_tracking import SessionTokenTracker
 from clanker.runtime import set_yolo_mode
 
@@ -451,15 +451,13 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
                     # Cleanup Copilot if used
                     try:
                         from clanker.providers.github_copilot import cleanup_copilot
-                        import asyncio
-                        try:
-                            asyncio.run(cleanup_copilot())
-                        except RuntimeError:
-                            loop = asyncio.new_event_loop()
-                            loop.run_until_complete(cleanup_copilot())
-                            loop.close()
+                        from clanker.ui.streaming import _get_or_create_loop
+                        loop = _get_or_create_loop()
+                        loop.run_until_complete(cleanup_copilot())
                     except Exception:
                         pass
+                    # Cleanup the persistent event loop
+                    cleanup_event_loop()
                     break
                 elif result and result.startswith("restore:"):
                     # Restore a session

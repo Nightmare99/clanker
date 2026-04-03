@@ -33,10 +33,47 @@ _copilot_initialized: bool = False
 _copilot_loop_id: int | None = None  # Track which event loop the client was created on
 _copilot_session_tools: set | None = None  # Track tool names for session recreation
 _copilot_system_message: str | None = None  # Track system message
+_copilot_models_cache: dict[str, int] | None = None  # Cache model_id -> max_tokens
 
 # Callback for tool call notifications (set by streaming layer)
 from typing import Callable
 _tool_call_callback: Callable[[str, dict, str | None], None] | None = None
+
+
+async def _get_model_token_limit(model_id: str) -> int:
+    """Get max token limit for a model from SDK, with caching."""
+    global _copilot_models_cache
+
+    # Return from cache if available
+    if _copilot_models_cache and model_id in _copilot_models_cache:
+        return _copilot_models_cache[model_id]
+
+    # Fetch models and build cache
+    try:
+        client = await _ensure_client()
+        models = await client.list_models()
+        _copilot_models_cache = {}
+        for m in models:
+            limits = getattr(m.capabilities, 'limits', None)
+            max_tokens = getattr(limits, 'max_context_window_tokens', 128000) if limits else 128000
+            _copilot_models_cache[m.id] = max_tokens
+
+        return _copilot_models_cache.get(model_id, 128000)
+    except Exception as e:
+        logger.warning("Failed to fetch model limits: %s", e)
+        return 128000  # Default fallback
+
+
+def get_model_token_limit_sync(model_id: str) -> int:
+    """Synchronous wrapper to get model token limit."""
+    global _copilot_models_cache
+
+    # Return from cache if available
+    if _copilot_models_cache and model_id in _copilot_models_cache:
+        return _copilot_models_cache[model_id]
+
+    # Can't fetch async from sync context, return default
+    return 128000
 
 
 def set_tool_call_callback(callback: Callable[[str, dict, str | None], None] | None) -> None:
@@ -200,15 +237,13 @@ async def _ensure_client() -> Any:
     # Check if we need to recreate the client (event loop changed)
     current_loop_id = id(asyncio.get_event_loop())
     if _copilot_client is not None and _copilot_loop_id != current_loop_id:
-        logger.debug("Event loop changed, resetting Copilot client")
-        # Reset all state - client is tied to old event loop
+        logger.debug("Event loop changed, resetting Copilot client (keeping session_id for resume)")
+        # Reset client state - but KEEP session_id so we can resume
         _copilot_client = None
         _copilot_session = None
-        _copilot_session_id = None
-        _copilot_current_model = None
+        # Keep _copilot_session_id to resume the session
+        # Keep _copilot_current_model, _copilot_session_tools, _copilot_system_message for resume
         _copilot_initialized = False
-        _copilot_session_tools = None
-        _copilot_system_message = None
 
     if _copilot_client is None:
         try:
@@ -239,7 +274,29 @@ async def _ensure_client() -> Any:
         await _copilot_client.start()
         _copilot_initialized = True
 
+        # Populate models cache for token limits
+        await _populate_models_cache()
+
     return _copilot_client
+
+
+async def _populate_models_cache() -> None:
+    """Fetch and cache model information from SDK."""
+    global _copilot_models_cache
+
+    if _copilot_client is None:
+        return
+
+    try:
+        models = await _copilot_client.list_models()
+        _copilot_models_cache = {}
+        for m in models:
+            limits = getattr(m.capabilities, 'limits', None)
+            max_tokens = getattr(limits, 'max_context_window_tokens', 128000) if limits else 128000
+            _copilot_models_cache[m.id] = max_tokens
+        logger.debug("Cached %d Copilot models", len(_copilot_models_cache))
+    except Exception as e:
+        logger.warning("Failed to cache model info: %s", e)
 
 
 async def _ensure_session(
@@ -271,12 +328,40 @@ async def _ensure_session(
             logger.warning("Error disconnecting old session: %s", e)
         _copilot_session = None
 
-    # If no session exists, create one
+    # If no session exists, create or resume one
     if _copilot_session is None:
-        _copilot_session_id = f"clanker-{uuid.uuid4().hex[:8]}"
-
         # Import PermissionHandler for approve_all
         from copilot import PermissionHandler
+
+        # Check if we have an existing session_id to resume
+        if _copilot_session_id is not None:
+            # Resume existing session (e.g., after event loop change)
+            logger.info("Resuming Copilot session: %s", _copilot_session_id)
+            try:
+                # Resume with tools and model
+                resume_kwargs = {
+                    "on_permission_request": PermissionHandler.approve_all,
+                    "model": model,
+                }
+                if tools:
+                    tool_names = [t.name for t in tools]
+                    resume_kwargs["tools"] = tools
+                    resume_kwargs["available_tools"] = tool_names
+
+                _copilot_session = await client.resume_session(
+                    _copilot_session_id,
+                    **resume_kwargs,
+                )
+                _copilot_current_model = model
+                _copilot_session_tools = current_tool_names
+                logger.info("Resumed Copilot session: %s with model: %s", _copilot_session_id, model)
+                return _copilot_session
+            except Exception as e:
+                logger.warning("Failed to resume session %s: %s, creating new session", _copilot_session_id, e)
+                # Fall through to create a new session
+
+        # Create new session
+        _copilot_session_id = f"clanker-{uuid.uuid4().hex[:8]}"
 
         # Build session config
         session_kwargs = {
@@ -307,12 +392,14 @@ async def _ensure_session(
         _copilot_system_message = system_message
         logger.info("Created Copilot session: %s with model: %s", _copilot_session_id, model)
 
-    # If model changed, resume session with new model
+    # If model changed, switch model on existing session
     elif model != _copilot_current_model:
         logger.info("Switching model from %s to %s", _copilot_current_model, model)
+        from copilot import PermissionHandler
         _copilot_session = await client.resume_session(
             _copilot_session_id,
-            {"model": model},
+            on_permission_request=PermissionHandler.approve_all,
+            model=model,
         )
         _copilot_current_model = model
 
@@ -362,7 +449,7 @@ def is_copilot_available() -> bool:
 async def cleanup_copilot() -> None:
     """Clean up Copilot client and session."""
     global _copilot_client, _copilot_session, _copilot_session_id, _copilot_current_model, _copilot_initialized
-    global _copilot_session_tools, _copilot_system_message
+    global _copilot_session_tools, _copilot_system_message, _copilot_models_cache
 
     if _copilot_session is not None:
         try:
@@ -383,6 +470,7 @@ async def cleanup_copilot() -> None:
     _copilot_initialized = False
     _copilot_session_tools = None
     _copilot_system_message = None
+    _copilot_models_cache = None
     logger.info("GitHub Copilot client cleaned up")
 
 
@@ -578,18 +666,6 @@ class ChatGitHubCopilot(BaseChatModel):
     # Tools bound to this model
     _bound_tools: list = []
 
-    # Model token limits for profile (used by SummarizationMiddleware)
-    MODEL_TOKEN_LIMITS: ClassVar[dict] = {
-        "gpt-4.1": 128000,
-        "gpt-4o": 128000,
-        "gpt-4o-mini": 128000,
-        "gpt-4": 128000,
-        "o1": 200000,
-        "o3": 200000,
-        "claude-sonnet-4": 200000,
-        "claude-3.5-sonnet": 200000,
-    }
-
     class Config:
         arbitrary_types_allowed = True
 
@@ -604,7 +680,8 @@ class ChatGitHubCopilot(BaseChatModel):
     def model_post_init(self, __context) -> None:
         """Set profile after model initialization."""
         if not self.profile:
-            max_tokens = self.MODEL_TOKEN_LIMITS.get(self.model, self.max_input_tokens)
+            # Get token limit from cache or use default (async fetch happens later)
+            max_tokens = get_model_token_limit_sync(self.model) or self.max_input_tokens
             object.__setattr__(self, 'profile', {"max_input_tokens": max_tokens})
 
     def get_num_tokens(self, text: str) -> int:

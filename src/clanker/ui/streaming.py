@@ -1,5 +1,6 @@
 """Streaming output handler for real-time responses."""
 
+import asyncio
 import os
 import sys
 from contextlib import contextmanager
@@ -10,6 +11,26 @@ from clanker.tools.bash_tools import CommandRejectedError
 from clanker.tools.notify_tools import set_notify_callback
 from clanker.providers import set_tool_call_callback
 from clanker.runtime import is_yolo_mode
+
+# Persistent event loop for maintaining Copilot session across messages
+_persistent_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _get_or_create_loop() -> asyncio.AbstractEventLoop:
+    """Get or create a persistent event loop for the session."""
+    global _persistent_loop
+    if _persistent_loop is None or _persistent_loop.is_closed():
+        _persistent_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_persistent_loop)
+    return _persistent_loop
+
+
+def cleanup_event_loop() -> None:
+    """Clean up the persistent event loop. Call on exit."""
+    global _persistent_loop
+    if _persistent_loop is not None and not _persistent_loop.is_closed():
+        _persistent_loop.close()
+        _persistent_loop = None
 
 
 @dataclass
@@ -69,8 +90,6 @@ def stream_agent_response_sync(
     Returns:
         StreamResult with response text and token usage.
     """
-    import asyncio
-
     async def _stream_async() -> StreamResult:
         from rich.live import Live
         from rich.spinner import Spinner
@@ -441,9 +460,10 @@ def stream_agent_response_sync(
             summarization_occurred=summarization_detected,
         )
 
-    # Run the async function — KeyboardInterrupt (Ctrl+C) may surface here
-    # if it fires between asyncio yield points; catch it and return a clean result.
+    # Run the async function using persistent loop to maintain Copilot session
+    # KeyboardInterrupt (Ctrl+C) may surface here if it fires between asyncio yield points
     try:
-        return asyncio.run(_stream_async())
+        loop = _get_or_create_loop()
+        return loop.run_until_complete(_stream_async())
     except KeyboardInterrupt:
         return StreamResult(response="")
