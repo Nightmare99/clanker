@@ -474,76 +474,10 @@ async def cleanup_copilot() -> None:
     logger.info("GitHub Copilot client cleaned up")
 
 
-def _extract_tool_result(result: Any) -> str:
-    """Extract meaningful content from a tool result for display.
-
-    Handles various result formats: strings, dicts, Result objects, etc.
-    Returns the most relevant content for display to the user.
-    """
-    import ast
-    import json
-
-    if result is None:
-        return ""
-
-    # Handle Result-like objects with attributes first
-    if hasattr(result, 'text_result_for_llm'):
-        return _extract_tool_result(result.text_result_for_llm)
-    if hasattr(result, 'textResultForLlm'):
-        return _extract_tool_result(result.textResultForLlm)
-    if hasattr(result, 'content') and not isinstance(result, (str, dict)):
-        return _extract_tool_result(result.content)
-
-    # If it's a string, try to parse as dict
-    if isinstance(result, str):
-        parsed = None
-        # Try JSON first
-        try:
-            parsed = json.loads(result)
-        except (json.JSONDecodeError, ValueError):
-            pass
-
-        # Try Python literal (handles single quotes)
-        if parsed is None:
-            try:
-                parsed = ast.literal_eval(result)
-            except (ValueError, SyntaxError):
-                pass
-
-        if isinstance(parsed, dict):
-            result = parsed
-        else:
-            # It's a plain string, return as-is
-            return result
-
-    # Handle dict results - extract meaningful content
-    if isinstance(result, dict):
-        # Check for error first
-        if not result.get('ok', True) and 'error' in result:
-            return f"Error: {result['error']}"
-
-        # Try to get the most meaningful content field
-        for key in ['content', 'detailed_content', 'output', 'result', 'text', 'message']:
-            if key in result and result[key]:
-                return str(result[key])
-
-        # For list-like results (e.g., directory listings), format nicely
-        if 'items' in result:
-            items = result['items']
-            if isinstance(items, list) and len(items) > 0:
-                # Format directory items
-                names = [item.get('name', str(item)) for item in items[:10]]
-                summary = ", ".join(names)
-                if len(items) > 10:
-                    summary += f"... (+{len(items) - 10} more)"
-                return summary
-
-        # Fallback - don't show raw dict, just indicate success/failure
-        if result.get('ok', False):
-            return "(completed)"
-        return str(result)
-
-    return str(result)
+def _normalize_tool_result(result: Any) -> str:
+    """Normalize tool result for display. Delegates to centralized function."""
+    from clanker.ui.tool_display import normalize_tool_output
+    return normalize_tool_output(result)
 
 
 def _convert_messages_to_prompt(messages: List[BaseMessage]) -> tuple[str, str | None]:
@@ -811,7 +745,7 @@ class ChatGitHubCopilot(BaseChatModel):
                 result = getattr(event.data, 'result', None)
 
                 # Extract meaningful content from result
-                result_str = _extract_tool_result(result)
+                result_str = _normalize_tool_result(result)
 
                 logger.info("Tool complete: %s success=%s", tool_name, success)
                 callback = _tool_call_callback

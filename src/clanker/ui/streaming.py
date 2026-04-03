@@ -11,6 +11,7 @@ from clanker.tools.bash_tools import CommandRejectedError
 from clanker.tools.notify_tools import set_notify_callback
 from clanker.providers import set_tool_call_callback
 from clanker.runtime import is_yolo_mode
+from clanker.ui.tool_display import ToolDisplayHandler, normalize_tool_output
 
 # Persistent event loop for maintaining Copilot session across messages
 _persistent_loop: asyncio.AbstractEventLoop | None = None
@@ -102,7 +103,6 @@ def stream_agent_response_sync(
         current_response = ""  # Buffer for current model run
         current_thinking = ""  # Buffer for thinking content
         shown_tool_calls: set[str] = set()
-        pending_tools: list[tuple[str, dict]] = []  # Collect parallel tool calls
         current_model_run: str | None = None  # Track current model run_id
         thinking_shown = False
         in_think_tag = False  # Track if we're inside <think>...</think> tags
@@ -155,33 +155,13 @@ def stream_agent_response_sync(
                 spinner = Spinner("dots", text=Text(f" {message}", style="cyan"))
                 loading_live.update(spinner)
 
-        def show_tool(tool_name: str, tool_input: dict):
-            """Display a single tool call with details."""
-            console.print_tool_use(tool_name, tool_input)
-            if tool_name == "edit_file":
-                old_str = tool_input.get("old_string", "")
-                new_str = tool_input.get("new_string", "")
-                if old_str or new_str:
-                    console.print_edit_diff(old_str, new_str)
-            elif tool_name == "write_file":
-                content = tool_input.get("content", "")
-                if content:
-                    console.print_write_content(content, is_append=False)
-            elif tool_name == "append_file":
-                content = tool_input.get("content", "")
-                if content:
-                    console.print_write_content(content, is_append=True)
-
-        def flush_pending_tools():
-            """Display any pending tool calls."""
-            nonlocal pending_tools
-            if not pending_tools:
-                return
-            if len(pending_tools) > 1:
-                console.print_parallel_tools(pending_tools)
-            else:
-                show_tool(*pending_tools[0])
-            pending_tools = []
+        # Unified tool display handler for all providers
+        tool_handler = ToolDisplayHandler(
+            console=console,
+            show_tool_calls=settings.output.show_tool_calls,
+            on_tool_start=stop_loading,
+            on_tool_end=start_loading,
+        )
 
         # Register the notify callback
         def _notify_callback(message: str, level: str) -> None:
@@ -189,21 +169,8 @@ def stream_agent_response_sync(
 
         set_notify_callback(_notify_callback)
 
-        # Register Copilot SDK tool call callback
-        def _copilot_tool_callback(tool_name: str, args: dict, result: str | None) -> None:
-            """Called by Copilot SDK when tools are executed."""
-            if result is None:
-                # Tool starting - show the tool call
-                if settings.output.show_tool_calls:
-                    stop_loading()
-                    console.print_tool_use(tool_name, args)
-            else:
-                # Tool completed - show the result preview
-                if settings.output.show_tool_calls and result and result.strip():
-                    console.print_tool_result(result, tool_name=tool_name)
-                start_loading()
-
-        set_tool_call_callback(_copilot_tool_callback)
+        # Register unified tool callback for Copilot SDK
+        set_tool_call_callback(tool_handler.create_callback())
 
         try:
             # Start loading spinner
@@ -215,7 +182,7 @@ def stream_agent_response_sync(
                 ):
                     event_type = event.get("event", "")
 
-                    # Collect tool calls
+                    # Show tool calls immediately (don't batch)
                     if event_type == "on_tool_start":
                         tools_started = True
                         stop_loading()
@@ -231,12 +198,11 @@ def stream_agent_response_sync(
                                 # Skip notify - the tool itself handles display
                                 if tool_name == "notify":
                                     continue
-                                pending_tools.append((tool_name, tool_input))
+                                # Show tool immediately for proper interleaving
+                                tool_handler.show_tool(tool_name, tool_input)
 
-                    # Flush tools when execution completes
+                    # Show tool result
                     elif event_type == "on_tool_end":
-                        if pending_tools:
-                            flush_pending_tools()
                         tool_name_end = event.get("name", "")
                         if tool_name_end == "notify":
                             start_loading()
@@ -244,17 +210,10 @@ def stream_agent_response_sync(
                         # Show tool output
                         if settings.output.show_tool_calls:
                             data = event.get("data", {})
-                            tool_output = data.get("output")
-                            if tool_output is None:
-                                tool_output = ""
-                            elif hasattr(tool_output, "content"):
-                                tool_output = tool_output.content
-                            if isinstance(tool_output, list):
-                                tool_output = "\n".join(str(item) for item in tool_output)
-                            elif not isinstance(tool_output, str):
-                                tool_output = str(tool_output)
-                            if tool_output and tool_output.strip():
-                                console.print_tool_result(tool_output, tool_name=tool_name_end)
+                            tool_output = normalize_tool_output(data.get("output"))
+                            tool_handler.show_tool_result(tool_name_end, tool_output)
+                        # Clear tracking so tool can be called again
+                        tool_handler.clear_tool_tracking(tool_name_end)
                         start_loading()
 
                     # Track model calls to detect summarization
@@ -277,8 +236,8 @@ def stream_agent_response_sync(
                                 console.print_info("*WHIRR* Compressing memory banks...")
                                 start_loading()
 
-                            if pending_tools:
-                                flush_pending_tools()
+                            if tool_handler.has_pending_tools():
+                                tool_handler.flush_pending_tools()
                             current_response = ""
                             current_thinking = ""
                             thinking_shown = False

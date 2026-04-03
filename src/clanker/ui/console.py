@@ -200,6 +200,33 @@ class Console:
             text.append("List ", style="tool")
             text.append(path, style="cyan")
 
+        elif tool_name == "read_project_instructions":
+            text.append("Read project instructions", style="tool")
+
+        elif tool_name == "remember":
+            topic = args.get("topic", "")
+            text.append("Remember", style="tool")
+            if topic:
+                text.append(f": {self._truncate(topic, 40)}", style="dim")
+
+        elif tool_name == "recall":
+            query = args.get("query", "")
+            text.append("Recall", style="tool")
+            if query:
+                text.append(f": {self._truncate(query, 40)}", style="dim")
+
+        elif tool_name == "forget":
+            text.append("Forget memory", style="tool")
+
+        elif tool_name == "list_memories":
+            text.append("List memories", style="tool")
+
+        elif tool_name == "notify":
+            message = args.get("message", "")
+            text.append("Notify", style="tool")
+            if message:
+                text.append(f": {self._truncate(message, 40)}", style="dim")
+
         else:
             # Handle MCP tools and other unknown tools
             # MCP tools often have format "server__tool" or "mcp_server_tool"
@@ -241,14 +268,34 @@ class Console:
         return None
 
     def _print_dim(self, text_str: str) -> None:
-        """Print a short dim/muted line with indent."""
-        text = Text()
-        text.append("    ", style="dim")
-        text.append(text_str, style="dim")
-        self._console.print(text)
+        """Print dim/muted text with consistent indent on all lines."""
+        indent = "    "
+        # Replace tabs with spaces for consistent alignment
+        text_str = text_str.replace("\t", "  ")
+        lines = text_str.split("\n")
+        for line in lines:
+            text = Text()
+            text.append(indent, style="dim")
+            text.append(line, style="dim")
+            self._console.print(text)
 
-    def print_tool_result(self, result: str, tool_name: str = "", max_lines: int = 4, max_chars: int = 300) -> None:
-        """Print a smart, per-tool summary of a tool result in muted grey."""
+    def print_tool_result(
+        self,
+        result: str,
+        tool_name: str = "",
+        tool_input: dict | None = None,
+        max_lines: int = 4,
+        max_chars: int = 300,
+    ) -> None:
+        """Print a smart, per-tool summary of a tool result in muted grey.
+
+        Args:
+            result: The tool result string (may be JSON).
+            tool_name: Name of the tool.
+            tool_input: Original tool input args (for extracting paths when SDK strips fields).
+            max_lines: Max preview lines.
+            max_chars: Max preview characters.
+        """
         if not self._settings.output.show_tool_calls:
             return
 
@@ -269,6 +316,16 @@ class Console:
                 content = parsed.get("content", "")
                 if not content:
                     return
+                # Get file path from result or fall back to tool input
+                file_path = parsed.get("path", "")
+                if not file_path and tool_input:
+                    file_path = tool_input.get("file_path", "") or tool_input.get("path", "")
+                if file_path:
+                    label = Text()
+                    label.append("    ", style="dim")
+                    label.append(f"─── {file_path} ", style="dim cyan")
+                    label.append("───", style="dim")
+                    self._console.print(label)
                 lines = content.splitlines()
                 preview_lines = lines[:max_lines]
                 preview = "\n".join(preview_lines)
@@ -278,6 +335,30 @@ class Console:
                 self._print_dim(preview + suffix)
             elif parsed and not parsed.get("ok"):
                 self._print_dim(str(parsed.get("message", result))[:max_chars])
+            return
+
+        # ── read_project_instructions: show AGENTS.md content preview ────────────
+        if tool_name == "read_project_instructions":
+            if parsed and parsed.get("ok"):
+                if parsed.get("found"):
+                    content = parsed.get("content", "")
+                    if content:
+                        label = Text()
+                        label.append("    ", style="dim")
+                        label.append("─── AGENTS.md ", style="dim cyan")
+                        label.append("───", style="dim")
+                        self._console.print(label)
+                        lines = content.splitlines()
+                        preview_lines = lines[:max_lines]
+                        preview = "\n".join(preview_lines)
+                        if len(preview) > max_chars:
+                            preview = preview[:max_chars] + "…"
+                        suffix = f" (+{len(lines) - max_lines} lines)" if len(lines) > max_lines else ""
+                        self._print_dim(preview + suffix)
+                else:
+                    self._print_dim("No AGENTS.md found")
+            elif parsed and not parsed.get("ok"):
+                self._print_dim(str(parsed.get("error", result))[:max_chars])
             return
 
         # ── bash: show stdout/stderr trimmed ────────────────────────────────────
@@ -298,60 +379,102 @@ class Console:
             self._print_dim(preview + suffix)
             return
 
-        # ── glob_search: "N files found" ────────────────────────────────────────
+        # ── glob_search: show file list preview (returns plain string) ───────────
         if tool_name == "glob_search":
-            if parsed and parsed.get("ok"):
-                files = parsed.get("files", parsed.get("results", []))
-                n = len(files) if isinstance(files, list) else 0
-                if n == 0:
-                    self._print_dim("No files found")
-                elif n == 1:
-                    self._print_dim(str(files[0]))
-                else:
-                    self._print_dim(f"{n} files found — {files[0]}, {files[1]}" + (", …" if n > 2 else ""))
+            # glob_search returns plain text like "Found N files matching '*.py':\n  file1.py\n  ..."
+            lines = result.strip().splitlines()
+            if not lines:
+                return
+            # Show first few lines as preview
+            preview_lines = lines[:max_lines + 1]  # +1 for header
+            preview = "\n".join(preview_lines)
+            if len(preview) > max_chars:
+                preview = preview[:max_chars] + "…"
+            suffix = f" (+{len(lines) - len(preview_lines)} more)" if len(lines) > len(preview_lines) else ""
+            self._print_dim(preview + suffix)
             return
 
-        # ── grep_search: "N matches" ─────────────────────────────────────────────
+        # ── grep_search: show match preview (returns plain string) ───────────────
         if tool_name == "grep_search":
-            if parsed and parsed.get("ok"):
-                matches = parsed.get("matches", parsed.get("results", []))
-                n = len(matches) if isinstance(matches, list) else 0
-                if n == 0:
-                    self._print_dim("No matches")
-                else:
-                    self._print_dim(f"{n} match{'es' if n != 1 else ''}")
+            # grep_search returns plain text like "Found N matches in M files:\nfile:line: content\n..."
+            lines = result.strip().splitlines()
+            if not lines:
+                return
+            # Show first few lines as preview
+            preview_lines = lines[:max_lines + 1]  # +1 for header
+            preview = "\n".join(preview_lines)
+            if len(preview) > max_chars:
+                preview = preview[:max_chars] + "…"
+            suffix = f" (+{len(lines) - len(preview_lines)} more)" if len(lines) > len(preview_lines) else ""
+            self._print_dim(preview + suffix)
             return
 
-        # ── list_directory: "N items" ────────────────────────────────────────────
+        # ── list_directory: show items preview ───────────────────────────────────
         if tool_name == "list_directory":
             if parsed and parsed.get("ok"):
                 items = parsed.get("items", [])
-                n = len(items) if isinstance(items, list) else 0
-                self._print_dim(f"{n} item{'s' if n != 1 else ''}")
+                if not items:
+                    self._print_dim("Empty directory")
+                    return
+                # Format items as "name/" for dirs, "name" for files
+                formatted = []
+                for item in items[:8]:  # Show up to 8 items
+                    name = item.get("name", "?")
+                    if item.get("type") == "dir":
+                        formatted.append(f"{name}/")
+                    else:
+                        formatted.append(name)
+                preview = "  ".join(formatted)
+                suffix = f"  (+{len(items) - 8} more)" if len(items) > 8 else ""
+                self._print_dim(preview + suffix)
             return
 
         # ── memory tools ─────────────────────────────────────────────────────────
         if tool_name == "remember":
             if parsed and parsed.get("ok"):
-                mem_id = parsed.get("memory_id", "")
-                self._print_dim(f"Saved{f' ({mem_id})' if mem_id else ''}")
+                message = parsed.get("message", "")
+                if message:
+                    self._print_dim(message[:max_chars])
+                else:
+                    mem_id = parsed.get("memory_id", "")
+                    self._print_dim(f"Saved{f' ({mem_id})' if mem_id else ''}")
             return
 
         if tool_name == "recall":
             if parsed and parsed.get("ok"):
-                count = parsed.get("count", 0)
-                self._print_dim(f"{count} memor{'ies' if count != 1 else 'y'} found")
+                memories = parsed.get("memories", [])
+                if memories:
+                    # Show first memory preview
+                    first = memories[0]
+                    content = first.get("content", "")[:80]
+                    count = len(memories)
+                    suffix = f" (+{count - 1} more)" if count > 1 else ""
+                    self._print_dim(f"{content}{suffix}")
+                else:
+                    self._print_dim(parsed.get("message", "No memories found"))
             return
 
         if tool_name == "forget":
             if parsed and parsed.get("ok"):
-                self._print_dim("Memory deleted")
+                self._print_dim(parsed.get("message", "Memory deleted"))
             return
 
         if tool_name == "list_memories":
             if parsed and parsed.get("ok"):
-                count = parsed.get("count", 0)
-                self._print_dim(f"{count} memor{'ies' if count != 1 else 'y'}")
+                memories = parsed.get("memories", [])
+                count = parsed.get("count", len(memories))
+                total = parsed.get("total", count)
+                if memories:
+                    # Show first few memory IDs/tags
+                    previews = []
+                    for m in memories[:3]:
+                        tags = m.get("tags", [])
+                        tag_str = f"[{', '.join(tags[:2])}]" if tags else ""
+                        previews.append(f"{m.get('id', '?')[:8]}{tag_str}")
+                    suffix = f" (+{total - 3} more)" if total > 3 else ""
+                    self._print_dim("  ".join(previews) + suffix)
+                else:
+                    self._print_dim(f"{count} memor{'ies' if count != 1 else 'y'}")
             return
 
         # ── fallback: raw truncated output (MCP tools, etc.) ────────────────────
