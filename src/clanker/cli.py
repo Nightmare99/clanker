@@ -75,6 +75,22 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
         parts = command.strip().split(maxsplit=1)
         model_names = list_model_names()
 
+        # Try to get Copilot models
+        copilot_models = []
+        try:
+            from clanker.providers.github_copilot import is_copilot_available, list_copilot_models
+            if is_copilot_available():
+                import asyncio
+                try:
+                    copilot_models = asyncio.run(list_copilot_models())
+                except RuntimeError:
+                    # Fallback if there's already a loop
+                    loop = asyncio.new_event_loop()
+                    copilot_models = loop.run_until_complete(list_copilot_models())
+                    loop.close()
+        except Exception as e:
+            logger.debug("Failed to list Copilot models: %s", e)
+
         if len(parts) == 1:
             # Show current model and list available models
             current = get_default_model()
@@ -84,28 +100,54 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
                 console.print_warning("No model configured.")
 
             if model_names:
-                console.print_info("\nAvailable models:")
+                console.print_info("\nConfigured models:")
                 for name in model_names:
                     model = get_model_by_name(name)
                     if model:
                         marker = " *" if current and current.name == name else ""
                         console.print(f"  [cyan]{name}[/cyan] ({model.provider}){marker}")
-                console.print_info("\nUse /model <name> to switch models.")
-            else:
+
+            if copilot_models:
+                console.print_info("\nGitHub Copilot models:")
+                for m in copilot_models:
+                    console.print(f"  [green]copilot:{m['id']}[/green] ({m['name']})")
+                console.print_info("\nUse /model copilot:<model-id> to use a Copilot model.")
+
+            if not model_names and not copilot_models:
                 console.print_info("\nNo models configured in ~/.clanker/models.json")
-                console.print_info("Add models via 'clanker config' or edit the JSON file directly.")
+                console.print_info("Add models via 'clanker config' or use '/gh-login' for GitHub Copilot.")
+            else:
+                console.print_info("\nUse /model <name> to switch models.")
         else:
             # Switch to specified model
             target_name = parts[1].strip()
-            model = get_model_by_name(target_name)
-            if model:
-                set_default_model(target_name)
-                console.print_success(f"Switched to model: {model.name} ({model.provider})")
-                console.print_info("Note: Changes take effect on next message.")
+
+            # Check if it's a Copilot model (copilot:model-id format)
+            if target_name.startswith("copilot:"):
+                copilot_model_id = target_name[8:]  # Remove "copilot:" prefix
+                # Create a temporary model config for Copilot
+                from clanker.config.models import ModelConfig, add_model
+                copilot_config = ModelConfig(
+                    name=f"Copilot {copilot_model_id}",
+                    provider="GitHubCopilot",
+                    model=copilot_model_id,
+                )
+                add_model(copilot_config)
+                set_default_model(copilot_config.name)
+                console.print_success(f"Switched to GitHub Copilot: {copilot_model_id}")
+                console.print_info("Note: Conversation history is preserved across model switches.")
             else:
-                console.print_warning(f"Model '{target_name}' not found.")
-                if model_names:
-                    console.print_info(f"Available: {', '.join(model_names)}")
+                model = get_model_by_name(target_name)
+                if model:
+                    set_default_model(target_name)
+                    console.print_success(f"Switched to model: {model.name} ({model.provider})")
+                    console.print_info("Note: Changes take effect on next message.")
+                else:
+                    console.print_warning(f"Model '{target_name}' not found.")
+                    if model_names:
+                        console.print_info(f"Available: {', '.join(model_names)}")
+                    if copilot_models:
+                        console.print_info(f"Copilot: {', '.join(['copilot:' + m['id'] for m in copilot_models])}")
 
     elif cmd == "/config":
         settings = get_settings()
@@ -167,6 +209,47 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
             else:
                 console.print_info(f"Log directory: {settings.logging.log_dir}")
                 console.print_info("No log file created yet")
+
+    elif cmd == "/gh-login":
+        # GitHub Copilot OAuth device flow authentication
+        console.print_info("Starting GitHub Copilot authentication...")
+        console.print_info("This will use OAuth device flow to authenticate.")
+        try:
+            from clanker.providers.github_copilot import authenticate_copilot_sync, _load_copilot_token
+
+            # Check if already authenticated
+            existing_token = _load_copilot_token()
+            if existing_token:
+                console.print_info("Found existing Copilot token.")
+                console.print_info("Re-authenticating will replace it.")
+
+            # Run device flow authentication
+            token = authenticate_copilot_sync()
+            if token:
+                console.print_success("GitHub Copilot authentication successful!")
+                console.print_info("Token saved to ~/.clanker/copilot_token")
+                console.print_info("You can now use /model copilot:<model-id> to use Copilot models.")
+
+                # List available models
+                try:
+                    from clanker.providers.github_copilot import list_copilot_models
+                    import asyncio
+                    try:
+                        models = asyncio.run(list_copilot_models())
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        models = loop.run_until_complete(list_copilot_models())
+                        loop.close()
+                    if models:
+                        console.print_info("\nAvailable Copilot models:")
+                        for m in models:
+                            console.print(f"  [green]copilot:{m['id']}[/green] ({m['name']})")
+                except Exception as e:
+                    logger.debug("Failed to list Copilot models after login: %s", e)
+        except KeyboardInterrupt:
+            console.print_info("\nAuthentication cancelled.")
+        except Exception as e:
+            console.print_error(f"Authentication failed: {e}")
 
     elif cmd == "/history":
         sessions = session_manager.list_sessions()
@@ -248,6 +331,7 @@ class CommandCompleter(Completer):
         "/config",
         "/mcp",
         "/logs",
+        "/gh-login",
         "/history",
         "/restore",
         "/memories",
@@ -364,6 +448,18 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
                     # Save conversation before exiting
                     if conversation_messages:
                         session_manager.save_conversation_snapshot(conversation_messages)
+                    # Cleanup Copilot if used
+                    try:
+                        from clanker.providers.github_copilot import cleanup_copilot
+                        import asyncio
+                        try:
+                            asyncio.run(cleanup_copilot())
+                        except RuntimeError:
+                            loop = asyncio.new_event_loop()
+                            loop.run_until_complete(cleanup_copilot())
+                            loop.close()
+                    except Exception:
+                        pass
                     break
                 elif result and result.startswith("restore:"):
                     # Restore a session
@@ -450,6 +546,18 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
             # Save conversation before exiting
             if conversation_messages:
                 session_manager.save_conversation_snapshot(conversation_messages)
+            # Cleanup Copilot if used
+            try:
+                from clanker.providers.github_copilot import cleanup_copilot
+                import asyncio
+                try:
+                    asyncio.run(cleanup_copilot())
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    loop.run_until_complete(cleanup_copilot())
+                    loop.close()
+            except Exception:
+                pass
             console.print("\n[bold cyan]*BZZZT*[/bold cyan] Signal lost. Powering down. [bold cyan]*click*[/bold cyan]")
             break
 

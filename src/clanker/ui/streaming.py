@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from clanker.config import Settings
 from clanker.tools.bash_tools import CommandRejectedError
 from clanker.tools.notify_tools import set_notify_callback
+from clanker.providers import set_tool_call_callback
 from clanker.runtime import is_yolo_mode
 
 
@@ -168,6 +169,22 @@ def stream_agent_response_sync(
             console.print_notify(message, level)
 
         set_notify_callback(_notify_callback)
+
+        # Register Copilot SDK tool call callback
+        def _copilot_tool_callback(tool_name: str, args: dict, result: str | None) -> None:
+            """Called by Copilot SDK when tools are executed."""
+            if result is None:
+                # Tool starting - show the tool call
+                if settings.output.show_tool_calls:
+                    stop_loading()
+                    console.print_tool_use(tool_name, args)
+            else:
+                # Tool completed - show the result preview
+                if settings.output.show_tool_calls and result and result.strip():
+                    console.print_tool_result(result, tool_name=tool_name)
+                start_loading()
+
+        set_tool_call_callback(_copilot_tool_callback)
 
         try:
             # Start loading spinner
@@ -399,6 +416,7 @@ def stream_agent_response_sync(
         finally:
             stop_loading()
             set_notify_callback(None)
+            set_tool_call_callback(None)
 
         # If we buffered thinking but never saw </think>, treat it as response
         if current_thinking and not think_tag_closed and not current_response:

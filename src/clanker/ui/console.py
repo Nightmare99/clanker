@@ -553,6 +553,7 @@ Commands:
   /config     Display configuration parameters
   /mcp        Show MCP server connections
   /logs       Access diagnostic log files
+  /gh-login   Authenticate with GitHub for Copilot
   /exit       Initiate shutdown sequence
 
 [bold]History & Memory:[/bold]
