@@ -95,6 +95,8 @@ Only sessions created by Clanker (prefixed with `clanker-`) are shown in `/histo
 | Context Management | LangGraph summarization | SDK infinite sessions |
 | `/model` | Shows BYOK models | Shows Copilot models |
 | Web Config UI | Full configuration | Not applicable |
+| MCP Integration | Via langchain-mcp-adapters | Native SDK support |
+| Tool Isolation | All tools available | Only clanker + MCP tools |
 
 ## Switching Modes
 
@@ -151,3 +153,36 @@ Copilot sessions may expire. Start a new session with `/clear`.
 ### Model not available
 
 Your GitHub Copilot subscription may not include all models. Check available models with `/model`.
+
+## MCP Server Support
+
+Copilot mode fully supports MCP servers configured in your `config.yaml`. MCP tools are discovered at startup and integrated natively with the Copilot SDK.
+
+### How It Works
+
+1. **Startup Discovery**: When Copilot mode starts, it queries all configured MCP servers to discover available tools
+2. **Tool Whitelisting**: Only clanker's built-in tools and MCP tools are available to the model - Copilot's default built-in tools (like `rg`, `docs-scan`, `web_fetch`) are blocked
+3. **Native Integration**: MCP servers run through the Copilot SDK's native MCP support
+
+### Tool Naming
+
+In Copilot mode, MCP tools are named as `{server}-{tool}`:
+
+```
+> context7-resolve-library-id: pydantic
+> filesystem-read_file: /path/to/file.txt
+```
+
+### Configuration
+
+MCP servers are configured the same way for both modes. See [MCP Servers](mcp.md) for details.
+
+```yaml
+mcp:
+  enabled: true
+  servers:
+    context7:
+      transport: stdio
+      command: npx
+      args: ["-y", "@anthropic/context7-mcp"]
+```
