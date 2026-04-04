@@ -539,21 +539,23 @@ def _convert_langchain_tools_to_copilot(tools: list) -> list:
             """Create an async handler for a LangChain tool."""
             async def handler(params, invocation):
                 try:
-                    # Convert Pydantic model to dict if needed
-                    if hasattr(params, "model_dump"):
-                        args = params.model_dump()
+                    # Convert params (Pydantic model) to dict
+                    if params is None:
+                        args = {}
+                    elif hasattr(params, "model_dump"):
+                        args = params.model_dump(exclude_none=True)
                     elif hasattr(params, "dict"):
-                        args = params.dict()
+                        args = params.dict(exclude_none=True)
+                    elif isinstance(params, dict):
+                        args = params
                     else:
-                        args = dict(params) if params else {}
+                        args = {}
 
                     logger.debug("Tool %s called with args: %s", t.name, args)
 
-                    # Invoke the LangChain tool
-                    if asyncio.iscoroutinefunction(getattr(t, 'func', None) or getattr(t, '_run', None)):
-                        result = await t.ainvoke(args)
-                    else:
-                        result = t.invoke(args)
+                    # Always use ainvoke since we're in async context
+                    # This works for both sync and async tools (LangChain handles it)
+                    result = await t.ainvoke(args)
 
                     result_str = str(result)
                     logger.debug("Tool %s result length: %d", t.name, len(result_str))
