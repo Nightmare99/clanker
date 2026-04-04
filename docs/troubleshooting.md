@@ -95,6 +95,21 @@ clanker --copilot # Copilot mode
 
 The web configuration UI (`clanker config`) only manages BYOK mode settings. Copilot mode uses GitHub's infrastructure and doesn't require local configuration.
 
+### MCP tools not working in Copilot mode
+
+MCP servers are discovered at startup in Copilot mode. If tools aren't working:
+
+1. Ensure `mcp.enabled: true` in `~/.clanker/config.yaml`
+2. Check server configuration is correct (transport, command/url)
+3. Restart clanker to trigger MCP tool discovery
+4. Check logs with `/logs` for discovery errors
+
+**Note**: Copilot mode blocks Copilot's built-in tools (like `rg`, `docs-scan`, `web_fetch`) and only allows clanker's tools plus your configured MCP tools.
+
+### Seeing Copilot built-in tools instead of clanker's
+
+If you see tools like `rg`, `docs-scan`, or `report_intent` being invoked, this indicates tool isolation isn't working correctly. This is typically a configuration issue - ensure MCP servers are properly configured so the tool whitelist can be built correctly.
+
 ## General Issues
 
 ### Conversation not persisting

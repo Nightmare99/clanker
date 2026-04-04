@@ -48,8 +48,15 @@ clanker/
 │   ├── config/      # Settings management
 │   │   └── web/     # Web configuration UI (FastAPI + Vue)
 │   ├── context/     # Context management
-│   ├── mcp/         # MCP server integration
+│   ├── copilot/     # GitHub Copilot SDK integration
+│   │   ├── auth.py      # OAuth device flow authentication
+│   │   ├── client.py    # SDK client lifecycle
+│   │   ├── session.py   # Session manager with MCP support
+│   │   ├── tools.py     # Tool conversion utilities
+│   │   └── registry.py  # Session persistence
+│   ├── mcp/         # MCP server integration (BYOK mode)
 │   ├── memory/      # Session persistence
+│   ├── providers/   # LLM providers (includes Copilot wrapper)
 │   ├── tools/       # Tool implementations
 │   ├── ui/          # Console and streaming
 │   ├── utils/       # Validators and sandbox
