@@ -2,77 +2,110 @@
 
 from __future__ import annotations
 
-import json
 import uuid
-from datetime import datetime
-from pathlib import Path
 from typing import Any, Callable
 
 from clanker.logging import get_logger
+from clanker.copilot.registry import register_session, unregister_session, load_session_registry
 
 logger = get_logger("copilot.session")
 
-# Session registry file path
-COPILOT_SESSIONS_PATH = Path.home() / ".clanker" / "copilot_sessions.json"
 
-# Copilot CLI built-in tools to exclude (we use our own implementations)
-# MCP tools are still available via mcp_servers config
-EXCLUDED_COPILOT_TOOLS = [
-    "grep", "glob", "view", "edit", "bash", "shell",
-    "write_file", "delete_file", "read_file", "list_files",
-    "report_intent", "search", "run_command",
-    "create_file", "move_file", "copy_file",
-    "git_status", "git_diff", "git_commit", "git_log",
-    "think", "fetch_url", "web_search",
-]
+async def _query_mcp_tool_names(mcp_servers: dict | None) -> list[str]:
+    """Query MCP servers to get tool names dynamically.
 
+    MCP tools in Copilot SDK are named as {server_name}-{tool_name}.
+    This queries each server to discover its tools.
 
-def _load_session_registry() -> list[dict]:
-    """Load the session registry from file."""
-    if not COPILOT_SESSIONS_PATH.exists():
-        return []
-    try:
-        with open(COPILOT_SESSIONS_PATH) as f:
-            return json.load(f)
-    except Exception:
+    Args:
+        mcp_servers: MCP server config dict (server_name -> config).
+
+    Returns:
+        List of tool names in Copilot format ({server}-{tool}).
+    """
+    if not mcp_servers:
         return []
 
-
-def _save_session_registry(sessions: list[dict]) -> None:
-    """Save the session registry to file."""
     try:
-        COPILOT_SESSIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(COPILOT_SESSIONS_PATH, "w") as f:
-            json.dump(sessions, f, indent=2)
+        from langchain_mcp_adapters.client import MultiServerMCPClient
+    except ImportError:
+        logger.warning("langchain-mcp-adapters not installed, cannot query MCP tools")
+        return []
+
+    # Build configs for MultiServerMCPClient
+    configs = {}
+    for server_name, server_config in mcp_servers.items():
+        # Convert Copilot SDK format to langchain-mcp format
+        if isinstance(server_config, dict):
+            server_type = server_config.get("type", "local")
+            if server_type in ("local", "stdio"):
+                configs[server_name] = {
+                    "transport": "stdio",
+                    "command": server_config.get("command"),
+                    "args": server_config.get("args", []),
+                }
+                if server_config.get("env"):
+                    configs[server_name]["env"] = server_config["env"]
+            elif server_type in ("http", "sse"):
+                configs[server_name] = {
+                    "transport": "sse",
+                    "url": server_config.get("url"),
+                }
+        else:
+            # TypedDict format
+            command = getattr(server_config, "command", None) or server_config.get("command")
+            if command:
+                configs[server_name] = {
+                    "transport": "stdio",
+                    "command": command,
+                    "args": getattr(server_config, "args", None) or server_config.get("args", []),
+                }
+
+    if not configs:
+        return []
+
+    try:
+        import os
+        import sys
+
+        # Suppress MCP server startup messages
+        try:
+            stderr_fd = sys.stderr.fileno()
+            saved_stderr = os.dup(stderr_fd)
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, stderr_fd)
+            os.close(devnull)
+            suppress_ok = True
+        except (OSError, ValueError):
+            suppress_ok = False
+
+        try:
+            # Query MCP servers for their tools
+            client = MultiServerMCPClient(configs)
+            tools = await client.get_tools()
+        finally:
+            if suppress_ok:
+                os.dup2(saved_stderr, stderr_fd)
+                os.close(saved_stderr)
+
+        # Build Copilot-format tool names: {server}-{tool}
+        # The tools come with server info we can use
+        mcp_tool_names = []
+        for tool in tools:
+            # Tool names from MCP are just the tool name, we need to find the server
+            # Try to match by checking which server has this tool
+            tool_name = tool.name
+            # Prefix with each server name that might have this tool
+            for server_name in configs.keys():
+                mcp_tool_names.append(f"{server_name}-{tool_name}")
+
+        logger.info("Discovered %d MCP tools from %d servers: %s",
+                   len(mcp_tool_names), len(configs), mcp_tool_names)
+        return mcp_tool_names
+
     except Exception as e:
-        logger.warning("Failed to save session registry: %s", e)
-
-
-def _register_session(session_id: str, model: str) -> None:
-    """Register a new session in the local registry."""
-    sessions = _load_session_registry()
-
-    # Check if session already exists
-    for s in sessions:
-        if s["id"] == session_id:
-            return  # Already registered
-
-    sessions.insert(0, {
-        "id": session_id,
-        "model": model,
-        "created_at": datetime.now().isoformat(),
-    })
-
-    # Keep only last 50 sessions
-    sessions = sessions[:50]
-    _save_session_registry(sessions)
-
-
-def _unregister_session(session_id: str) -> None:
-    """Remove a session from the local registry."""
-    sessions = _load_session_registry()
-    sessions = [s for s in sessions if s["id"] != session_id]
-    _save_session_registry(sessions)
+        logger.warning("Failed to query MCP tools: %s", e)
+        return []
 
 # Global session manager instance
 _session_manager: CopilotSessionManager | None = None
@@ -109,7 +142,26 @@ class CopilotSessionManager:
         self._current_model: str | None = None
         self._tools: list | None = None
         self._tool_callback: Callable | None = None
-        self._mcp_servers: dict | None = None  # Track MCP server config
+        self._mcp_servers: dict | None = None
+        self._mcp_tool_names: list[str] | None = None  # Cached MCP tool names
+
+    async def discover_mcp_tools(self, mcp_servers: dict | None) -> list[str]:
+        """Discover MCP tools and cache them for session creation.
+
+        Call this at startup to avoid delay on first message.
+
+        Args:
+            mcp_servers: MCP server config dict.
+
+        Returns:
+            List of discovered tool names.
+        """
+        if mcp_servers:
+            self._mcp_tool_names = await _query_mcp_tool_names(mcp_servers)
+            logger.info("Pre-cached %d MCP tool names", len(self._mcp_tool_names))
+        else:
+            self._mcp_tool_names = []
+        return self._mcp_tool_names
 
     @property
     def session_id(self) -> str | None:
@@ -133,16 +185,14 @@ class CopilotSessionManager:
                     "Install it with: pip install github-copilot-sdk"
                 )
 
-            # Ensure token is available
-            from clanker.providers.github_copilot import _get_github_token, _load_copilot_token
+            from clanker.copilot.auth import get_github_token, load_copilot_token
 
-            token = _get_github_token() or _load_copilot_token()
+            token = get_github_token() or load_copilot_token()
             if not token:
                 raise ValueError(
                     "No Copilot token found. Run '/gh-login' to authenticate."
                 )
 
-            # Pass token directly via SubprocessConfig
             config = SubprocessConfig(
                 github_token=token,
                 use_logged_in_user=False,
@@ -175,12 +225,26 @@ class CopilotSessionManager:
 
         client = await self.ensure_client()
 
-        # Generate a meaningful session ID
         self._session_id = f"clanker-{uuid.uuid4().hex[:8]}"
         self._current_model = model
         self._tools = tools
 
-        # Build session config
+        # Build available_tools whitelist: our tools + MCP tools
+        # This blocks ALL Copilot built-ins while allowing our tools and MCP tools
+        available_tools: list[str] = []
+
+        # Add our custom tool names
+        if tools:
+            available_tools.extend(t.name for t in tools)
+
+        # Use cached MCP tool names if available, otherwise query dynamically
+        if self._mcp_tool_names is not None:
+            available_tools.extend(self._mcp_tool_names)
+        elif mcp_servers:
+            mcp_tool_names = await _query_mcp_tool_names(mcp_servers)
+            self._mcp_tool_names = mcp_tool_names
+            available_tools.extend(mcp_tool_names)
+
         session_kwargs = {
             "session_id": self._session_id,
             "model": model,
@@ -191,24 +255,18 @@ class CopilotSessionManager:
                 "background_compaction_threshold": 0.80,
                 "buffer_exhaustion_threshold": 0.95,
             },
+            "available_tools": available_tools,
         }
 
-        # Add tools if provided
         if tools:
             session_kwargs["tools"] = tools
-            logger.info("Creating session with %d tools", len(tools))
+            logger.info("Creating session with %d custom tools + %d MCP tools",
+                       len(tools), len(self._mcp_tool_names or []))
 
-        # Exclude Copilot's built-in CLI tools - we use our own implementations
-        session_kwargs["excluded_tools"] = EXCLUDED_COPILOT_TOOLS
-
-        # Add MCP servers if provided (native SDK support)
         if mcp_servers:
             session_kwargs["mcp_servers"] = mcp_servers
             logger.info("Creating session with %d MCP servers: %s", len(mcp_servers), list(mcp_servers.keys()))
-            for name, config in mcp_servers.items():
-                logger.debug("MCP server %s config: %s", name, config)
 
-        # Add system message if provided
         if system_message:
             session_kwargs["system_message"] = {
                 "mode": "replace",
@@ -216,19 +274,10 @@ class CopilotSessionManager:
             }
 
         self._session = await client.create_session(**session_kwargs)
-        self._mcp_servers = mcp_servers  # Track MCP config for session recreation
+        self._mcp_servers = mcp_servers
         logger.info("Created Copilot session: %s with model: %s", self._session_id, model)
 
-        # Log available tools to verify MCP tools are loaded
-        if hasattr(self._session, 'tools') and self._session.tools:
-            tool_names = [t.name if hasattr(t, 'name') else str(t) for t in self._session.tools]
-            logger.info("Session has %d tools available: %s", len(tool_names), tool_names[:10])
-        if hasattr(self._session, 'available_tools'):
-            logger.info("Session available_tools: %s", self._session.available_tools)
-
-        # Register in local session registry
-        _register_session(self._session_id, model)
-
+        register_session(self._session_id, model)
         return self._session
 
     async def resume_session(
@@ -250,11 +299,22 @@ class CopilotSessionManager:
         from copilot import PermissionHandler
 
         client = await self.ensure_client()
-
         self._session_id = session_id
+
+        # Rebuild available_tools for resume
+        available_tools: list[str] = []
+        if tools:
+            available_tools.extend(t.name for t in tools)
+        elif self._tools:
+            available_tools.extend(t.name for t in self._tools)
+
+        # Use cached MCP tool names
+        if self._mcp_tool_names:
+            available_tools.extend(self._mcp_tool_names)
 
         resume_kwargs = {
             "on_permission_request": PermissionHandler.approve_all,
+            "available_tools": available_tools,
         }
 
         if model:
@@ -265,12 +325,8 @@ class CopilotSessionManager:
             resume_kwargs["tools"] = tools
             self._tools = tools
 
-        # Exclude Copilot's built-in CLI tools on resume too
-        resume_kwargs["excluded_tools"] = EXCLUDED_COPILOT_TOOLS
-
         self._session = await client.resume_session(session_id, **resume_kwargs)
         logger.info("Resumed Copilot session: %s", session_id)
-
         return self._session
 
     async def get_or_create_session(
@@ -282,33 +338,20 @@ class CopilotSessionManager:
     ) -> Any:
         """Get existing session or create a new one.
 
-        If a session exists and model matches, returns it.
-        If model changed, updates the session.
-        If MCP servers changed, recreates the session (SDK doesn't support hot-reload).
-        Otherwise creates a new session.
+        Handles model switching and MCP server changes automatically.
         """
         if self._session is not None:
             # Check if MCP servers changed - need to recreate session
-            # SDK doesn't support adding MCP servers to existing session
             mcp_changed = (mcp_servers is not None and self._mcp_servers != mcp_servers)
             if mcp_changed:
                 logger.info("MCP servers changed, recreating session")
-                return await self.new_session(
-                    model=model,
-                    tools=tools,
-                    system_message=system_message,
-                    mcp_servers=mcp_servers,
-                )
+                return await self.new_session(model, tools, system_message, mcp_servers)
 
             # Check if we need to switch models
             if model != self._current_model:
                 logger.info("Switching model from %s to %s", self._current_model, model)
-                # Resume with new model
-                await self.resume_session(
-                    self._session_id,
-                    model=model,
-                    tools=tools,
-                )
+                await self.resume_session(self._session_id, model, tools)
+
             return self._session
 
         return await self.create_session(model, tools, system_message, mcp_servers)
@@ -320,10 +363,7 @@ class CopilotSessionManager:
         system_message: str | None = None,
         mcp_servers: dict | None = None,
     ) -> Any:
-        """Start a fresh session (for /clear command).
-
-        Disconnects current session and creates a new one.
-        """
+        """Start a fresh session (for /clear command)."""
         if self._session is not None:
             try:
                 await self._session.disconnect()
@@ -341,23 +381,11 @@ class CopilotSessionManager:
         )
 
     async def list_sessions(self) -> list[dict]:
-        """List all Copilot sessions from local registry.
-
-        Returns:
-            List of session info dicts.
-        """
-        # Use local registry since SDK only tracks active sessions
-        return _load_session_registry()
+        """List all Copilot sessions from local registry."""
+        return load_session_registry()
 
     async def delete_session(self, session_id: str) -> bool:
-        """Delete a Copilot session.
-
-        Args:
-            session_id: The session ID to delete.
-
-        Returns:
-            True if deleted successfully.
-        """
+        """Delete a Copilot session."""
         client = await self.ensure_client()
 
         try:
@@ -366,10 +394,8 @@ class CopilotSessionManager:
         except Exception as e:
             logger.warning("Failed to delete session from SDK %s: %s", session_id, e)
 
-        # Always remove from local registry
-        _unregister_session(session_id)
+        unregister_session(session_id)
 
-        # If deleting current session, clear it
         if session_id == self._session_id:
             self._session = None
             self._session_id = None
@@ -377,17 +403,9 @@ class CopilotSessionManager:
         return True
 
     async def send_message(self, prompt: str) -> Any:
-        """Send a message to the current session.
-
-        Args:
-            prompt: The user's message.
-
-        Returns:
-            The session response.
-        """
+        """Send a message to the current session."""
         if self._session is None:
             raise ValueError("No active session. Call create_session first.")
-
         return await self._session.send_and_wait(prompt)
 
     async def cleanup(self) -> None:

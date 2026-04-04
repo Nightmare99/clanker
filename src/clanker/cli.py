@@ -730,6 +730,35 @@ def run_copilot_interactive(
     except Exception as e:
         logger.debug("Failed to pre-fetch Copilot models for autocomplete: %s", e)
 
+    # Pre-discover MCP tools to avoid delay on first message
+    copilot_manager = get_copilot_session_manager()
+    if settings.mcp.enabled and settings.mcp.servers:
+        from copilot.types import MCPLocalServerConfig, MCPRemoteServerConfig
+        mcp_servers = {}
+        for name, server in settings.mcp.servers.items():
+            if not server.enabled:
+                continue
+            if server.transport == "stdio" and server.command:
+                config_kwargs = {
+                    "command": server.command,
+                    "args": server.args or [],
+                    "tools": ["*"],
+                }
+                if server.env:
+                    config_kwargs["env"] = server.env
+                mcp_servers[name] = MCPLocalServerConfig(**config_kwargs)
+            elif server.transport == "sse" and server.url:
+                mcp_servers[name] = MCPRemoteServerConfig(
+                    type="sse",
+                    url=server.url,
+                    tools=["*"],
+                )
+        if mcp_servers:
+            try:
+                loop.run_until_complete(copilot_manager.discover_mcp_tools(mcp_servers))
+            except Exception as e:
+                logger.debug("Failed to pre-discover MCP tools: %s", e)
+
     # Setup prompt history
     history_path = settings.memory.storage_path / "history_copilot"
     history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -743,9 +772,6 @@ def run_copilot_interactive(
 
     # Token tracking
     token_tracker = SessionTokenTracker(model_name=get_copilot_model())
-
-    # Get session manager
-    copilot_manager = get_copilot_session_manager()
 
     # Resume session if specified
     if resume_session:
