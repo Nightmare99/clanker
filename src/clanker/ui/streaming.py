@@ -465,7 +465,6 @@ def stream_copilot_response_sync(
 
         from clanker.agent.prompts import get_system_prompt
         from clanker.tools import ALL_TOOLS
-        from clanker.mcp import load_mcp_tools_async
         from clanker.providers.github_copilot import _convert_langchain_tools_to_copilot
 
         rich_console = console._console
@@ -510,21 +509,38 @@ def stream_copilot_response_sync(
         set_tool_call_callback(tool_handler.create_callback())
 
         try:
-            # Load all tools
+            # Load built-in tools (non-MCP)
             tools = list(ALL_TOOLS)
 
-            # Load MCP tools asynchronously
-            mcp_client = None
-            if settings.mcp.enabled:
-                try:
-                    mcp_client, mcp_tools = await load_mcp_tools_async(settings)
-                    tools.extend(mcp_tools)
-                except Exception as e:
-                    from clanker.logging import get_logger
-                    get_logger("streaming").warning("Failed to load MCP tools: %s", e)
-
-            # Convert tools to Copilot format
+            # Convert built-in tools to Copilot format
             copilot_tools = _convert_langchain_tools_to_copilot(tools)
+
+            # Build MCP server config for native Copilot SDK support
+            mcp_servers = None
+            if settings.mcp.enabled and settings.mcp.servers:
+                from copilot.types import MCPLocalServerConfig, MCPRemoteServerConfig
+                mcp_servers = {}
+                for name, server in settings.mcp.servers.items():
+                    if not server.enabled:
+                        continue
+                    if server.transport == "stdio" and server.command:
+                        config_kwargs = {
+                            "command": server.command,
+                            "args": server.args or [],
+                            "tools": ["*"],
+                        }
+                        if server.env:
+                            config_kwargs["env"] = server.env
+                        mcp_servers[name] = MCPLocalServerConfig(**config_kwargs)
+                    elif server.transport == "sse" and server.url:
+                        mcp_servers[name] = MCPRemoteServerConfig(
+                            type="sse",
+                            url=server.url,
+                            tools=["*"],
+                        )
+                if mcp_servers:
+                    from clanker.logging import get_logger
+                    get_logger("streaming").info("Configured %d MCP servers for Copilot SDK: %s", len(mcp_servers), list(mcp_servers.keys()))
 
             # Get system prompt
             system_prompt = get_system_prompt()
@@ -532,11 +548,12 @@ def stream_copilot_response_sync(
             # Start loading
             start_loading()
 
-            # Get or create session
+            # Get or create session with native MCP support
             session = await copilot_manager.get_or_create_session(
                 model=model,
                 tools=copilot_tools,
                 system_message=system_prompt,
+                mcp_servers=mcp_servers,
             )
 
             # Event handler for streaming - use mutable containers to share state
@@ -547,6 +564,14 @@ def stream_copilot_response_sync(
 
             def handle_event(event):
                 event_type = event.type.value if hasattr(event.type, 'value') else str(event.type)
+
+                # Log MCP and session-related events for debugging
+                mcp_events = ["session.mcp_servers_loaded", "session.mcp_server_status_changed",
+                             "mcp.oauth_required", "mcp.oauth_completed", "session.tools_updated",
+                             "session.error", "session.warning"]
+                if event_type in mcp_events or "mcp" in event_type.lower():
+                    from clanker.logging import get_logger
+                    get_logger("streaming").info("SDK event [%s]: %s", event_type, event.data)
 
                 if event_type == "assistant.message_delta":
                     delta = getattr(event.data, 'delta_content', None) or ""
