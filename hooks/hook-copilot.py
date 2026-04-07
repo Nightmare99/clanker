@@ -8,9 +8,10 @@ datas, binaries, hiddenimports = collect_all('copilot')
 # Ensure all submodules are included
 hiddenimports += collect_submodules('copilot')
 
-# Also explicitly add known modules in case collect_all misses them (v0.2.1+)
+# Also explicitly add known modules in case collect_all misses them (v0.2.0)
 hiddenimports += [
     'copilot',
+    'copilot.types',
     'copilot.client',
     'copilot.session',
     'copilot.tools',
