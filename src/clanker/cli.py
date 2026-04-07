@@ -733,7 +733,7 @@ def run_copilot_interactive(
     # Pre-discover MCP tools to avoid delay on first message
     copilot_manager = get_copilot_session_manager()
     if settings.mcp.enabled and settings.mcp.servers:
-        from copilot.types import MCPLocalServerConfig, MCPRemoteServerConfig
+        from copilot.session import MCPLocalServerConfig, MCPRemoteServerConfig
         mcp_servers = {}
         for name, server in settings.mcp.servers.items():
             if not server.enabled:

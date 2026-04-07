@@ -39,7 +39,7 @@ async def ensure_client() -> Any:
     if _copilot_client is None:
         try:
             from copilot import CopilotClient
-            from copilot.types import SubprocessConfig
+            from copilot import SubprocessConfig
         except ImportError:
             raise ImportError(
                 "github-copilot-sdk is not installed. "

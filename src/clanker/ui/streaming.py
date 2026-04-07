@@ -518,7 +518,7 @@ def stream_copilot_response_sync(
             # Build MCP server config for native Copilot SDK support
             mcp_servers = None
             if settings.mcp.enabled and settings.mcp.servers:
-                from copilot.types import MCPLocalServerConfig, MCPRemoteServerConfig
+                from copilot.session import MCPLocalServerConfig, MCPRemoteServerConfig
                 mcp_servers = {}
                 for name, server in settings.mcp.servers.items():
                     if not server.enabled:
