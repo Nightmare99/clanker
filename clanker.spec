@@ -121,7 +121,7 @@ a = Analysis(
         'copilot.generated.rpc',
         'copilot.generated.session_events',
     ] + copilot_imports,
-    hookspath=[],
+    hookspath=[str(project_root / 'hooks')],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
