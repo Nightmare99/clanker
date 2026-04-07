@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "clanker"
-version = "0.1.13"
+version = "0.1.14"
 description = "An agentic coding CLI powered by LangChain"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [
-    { name = "Your Name", email = "you@example.com" }
+    { name = "Vishal Kumar", email = "vishal.s.kumar99@gmail.com" }
 ]
 keywords = ["cli", "ai", "coding", "langchain", "agent"]
 classifiers = [

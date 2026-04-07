@@ -3,8 +3,13 @@
 
 import sys
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 block_cipher = None
+
+# Collect all copilot submodules dynamically
+copilot_imports = collect_submodules('copilot')
+copilot_datas = collect_data_files('copilot')
 
 # Get the project root
 project_root = Path(SPECPATH)
@@ -61,7 +66,7 @@ a = Analysis(
     datas=[
         # Include static web UI files
         (str(project_root / 'src' / 'clanker' / 'config' / 'web' / 'static'), 'clanker/config/web/static'),
-    ],
+    ] + copilot_datas,
     hiddenimports=[
         # LangChain imports
         'langchain',
@@ -100,22 +105,9 @@ a = Analysis(
         # SQLite for checkpointing
         'sqlite3',
         'aiosqlite',
-        # GitHub Copilot SDK
-        'copilot',
-        'copilot.types',
-        'copilot.client',
-        'copilot.session',
-        'copilot.tools',
-        'copilot.bin',
-        'copilot._jsonrpc',
-        'copilot._telemetry',
-        'copilot._sdk_protocol_version',
-        'copilot.generated',
-        'copilot.generated.rpc',
-        'copilot.generated.session_events',
         # SSL certificates for packaged binary
         'certifi',
-    ],
+    ] + copilot_imports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
