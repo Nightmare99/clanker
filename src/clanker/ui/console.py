@@ -477,7 +477,26 @@ class Console:
                     self._print_dim(f"{count} memor{'ies' if count != 1 else 'y'}")
             return
 
-        # ── fallback: raw truncated output (MCP tools, etc.) ────────────────────
+        # ── fallback: format items array or show raw truncated output ────────────
+        # Handle JSON with items array (directory listings, etc.)
+        if parsed and isinstance(parsed.get("items"), list):
+            items = parsed["items"]
+            if items:
+                formatted = []
+                for item in items[:8]:
+                    if isinstance(item, dict):
+                        name = item.get("name", "?")
+                        if item.get("type") == "dir":
+                            formatted.append(f"{name}/")
+                        else:
+                            formatted.append(name)
+                    else:
+                        formatted.append(str(item)[:20])
+                preview = "  ".join(formatted)
+                suffix = f"  (+{len(items) - 8} more)" if len(items) > 8 else ""
+                self._print_dim(preview + suffix)
+                return
+
         lines = result.split('\n')
         if len(lines) > max_lines:
             display = '\n'.join(lines[:max_lines])
