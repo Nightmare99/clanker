@@ -107,9 +107,8 @@ a = Analysis(
         'aiosqlite',
         # SSL certificates for packaged binary
         'certifi',
-        # GitHub Copilot SDK - explicit imports (collect_submodules may fail in CI)
+        # GitHub Copilot SDK - explicit imports (v0.2.1+)
         'copilot',
-        'copilot.types',
         'copilot.client',
         'copilot.session',
         'copilot.tools',
