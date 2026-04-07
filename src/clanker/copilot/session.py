@@ -178,7 +178,7 @@ class CopilotSessionManager:
         if self._client is None:
             try:
                 from copilot import CopilotClient
-                from copilot import SubprocessConfig
+                from copilot.types import SubprocessConfig
             except ImportError:
                 raise ImportError(
                     "github-copilot-sdk is not installed. "
