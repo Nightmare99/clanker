@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "clanker"
-version = "0.1.11"
+version = "0.1.12"
 description = "An agentic coding CLI powered by LangChain"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -41,6 +41,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0.0",
     "github-copilot-sdk>=0.1.0",
+    "certifi>=2024.0.0",
 ]
 
 [project.optional-dependencies]

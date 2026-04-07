@@ -59,6 +59,8 @@ a = Analysis(
         'copilot',
         'copilot.generated',
         'copilot.generated.session_events',
+        # SSL certificates for packaged binary
+        'certifi',
     ],
     hookspath=[],
     hooksconfig={},

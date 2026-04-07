@@ -3,12 +3,27 @@
 from __future__ import annotations
 
 import json
+import ssl
 import time
 from pathlib import Path
 
 from clanker.logging import get_logger
 
 logger = get_logger("copilot.auth")
+
+
+def _get_ssl_context() -> ssl.SSLContext:
+    """Get SSL context with proper certificate bundle.
+
+    Uses certifi's CA bundle for packaged binaries where system certs
+    may not be accessible.
+    """
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        # Fall back to default context if certifi not available
+        return ssl.create_default_context()
 
 
 def _get_copilot_token_path() -> Path:
@@ -96,6 +111,9 @@ def authenticate_copilot_sync() -> str:
         "User-Agent": "GithubCopilot/1.155.0",
     }
 
+    # Get SSL context for HTTPS requests
+    ssl_context = _get_ssl_context()
+
     # Step 1: Request device code
     req = urllib.request.Request(
         "https://github.com/login/device/code",
@@ -104,7 +122,7 @@ def authenticate_copilot_sync() -> str:
         method="POST",
     )
 
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, context=ssl_context) as resp:
         data = json.loads(resp.read().decode())
 
     device_code = data["device_code"]
@@ -132,7 +150,7 @@ def authenticate_copilot_sync() -> str:
             method="POST",
         )
 
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, context=ssl_context) as resp:
             data = json.loads(resp.read().decode())
 
         if "access_token" in data:
