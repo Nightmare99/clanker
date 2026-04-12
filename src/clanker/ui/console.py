@@ -310,6 +310,12 @@ class Console:
 
         parsed = self._parse_tool_json(result)
 
+        # Memory-save results already contain a concise user-facing message.
+        # Prefer that over showing the full JSON payload.
+        if parsed and parsed.get("ok") and "message" in parsed and "memory_id" in parsed:
+            self._print_dim(str(parsed.get("message", ""))[:max_chars])
+            return
+
         # ── read_file: show the actual file content, not the JSON wrapper ───────
         if tool_name == "read_file":
             if parsed and parsed.get("ok"):
