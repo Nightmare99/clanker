@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Callable
 
+from clanker.copilot.errors import log_copilot_error, summarize_copilot_exception
 from clanker.logging import get_logger
 from clanker.copilot.registry import register_session, unregister_session, load_session_registry
 
@@ -197,9 +198,20 @@ class CopilotSessionManager:
                 github_token=token,
                 use_logged_in_user=False,
             )
-            self._client = CopilotClient(config)
-            await self._client.start()
-            logger.info("Copilot client initialized with explicit token")
+            try:
+                self._client = CopilotClient(config)
+                await self._client.start()
+                logger.info("Copilot client initialized with explicit token")
+            except Exception as e:
+                log_copilot_error(
+                    logger,
+                    e,
+                    operation="Copilot client startup",
+                    context={"has_token": bool(token)},
+                )
+                raise RuntimeError(
+                    summarize_copilot_exception(e, operation="Copilot client startup")
+                ) from e
 
         return self._client
 
@@ -273,7 +285,25 @@ class CopilotSessionManager:
                 "content": system_message,
             }
 
-        self._session = await client.create_session(**session_kwargs)
+        try:
+            self._session = await client.create_session(**session_kwargs)
+        except Exception as e:
+            log_copilot_error(
+                logger,
+                e,
+                operation="Copilot session creation",
+                context={
+                    "session_id": self._session_id,
+                    "model": model,
+                    "tool_count": len(tools or []),
+                    "mcp_server_names": list(mcp_servers.keys()) if mcp_servers else [],
+                    "available_tool_count": len(available_tools),
+                },
+            )
+            raise RuntimeError(
+                summarize_copilot_exception(e, operation="Copilot session creation")
+            ) from e
+
         self._mcp_servers = mcp_servers
         logger.info("Created Copilot session: %s with model: %s", self._session_id, model)
 
@@ -325,7 +355,24 @@ class CopilotSessionManager:
             resume_kwargs["tools"] = tools
             self._tools = tools
 
-        self._session = await client.resume_session(session_id, **resume_kwargs)
+        try:
+            self._session = await client.resume_session(session_id, **resume_kwargs)
+        except Exception as e:
+            log_copilot_error(
+                logger,
+                e,
+                operation="Copilot session resume",
+                context={
+                    "session_id": session_id,
+                    "model": model,
+                    "tool_count": len(tools or self._tools or []),
+                    "available_tool_count": len(available_tools),
+                },
+            )
+            raise RuntimeError(
+                summarize_copilot_exception(e, operation="Copilot session resume")
+            ) from e
+
         logger.info("Resumed Copilot session: %s", session_id)
         return self._session
 

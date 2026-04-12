@@ -18,6 +18,7 @@ from langchain_core.messages import (
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from pydantic import Field
 
+from clanker.copilot.errors import log_copilot_error, summarize_copilot_exception, summarize_sdk_event
 from clanker.logging import get_logger
 
 # Re-export from copilot modules for backward compatibility
@@ -316,10 +317,14 @@ class ChatGitHubCopilot(BaseChatModel):
         content_parts = []
         usage_data = {}
         error_msg = None
+        recent_events: list[dict[str, Any]] = []
 
         def handle_event(event):
             nonlocal content_parts, usage_data, error_msg
             event_type = event.type.value if hasattr(event.type, 'value') else str(event.type)
+            recent_events.append(summarize_sdk_event(event_type, getattr(event, "data", None)))
+            if len(recent_events) > 25:
+                del recent_events[:-25]
 
             if event_type == "assistant.message_delta":
                 delta = getattr(event.data, 'delta_content', None) or ""
@@ -376,8 +381,20 @@ class ChatGitHubCopilot(BaseChatModel):
             if error_msg:
                 raise RuntimeError(f"Session error: {error_msg}")
         except Exception as e:
-            logger.error("Error during send_and_wait: %s", e)
-            raise
+            log_copilot_error(
+                logger,
+                e,
+                operation="Copilot provider response",
+                recent_events=recent_events,
+                context={"model": self.model},
+            )
+            raise RuntimeError(
+                summarize_copilot_exception(
+                    e,
+                    recent_events=recent_events,
+                    operation="Copilot provider response",
+                )
+            ) from e
 
         content = "".join(content_parts)
         message = AIMessage(
