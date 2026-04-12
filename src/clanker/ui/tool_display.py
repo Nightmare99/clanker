@@ -6,6 +6,8 @@ from typing import Callable
 class ToolDisplayHandler:
     """Handles tool call and result display consistently across providers."""
 
+    _DISPLAY_ONLY_TOOLS = {"notify"}
+
     def __init__(
         self,
         console,
@@ -40,6 +42,10 @@ class ToolDisplayHandler:
         input_str = str(sorted(tool_input.items())) if tool_input else ""
         return f"{tool_name}:{hash(input_str)}"
 
+    def _is_display_only_tool(self, tool_name: str) -> bool:
+        """Return True for tools that handle their own console output."""
+        return tool_name in self._DISPLAY_ONLY_TOOLS
+
     def show_tool(self, tool_name: str, tool_input: dict, force: bool = False) -> bool:
         """Display a single tool call with details.
 
@@ -53,6 +59,11 @@ class ToolDisplayHandler:
 
         # Skip if Copilot callback is handling tools (unless forced by callback itself)
         if self._copilot_callback_active and not force:
+            return False
+
+        # Some tools render their own user-facing output and should not also
+        # show the generic tool header line.
+        if self._is_display_only_tool(tool_name):
             return False
 
         # Check for duplicate (unless forced)
@@ -93,6 +104,10 @@ class ToolDisplayHandler:
 
         # Skip if Copilot callback is handling tools (unless forced by callback itself)
         if self._copilot_callback_active and not force:
+            return False
+
+        # Some tools already printed their user-facing result directly.
+        if self._is_display_only_tool(tool_name):
             return False
 
         # Try to get tool name from pending inputs if SDK sent "unknown"
@@ -168,11 +183,18 @@ class ToolDisplayHandler:
         self._copilot_callback_active = True
         if self._on_tool_start:
             self._on_tool_start()
+        if self._is_display_only_tool(tool_name):
+            return
         # Force show even if duplicate detection would skip (callback is authoritative)
         self.show_tool(tool_name, tool_input, force=True)
 
     def handle_tool_end(self, tool_name: str, result: str) -> None:
         """Handle tool end event - display result and call on_tool_end callback."""
+        if self._is_display_only_tool(tool_name):
+            self.clear_tool_tracking(tool_name)
+            if self._on_tool_end:
+                self._on_tool_end()
+            return
         # Force show even if duplicate detection would skip (callback is authoritative)
         self.show_tool_result(tool_name, result, force=True)
         # Clear tracking for this tool so it can be called again
