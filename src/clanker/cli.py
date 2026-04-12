@@ -27,7 +27,7 @@ from clanker.config import (
     set_default_model,
 )
 from clanker.config.setup_wizard import run_setup_wizard
-from clanker.logging import get_logger, setup_logging
+from clanker.logging import get_log_path, get_logger, setup_logging
 from clanker.memory.checkpointer import SessionManager
 from clanker.memory.memories import get_memory_store
 from clanker.ui.console import Console
@@ -862,6 +862,9 @@ def run_copilot_interactive(
             except Exception as e:
                 logger.exception("Copilot error occurred: %s", e)
                 console.print_error(f"Copilot error: {e}")
+                log_path = get_log_path()
+                if log_path:
+                    console.print_info(f"Full Copilot diagnostics were logged to {log_path}")
 
             console.rule()
 
@@ -927,7 +930,11 @@ def run_copilot_single_prompt(
                 result.quota_limit,
             )
     except Exception as e:
+        logger.exception("Copilot single-prompt error: %s", e)
         console.print_error(f"Copilot error: {e}")
+        log_path = get_log_path()
+        if log_path:
+            console.print_info(f"Full Copilot diagnostics were logged to {log_path}")
         sys.exit(1)
     finally:
         try:

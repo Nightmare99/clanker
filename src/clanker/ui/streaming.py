@@ -3,10 +3,17 @@
 import asyncio
 import os
 import sys
+from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
 
 from clanker.config import Settings
+from clanker.copilot.errors import (
+    log_copilot_error,
+    summarize_copilot_exception,
+    summarize_sdk_event,
+)
+from clanker.logging import get_logger
 from clanker.tools.bash_tools import CommandRejectedError
 from clanker.tools.notify_tools import set_notify_callback
 from clanker.providers import set_tool_call_callback, get_tool_call_callback
@@ -15,6 +22,8 @@ from clanker.ui.tool_display import ToolDisplayHandler, normalize_tool_output
 
 # Persistent event loop for maintaining Copilot session across messages
 _persistent_loop: asyncio.AbstractEventLoop | None = None
+_COPILOT_ACTIVITY_TIMEOUT_SECONDS = 60.0
+_COPILOT_MAX_RESPONSE_SECONDS = 900.0
 
 
 def _get_or_create_loop() -> asyncio.AbstractEventLoop:
@@ -58,19 +67,26 @@ class StreamResult:
 @contextmanager
 def _suppress_subprocess_stderr():
     """Suppress stderr from subprocesses (like MCP servers) at fd level."""
+    saved_stderr_fd: int | None = None
+    original_stderr_fd: int | None = None
+    redirecting = False
     try:
         original_stderr_fd = sys.stderr.fileno()
         saved_stderr_fd = os.dup(original_stderr_fd)
         devnull = os.open(os.devnull, os.O_WRONLY)
         os.dup2(devnull, original_stderr_fd)
         os.close(devnull)
-        yield
+        redirecting = True
     except (OSError, ValueError):
-        # If we can't redirect (e.g., no real stderr), just continue
+        # If we can't redirect (e.g., no real stderr), just continue.
+        pass
+
+    try:
         yield
-    else:
-        os.dup2(saved_stderr_fd, original_stderr_fd)
-        os.close(saved_stderr_fd)
+    finally:
+        if redirecting and saved_stderr_fd is not None and original_stderr_fd is not None:
+            os.dup2(saved_stderr_fd, original_stderr_fd)
+            os.close(saved_stderr_fd)
 
 
 def stream_agent_response_sync(
@@ -469,6 +485,9 @@ def stream_copilot_response_sync(
 
         rich_console = console._console
         current_response = ""
+        streaming_logger = get_logger("streaming")
+        recent_events: deque[dict] = deque(maxlen=25)
+        session_subscription = None
 
         # Token tracking
         last_input_tokens = 0
@@ -539,8 +558,11 @@ def stream_copilot_response_sync(
                             tools=["*"],
                         )
                 if mcp_servers:
-                    from clanker.logging import get_logger
-                    get_logger("streaming").info("Configured %d MCP servers for Copilot SDK: %s", len(mcp_servers), list(mcp_servers.keys()))
+                    streaming_logger.info(
+                        "Configured %d MCP servers for Copilot SDK: %s",
+                        len(mcp_servers),
+                        list(mcp_servers.keys()),
+                    )
 
             # Get system prompt
             system_prompt = get_system_prompt()
@@ -559,21 +581,31 @@ def stream_copilot_response_sync(
             # Event handler for streaming - use mutable containers to share state
             content_parts = []
             usage_data = {}
+            response_event = [None]
             done_event = asyncio.Event()
             error_holder = [None]  # Use list to allow mutation in nested function
+            loop = asyncio.get_running_loop()
+            last_activity_at = loop.time()
+            session_subscription = None
 
             def handle_event(event):
+                nonlocal last_activity_at
+                last_activity_at = loop.time()
                 event_type = event.type.value if hasattr(event.type, 'value') else str(event.type)
+                recent_events.append(summarize_sdk_event(event_type, getattr(event, "data", None)))
 
                 # Log MCP and session-related events for debugging
                 mcp_events = ["session.mcp_servers_loaded", "session.mcp_server_status_changed",
                              "mcp.oauth_required", "mcp.oauth_completed", "session.tools_updated",
                              "session.error", "session.warning"]
                 if event_type in mcp_events or "mcp" in event_type.lower():
-                    from clanker.logging import get_logger
-                    get_logger("streaming").info("SDK event [%s]: %s", event_type, event.data)
+                    streaming_logger.info("SDK event [%s]: %s", event_type, recent_events[-1])
 
-                if event_type == "assistant.message_delta":
+                if event_type in {
+                    "assistant.message_delta",
+                    "assistant.reasoning_delta",
+                    "assistant.streaming_delta",
+                }:
                     delta = getattr(event.data, 'delta_content', None) or ""
                     if delta:
                         stop_loading()
@@ -584,6 +616,7 @@ def stream_copilot_response_sync(
                         stop_loading()
                         content_parts.clear()
                         content_parts.append(content)
+                    response_event[0] = event
                 elif event_type == "assistant.usage":
                     usage_data['input_tokens'] = getattr(event.data, 'input_tokens', 0)
                     usage_data['output_tokens'] = getattr(event.data, 'output_tokens', 0)
@@ -630,15 +663,57 @@ def stream_copilot_response_sync(
                     error_holder[0] = getattr(event.data, 'message', 'Unknown error')
                     done_event.set()
 
-            # Clear any existing handlers and register fresh one
-            # This prevents handler accumulation when session is reused
-            if hasattr(session, '_event_handlers'):
-                session._event_handlers.clear()
-            session.on(handle_event)
+            # Register a per-turn handler and unsubscribe when the turn finishes.
+            session_subscription = session.on(handle_event)
 
             # Send message and wait
-            with _suppress_subprocess_stderr():
-                response = await session.send_and_wait(prompt)
+            try:
+                with _suppress_subprocess_stderr():
+                    await session.send(prompt)
+
+                overall_deadline = loop.time() + _COPILOT_MAX_RESPONSE_SECONDS
+                while not done_event.is_set():
+                    remaining = overall_deadline - loop.time()
+                    if remaining <= 0:
+                        raise TimeoutError(
+                            f"Timeout after {_COPILOT_MAX_RESPONSE_SECONDS:.1f}s waiting for session.idle"
+                        )
+
+                    try:
+                        await asyncio.wait_for(
+                            done_event.wait(),
+                            timeout=min(_COPILOT_ACTIVITY_TIMEOUT_SECONDS, remaining),
+                        )
+                    except TimeoutError as timeout_exc:
+                        idle_for = loop.time() - last_activity_at
+                        if idle_for >= _COPILOT_ACTIVITY_TIMEOUT_SECONDS:
+                            raise TimeoutError(
+                                f"Timeout after {_COPILOT_ACTIVITY_TIMEOUT_SECONDS:.1f}s "
+                                "without Copilot session activity"
+                            ) from timeout_exc
+
+                response = response_event[0]
+            except Exception as e:
+                recent_event_list = list(recent_events)
+                log_copilot_error(
+                    streaming_logger,
+                    e,
+                    operation="Copilot response",
+                    recent_events=recent_event_list,
+                    context={
+                        "model": model,
+                        "working_directory": working_directory,
+                        "session_id": getattr(copilot_manager, "session_id", None),
+                        "mcp_enabled": bool(settings.mcp.enabled and settings.mcp.servers),
+                    },
+                )
+                raise RuntimeError(
+                    summarize_copilot_exception(
+                        e,
+                        recent_events=recent_event_list,
+                        operation="Copilot response",
+                    )
+                ) from e
 
             # Extract content if events didn't capture it
             if not content_parts and response:
@@ -648,7 +723,26 @@ def stream_copilot_response_sync(
                     content_parts = [response.content]
 
             if error_holder[0]:
-                raise RuntimeError(f"Session error: {error_holder[0]}")
+                recent_event_list = list(recent_events)
+                session_error = RuntimeError(error_holder[0])
+                log_copilot_error(
+                    streaming_logger,
+                    session_error,
+                    operation="Copilot response",
+                    recent_events=recent_event_list,
+                    context={
+                        "model": model,
+                        "working_directory": working_directory,
+                        "session_id": getattr(copilot_manager, "session_id", None),
+                    },
+                )
+                raise RuntimeError(
+                    summarize_copilot_exception(
+                        session_error,
+                        recent_events=recent_event_list,
+                        operation="Copilot response",
+                    )
+                ) from session_error
 
             current_response = "".join(content_parts)
             last_input_tokens = usage_data.get("input_tokens", 0)
@@ -697,6 +791,8 @@ def stream_copilot_response_sync(
             )
 
         finally:
+            if session_subscription is not None:
+                session_subscription()
             stop_loading()
             set_notify_callback(None)
             set_tool_call_callback(None)
