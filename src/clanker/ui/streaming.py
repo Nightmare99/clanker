@@ -586,10 +586,11 @@ def stream_copilot_response_sync(
             error_holder = [None]  # Use list to allow mutation in nested function
             loop = asyncio.get_running_loop()
             last_activity_at = loop.time()
+            tool_executing = False  # Track if a tool is currently running
             session_subscription = None
 
             def handle_event(event):
-                nonlocal last_activity_at
+                nonlocal last_activity_at, tool_executing
                 last_activity_at = loop.time()
                 event_type = event.type.value if hasattr(event.type, 'value') else str(event.type)
                 recent_events.append(summarize_sdk_event(event_type, getattr(event, "data", None)))
@@ -628,6 +629,7 @@ def stream_copilot_response_sync(
                     if copilot_usage:
                         usage_data['copilot_usage'] = copilot_usage
                 elif event_type == "tool.execution_start":
+                    tool_executing = True
                     tool_name = getattr(event.data, 'tool_name', None) or getattr(event.data, 'toolName', 'unknown')
                     arguments = (
                         getattr(event.data, 'arguments', None) or
@@ -647,6 +649,7 @@ def stream_copilot_response_sync(
                         except Exception:
                             pass
                 elif event_type == "tool.execution_complete":
+                    tool_executing = False
                     tool_name = getattr(event.data, 'tool_name', None) or getattr(event.data, 'toolName', 'unknown')
                     result = getattr(event.data, 'result', None)
                     result_str = normalize_tool_output(result)
@@ -688,7 +691,8 @@ def stream_copilot_response_sync(
                             )
                         except TimeoutError as timeout_exc:
                             idle_for = loop.time() - last_activity_at
-                            if idle_for >= _COPILOT_ACTIVITY_TIMEOUT_SECONDS:
+                            # Skip activity timeout while tool is executing (tools can take a long time)
+                            if idle_for >= _COPILOT_ACTIVITY_TIMEOUT_SECONDS and not tool_executing:
                                 raise TimeoutError(
                                     f"Timeout after {_COPILOT_ACTIVITY_TIMEOUT_SECONDS:.1f}s "
                                     "without Copilot session activity"
