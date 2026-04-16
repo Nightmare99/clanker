@@ -26,11 +26,34 @@ _COPILOT_ACTIVITY_TIMEOUT_SECONDS = 60.0
 _COPILOT_MAX_RESPONSE_SECONDS = 900.0
 
 
+def _asyncio_exception_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+    """Custom exception handler to suppress expected cleanup errors.
+
+    When Ctrl+C is pressed, the Copilot subprocess exits and asyncio callbacks
+    may try to set exceptions on already-done Futures. This is expected and
+    should not pollute the console.
+    """
+    exception = context.get("exception")
+    message = context.get("message", "")
+
+    # Suppress InvalidStateError during cleanup (Future already done/cancelled)
+    if isinstance(exception, asyncio.InvalidStateError):
+        return
+
+    # Suppress ProcessExited with code 0 (clean exit)
+    if "ProcessExited" in message and "code 0" in message:
+        return
+
+    # For other exceptions, use default handling
+    loop.default_exception_handler(context)
+
+
 def _get_or_create_loop() -> asyncio.AbstractEventLoop:
     """Get or create a persistent event loop for the session."""
     global _persistent_loop
     if _persistent_loop is None or _persistent_loop.is_closed():
         _persistent_loop = asyncio.new_event_loop()
+        _persistent_loop.set_exception_handler(_asyncio_exception_handler)
         asyncio.set_event_loop(_persistent_loop)
     return _persistent_loop
 
