@@ -40,9 +40,23 @@ def _asyncio_exception_handler(loop: asyncio.AbstractEventLoop, context: dict) -
     if isinstance(exception, asyncio.InvalidStateError):
         return
 
+    # Suppress CancelledError (expected on Ctrl+C)
+    if isinstance(exception, asyncio.CancelledError):
+        return
+
     # Suppress ProcessExited with code 0 (clean exit)
     if "ProcessExited" in message and "code 0" in message:
         return
+
+    # Suppress "Task exception was never retrieved" for our streaming tasks
+    if "Task exception was never retrieved" in message:
+        # Check if it's from our streaming code
+        future = context.get("future")
+        if future and hasattr(future, "get_coro"):
+            coro = future.get_coro()
+            coro_name = getattr(coro, "__qualname__", "")
+            if "_stream_copilot_async" in coro_name or "_stream_async" in coro_name:
+                return
 
     # For other exceptions, use default handling
     loop.default_exception_handler(context)
@@ -242,7 +256,7 @@ def stream_agent_response_sync(
                                 if tool_name == "run" and not is_yolo_mode():
                                     continue
                                 # Skip notify - the tool itself handles display
-                                if tool_name == "notify":
+                                if tool_name.lower() == "notify":
                                     continue
                                 # Show tool immediately for proper interleaving
                                 tool_handler.show_tool(tool_name, tool_input)
@@ -250,7 +264,7 @@ def stream_agent_response_sync(
                     # Show tool result
                     elif event_type == "on_tool_end":
                         tool_name_end = event.get("name", "")
-                        if tool_name_end == "notify":
+                        if tool_name_end.lower() == "notify":
                             start_loading()
                             continue
                         # Show tool output
@@ -610,6 +624,7 @@ def stream_copilot_response_sync(
             loop = asyncio.get_running_loop()
             last_activity_at = loop.time()
             tool_executing = False  # Track if a tool is currently running
+            tool_call_names: dict[str, str] = {}  # Map toolCallId -> toolName for completion lookup
             session_subscription = None
 
             def handle_event(event):
@@ -654,6 +669,9 @@ def stream_copilot_response_sync(
                 elif event_type == "tool.execution_start":
                     tool_executing = True
                     tool_name = getattr(event.data, 'tool_name', None) or getattr(event.data, 'toolName', 'unknown')
+                    tool_call_id = getattr(event.data, 'tool_call_id', None) or getattr(event.data, 'toolCallId', None)
+                    if tool_call_id:
+                        tool_call_names[tool_call_id] = tool_name
                     arguments = (
                         getattr(event.data, 'arguments', None) or
                         getattr(event.data, 'toolArgs', None) or
@@ -673,7 +691,11 @@ def stream_copilot_response_sync(
                             pass
                 elif event_type == "tool.execution_complete":
                     tool_executing = False
-                    tool_name = getattr(event.data, 'tool_name', None) or getattr(event.data, 'toolName', 'unknown')
+                    # Look up tool name from execution_start (completion event doesn't include toolName)
+                    tool_call_id = getattr(event.data, 'tool_call_id', None) or getattr(event.data, 'toolCallId', None)
+                    tool_name = tool_call_names.pop(tool_call_id, None) if tool_call_id else None
+                    if not tool_name:
+                        tool_name = getattr(event.data, 'tool_name', None) or getattr(event.data, 'toolName', 'unknown')
                     result = getattr(event.data, 'result', None)
                     result_str = normalize_tool_output(result)
 
@@ -694,6 +716,7 @@ def stream_copilot_response_sync(
 
             # Send message and wait (with auto-resume on session expiry)
             max_retries = 2
+            interrupted = False
             for attempt in range(max_retries):
                 try:
                     with _suppress_subprocess_stderr():
@@ -712,6 +735,10 @@ def stream_copilot_response_sync(
                                 done_event.wait(),
                                 timeout=min(_COPILOT_ACTIVITY_TIMEOUT_SECONDS, remaining),
                             )
+                        except asyncio.CancelledError:
+                            # Ctrl+C during wait - abort gracefully
+                            interrupted = True
+                            raise
                         except TimeoutError as timeout_exc:
                             idle_for = loop.time() - last_activity_at
                             # Skip activity timeout while tool is executing (tools can take a long time)
@@ -723,6 +750,17 @@ def stream_copilot_response_sync(
 
                     response = response_event[0]
                     break  # Success, exit retry loop
+
+                except (KeyboardInterrupt, asyncio.CancelledError):
+                    # Gracefully abort the SDK turn on interrupt
+                    interrupted = True
+                    try:
+                        if hasattr(session, 'abort'):
+                            await session.abort()
+                    except Exception:
+                        pass
+                    done_event.set()  # Ensure we exit cleanly
+                    raise
 
                 except Exception as e:
                     # Check if this is a session expiry error and we can retry
