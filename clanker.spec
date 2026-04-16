@@ -107,6 +107,8 @@ a = Analysis(
         'aiosqlite',
         # SSL certificates for packaged binary
         'certifi',
+        # PDF reading support
+        'pypdf',
         # GitHub Copilot SDK - explicit imports (v0.2.0)
         'copilot',
         'copilot.types',

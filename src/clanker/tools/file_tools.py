@@ -2,6 +2,7 @@
 
 from itertools import islice
 from pathlib import Path
+from typing import Optional
 
 from langchain.tools import tool
 
@@ -16,6 +17,105 @@ logger = get_logger("tools.file")
 # Constants
 MAX_LINES_DEFAULT = 2000
 MAX_LINE_LENGTH = 2000
+MAX_PDF_PAGES_PER_REQUEST = 20
+
+
+def _parse_page_range(pages: str, total_pages: int) -> list[int]:
+    """Parse a page range string into a list of page numbers (0-indexed).
+
+    Args:
+        pages: Page range string like "1-5", "3", "1,3,5", or "1-3,7-9"
+        total_pages: Total number of pages in the PDF
+
+    Returns:
+        List of 0-indexed page numbers
+    """
+    result = []
+    for part in pages.split(","):
+        part = part.strip()
+        if "-" in part:
+            start, end = part.split("-", 1)
+            start_idx = max(0, int(start.strip()) - 1)
+            end_idx = min(total_pages, int(end.strip()))
+            result.extend(range(start_idx, end_idx))
+        else:
+            page_num = int(part.strip()) - 1
+            if 0 <= page_num < total_pages:
+                result.append(page_num)
+    return sorted(set(result))
+
+
+def _read_pdf(path: Path, pages: Optional[str] = None) -> dict:
+    """Read text content from a PDF file.
+
+    Args:
+        path: Path to the PDF file
+        pages: Optional page range (e.g., "1-5", "3", "1,3,5-7")
+
+    Returns:
+        Dict with ok status and content or error
+    """
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return {"ok": False, "error": "PDF support requires pypdf. Install with: pip install pypdf"}
+
+    try:
+        reader = PdfReader(path)
+        total_pages = len(reader.pages)
+
+        if total_pages == 0:
+            return {"ok": True, "content": "(empty PDF)", "path": str(path), "pages": 0}
+
+        # Determine which pages to read
+        if pages:
+            page_indices = _parse_page_range(pages, total_pages)
+            if not page_indices:
+                return {"ok": False, "error": f"Invalid page range: {pages}. PDF has {total_pages} pages."}
+            if len(page_indices) > MAX_PDF_PAGES_PER_REQUEST:
+                return {
+                    "ok": False,
+                    "error": f"Too many pages requested ({len(page_indices)}). Maximum is {MAX_PDF_PAGES_PER_REQUEST} pages per request."
+                }
+        else:
+            # Without page range, only allow small PDFs
+            if total_pages > 10:
+                return {
+                    "ok": False,
+                    "error": f"PDF has {total_pages} pages. For large PDFs, specify a page range with the 'pages' parameter (e.g., pages='1-5'). Maximum {MAX_PDF_PAGES_PER_REQUEST} pages per request.",
+                    "path": str(path),
+                    "total_pages": total_pages,
+                }
+            page_indices = list(range(total_pages))
+
+        # Extract text from selected pages
+        content_parts = []
+        for idx in page_indices:
+            page = reader.pages[idx]
+            text = page.extract_text() or ""
+            if text.strip():
+                content_parts.append(f"--- Page {idx + 1} ---\n{text}")
+
+        if not content_parts:
+            return {
+                "ok": True,
+                "content": "(no extractable text in selected pages)",
+                "path": str(path),
+                "pages_read": len(page_indices),
+                "total_pages": total_pages,
+            }
+
+        return {
+            "ok": True,
+            "content": "\n\n".join(content_parts),
+            "path": str(path),
+            "pages_read": len(page_indices),
+            "total_pages": total_pages,
+        }
+
+    except Exception as e:
+        logger.error("Error reading PDF %s: %s", path, e)
+        return {"ok": False, "error": f"Error reading PDF: {e}"}
 
 
 def _validate_path(path: str, *, for_write: bool = False) -> Path:
@@ -29,8 +129,24 @@ def _validate_path(path: str, *, for_write: bool = False) -> Path:
 
 
 @tool
-def read_file(file_path: str, offset: int = 0, limit: int = MAX_LINES_DEFAULT) -> dict:
-    """Read contents of a file with line numbers."""
+def read_file(
+    file_path: str,
+    offset: int = 0,
+    limit: int = MAX_LINES_DEFAULT,
+    pages: Optional[str] = None,
+) -> dict:
+    """Read contents of a file with line numbers.
+
+    For PDF files, extracts text content. Use the 'pages' parameter to specify
+    which pages to read (e.g., "1-5", "3", "1,3,5-7"). Large PDFs (>10 pages)
+    require the pages parameter.
+
+    Args:
+        file_path: Path to the file to read
+        offset: Line offset for text files (ignored for PDFs)
+        limit: Maximum lines to read for text files (ignored for PDFs)
+        pages: Page range for PDFs (e.g., "1-5", "3", "1,3,5-7")
+    """
     logger.info("Reading file: %s (offset=%d, limit=%d)", file_path, offset, limit)
     try:
         path = _validate_path(file_path)
@@ -49,6 +165,12 @@ def read_file(file_path: str, offset: int = 0, limit: int = MAX_LINES_DEFAULT) -
     if path.stat().st_size > settings.safety.max_file_size:
         return {"ok": False, "error": "File too large", "path": file_path}
 
+    # Handle PDF files
+    if path.suffix.lower() == ".pdf":
+        logger.info("Reading PDF file: %s (pages=%s)", file_path, pages)
+        return _read_pdf(path, pages)
+
+    # Handle regular text files
     lines_out = []
     total_read = 0
     try:
@@ -57,7 +179,7 @@ def read_file(file_path: str, offset: int = 0, limit: int = MAX_LINES_DEFAULT) -
                 total_read += 1
                 if len(line) > MAX_LINE_LENGTH:
                     line = line[: MAX_LINE_LENGTH - 3] + "..."
-                lines_out.append(f"{idx:6}\t{line.rstrip()}" )
+                lines_out.append(f"{idx:6}\t{line.rstrip()}")
     except OSError as e:
         return {"ok": False, "error": f"Error reading file: {e}"}
 
