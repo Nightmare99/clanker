@@ -95,6 +95,7 @@ Thumbs.db
 
 # Project specific
 .clanker/
+.remember/
 
 # Node modules
 web-ui/node_modules/

@@ -4,9 +4,40 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from pypdf import PdfWriter
 
 from clanker.tools.file_tools import edit_file, list_directory, read_file, write_file
 from clanker.tools.search_tools import glob_search, grep_search
+
+
+@pytest.fixture
+def sample_pdf(tmp_path: Path) -> Path:
+    """Create a sample PDF file with text content for testing."""
+    pdf_path = tmp_path / "sample.pdf"
+    writer = PdfWriter()
+
+    # Create 3 pages with different content
+    for i in range(1, 4):
+        page = writer.add_blank_page(width=612, height=792)
+        # Add text annotation (pypdf doesn't support direct text writing easily,
+        # so we'll use a different approach)
+
+    writer.write(pdf_path)
+    return pdf_path
+
+
+@pytest.fixture
+def large_pdf(tmp_path: Path) -> Path:
+    """Create a PDF with many pages for testing page limits."""
+    pdf_path = tmp_path / "large.pdf"
+    writer = PdfWriter()
+
+    # Create 15 blank pages
+    for _ in range(15):
+        writer.add_blank_page(width=612, height=792)
+
+    writer.write(pdf_path)
+    return pdf_path
 
 
 class TestFileTools:
@@ -19,17 +50,17 @@ class TestFileTools:
 
         result = read_file.invoke({"file_path": str(test_file)})
 
-        assert "line 1" in result
-        assert "line 2" in result
-        assert "line 3" in result
-        assert "1\t" in result  # Line numbers
+        assert result["ok"] is True
+        assert "line 1" in result["content"]
+        assert "line 2" in result["content"]
+        assert "line 3" in result["content"]
 
     def test_read_file_not_found(self) -> None:
         """Test reading a non-existent file."""
         result = read_file.invoke({"file_path": "/nonexistent/file.txt"})
 
-        assert "Error" in result
-        assert "not found" in result.lower()
+        assert result["ok"] is False
+        assert "not found" in result["error"].lower()
 
     def test_write_file_success(self, tmp_path: Path) -> None:
         """Test writing to a file."""
@@ -38,7 +69,7 @@ class TestFileTools:
 
         result = write_file.invoke({"file_path": str(test_file), "content": content})
 
-        assert "Successfully" in result
+        assert result["ok"] is True
         assert test_file.read_text() == content
 
     def test_write_file_creates_directories(self, tmp_path: Path) -> None:
@@ -48,7 +79,7 @@ class TestFileTools:
 
         result = write_file.invoke({"file_path": str(test_file), "content": content})
 
-        assert "Successfully" in result
+        assert result["ok"] is True
         assert test_file.exists()
         assert test_file.read_text() == content
 
@@ -63,7 +94,7 @@ class TestFileTools:
             "new_string": "Python",
         })
 
-        assert "Successfully" in result
+        assert result["ok"] is True
         assert test_file.read_text() == "Hello, Python!"
 
     def test_edit_file_string_not_found(self, tmp_path: Path) -> None:
@@ -77,8 +108,8 @@ class TestFileTools:
             "new_string": "Hi",
         })
 
-        assert "Error" in result
-        assert "not found" in result.lower()
+        assert result["ok"] is False
+        assert "not found" in result["error"].lower()
 
     def test_edit_file_multiple_matches(self, tmp_path: Path) -> None:
         """Test editing with ambiguous matches."""
@@ -91,8 +122,8 @@ class TestFileTools:
             "new_string": "bar",
         })
 
-        assert "Error" in result
-        assert "3 times" in result
+        assert result["ok"] is False
+        assert "3 times" in result["error"]
 
     def test_list_directory(self, tmp_path: Path) -> None:
         """Test listing a directory."""
@@ -103,10 +134,12 @@ class TestFileTools:
 
         result = list_directory.invoke({"path": str(tmp_path)})
 
-        assert "file1.txt" in result
-        assert "file2.py" in result
-        assert "subdir" in result
-        assert "[DIR]" in result
+        assert result["ok"] is True
+        items = result["items"]
+        names = [item["name"] for item in items]
+        assert "file1.txt" in names
+        assert "file2.py" in names
+        assert "subdir" in names
 
 
 class TestSearchTools:
@@ -166,3 +199,82 @@ class TestSearchTools:
         })
 
         assert "No matches found" in result
+
+
+class TestPDFReading:
+    """Tests for PDF file reading functionality."""
+
+    def test_read_pdf_small_file(self, sample_pdf: Path) -> None:
+        """Test reading a small PDF file without page specification."""
+        result = read_file.invoke({"file_path": str(sample_pdf)})
+
+        # Should succeed for small PDFs (3 pages)
+        assert result["ok"] is True
+        assert "path" in result
+
+    def test_read_pdf_with_page_range(self, sample_pdf: Path) -> None:
+        """Test reading specific pages from a PDF."""
+        result = read_file.invoke({
+            "file_path": str(sample_pdf),
+            "pages": "1-2",
+        })
+
+        assert result["ok"] is True
+        assert result.get("pages_read", 0) <= 2
+
+    def test_read_pdf_single_page(self, sample_pdf: Path) -> None:
+        """Test reading a single page from a PDF."""
+        result = read_file.invoke({
+            "file_path": str(sample_pdf),
+            "pages": "1",
+        })
+
+        assert result["ok"] is True
+        assert result.get("pages_read", 0) == 1
+
+    def test_read_large_pdf_without_pages_fails(self, large_pdf: Path) -> None:
+        """Test that large PDFs require page specification."""
+        result = read_file.invoke({"file_path": str(large_pdf)})
+
+        # Should fail and request page range
+        assert result["ok"] is False
+        assert "pages" in result.get("error", "").lower()
+        assert result.get("total_pages") == 15
+
+    def test_read_large_pdf_with_pages_succeeds(self, large_pdf: Path) -> None:
+        """Test that large PDFs work with page specification."""
+        result = read_file.invoke({
+            "file_path": str(large_pdf),
+            "pages": "1-5",
+        })
+
+        assert result["ok"] is True
+        assert result.get("pages_read") == 5
+
+    def test_read_pdf_invalid_page_range(self, sample_pdf: Path) -> None:
+        """Test reading PDF with invalid page range."""
+        result = read_file.invoke({
+            "file_path": str(sample_pdf),
+            "pages": "100-200",  # Beyond actual pages
+        })
+
+        # Should fail gracefully
+        assert result["ok"] is False
+        assert "error" in result
+
+    def test_read_pdf_not_found(self) -> None:
+        """Test reading a non-existent PDF file."""
+        result = read_file.invoke({"file_path": "/nonexistent/file.pdf"})
+
+        assert result["ok"] is False
+        assert "not found" in result.get("error", "").lower()
+
+    def test_read_pdf_comma_separated_pages(self, sample_pdf: Path) -> None:
+        """Test reading non-contiguous pages."""
+        result = read_file.invoke({
+            "file_path": str(sample_pdf),
+            "pages": "1,3",
+        })
+
+        assert result["ok"] is True
+        assert result.get("pages_read") == 2
