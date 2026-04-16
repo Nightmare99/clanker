@@ -1,5 +1,7 @@
 """File operation tools for reading, writing, and editing files."""
 
+import base64
+import io
 from itertools import islice
 from pathlib import Path
 from typing import Optional
@@ -18,6 +20,53 @@ logger = get_logger("tools.file")
 MAX_LINES_DEFAULT = 2000
 MAX_LINE_LENGTH = 2000
 MAX_PDF_PAGES_PER_REQUEST = 20
+MAX_IMAGE_DIMENSION = 1024  # Max width/height for PDF page images
+
+
+def _render_pdf_pages_as_images(path: Path, page_indices: list[int]) -> list[dict]:
+    """Render PDF pages as base64-encoded PNG images.
+
+    Args:
+        path: Path to the PDF file
+        page_indices: List of 0-indexed page numbers to render
+
+    Returns:
+        List of dicts with page number, base64 data, and mime type.
+        Returns empty list if pdf2image is not available.
+    """
+    try:
+        from pdf2image import convert_from_path
+    except ImportError:
+        logger.debug("pdf2image not available for PDF image rendering")
+        return []
+
+    images = []
+    try:
+        # Convert specified pages (pdf2image uses 1-indexed pages)
+        for idx in page_indices:
+            page_images = convert_from_path(
+                path,
+                first_page=idx + 1,
+                last_page=idx + 1,
+                size=(MAX_IMAGE_DIMENSION, None),  # Limit width, maintain aspect ratio
+            )
+            if page_images:
+                img = page_images[0]
+                # Convert to PNG bytes
+                buffer = io.BytesIO()
+                img.save(buffer, format="PNG", optimize=True)
+                buffer.seek(0)
+                b64_data = base64.b64encode(buffer.read()).decode("utf-8")
+                images.append({
+                    "page": idx + 1,
+                    "data": b64_data,
+                    "mime_type": "image/png",
+                })
+                logger.debug("Rendered page %d as image (%d bytes)", idx + 1, len(b64_data))
+    except Exception as e:
+        logger.warning("Error rendering PDF pages as images: %s", e)
+
+    return images
 
 
 def _parse_page_range(pages: str, total_pages: int) -> list[int]:
@@ -45,15 +94,16 @@ def _parse_page_range(pages: str, total_pages: int) -> list[int]:
     return sorted(set(result))
 
 
-def _read_pdf(path: Path, pages: Optional[str] = None) -> dict:
-    """Read text content from a PDF file.
+def _read_pdf(path: Path, pages: Optional[str] = None, include_images: bool = False) -> dict:
+    """Read text content and optionally images from a PDF file.
 
     Args:
         path: Path to the PDF file
         pages: Optional page range (e.g., "1-5", "3", "1,3,5-7")
+        include_images: Whether to render pages as images for visual analysis
 
     Returns:
-        Dict with ok status and content or error
+        Dict with ok status, content, and optionally images
     """
     try:
         from pypdf import PdfReader
@@ -96,22 +146,29 @@ def _read_pdf(path: Path, pages: Optional[str] = None) -> dict:
             if text.strip():
                 content_parts.append(f"--- Page {idx + 1} ---\n{text}")
 
-        if not content_parts:
-            return {
-                "ok": True,
-                "content": "(no extractable text in selected pages)",
-                "path": str(path),
-                "pages_read": len(page_indices),
-                "total_pages": total_pages,
-            }
-
-        return {
+        result = {
             "ok": True,
-            "content": "\n\n".join(content_parts),
             "path": str(path),
             "pages_read": len(page_indices),
             "total_pages": total_pages,
         }
+
+        if content_parts:
+            result["content"] = "\n\n".join(content_parts)
+        else:
+            result["content"] = "(no extractable text in selected pages)"
+
+        # Render pages as images if requested
+        if include_images:
+            images = _render_pdf_pages_as_images(path, page_indices)
+            if images:
+                result["images"] = images
+                logger.info("Rendered %d PDF pages as images", len(images))
+            else:
+                # Add note if images were requested but couldn't be rendered
+                result["images_note"] = "Image rendering not available. Install pdf2image and poppler for visual PDF analysis."
+
+        return result
 
     except Exception as e:
         logger.error("Error reading PDF %s: %s", path, e)
@@ -134,6 +191,7 @@ def read_file(
     offset: int = 0,
     limit: int = MAX_LINES_DEFAULT,
     pages: Optional[str] = None,
+    include_images: bool = False,
 ) -> dict:
     """Read contents of a file with line numbers.
 
@@ -141,11 +199,15 @@ def read_file(
     which pages to read (e.g., "1-5", "3", "1,3,5-7"). Large PDFs (>10 pages)
     require the pages parameter.
 
+    Set include_images=True for PDFs to render pages as images for visual
+    analysis (charts, diagrams, layouts). Requires pdf2image and poppler.
+
     Args:
         file_path: Path to the file to read
         offset: Line offset for text files (ignored for PDFs)
         limit: Maximum lines to read for text files (ignored for PDFs)
         pages: Page range for PDFs (e.g., "1-5", "3", "1,3,5-7")
+        include_images: For PDFs, render pages as images for visual analysis
     """
     logger.info("Reading file: %s (offset=%d, limit=%d)", file_path, offset, limit)
     try:
@@ -167,8 +229,8 @@ def read_file(
 
     # Handle PDF files
     if path.suffix.lower() == ".pdf":
-        logger.info("Reading PDF file: %s (pages=%s)", file_path, pages)
-        return _read_pdf(path, pages)
+        logger.info("Reading PDF file: %s (pages=%s, include_images=%s)", file_path, pages, include_images)
+        return _read_pdf(path, pages, include_images)
 
     # Handle regular text files
     lines_out = []

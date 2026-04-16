@@ -43,6 +43,8 @@ dependencies = [
     "github-copilot-sdk>=0.2.0,<0.2.1",
     "certifi>=2024.0.0",
     "pypdf>=4.0.0",
+    "pdf2image>=1.16.0",  # For PDF visual analysis (requires poppler)
+    "pillow>=10.0.0",  # For image processing
 ]
 
 [project.optional-dependencies]

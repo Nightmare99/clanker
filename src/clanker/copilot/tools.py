@@ -36,6 +36,61 @@ def normalize_tool_result(result: Any) -> str:
     return normalize_tool_output(result)
 
 
+def _format_result_for_copilot(result: dict) -> any:
+    """Format a tool result dict for Copilot SDK, handling images.
+
+    If the result contains images, returns a ToolResult with binary_results_for_llm
+    containing the image data.
+
+    Args:
+        result: Tool result dict, may contain 'images' key
+
+    Returns:
+        String for text-only results, or ToolResult for multimodal
+    """
+    import json
+
+    # Check if result has images
+    images = result.get("images", [])
+    if not images:
+        # No images, return as JSON string
+        return json.dumps(result)
+
+    # Build ToolResult with binary content for images
+    try:
+        from copilot.types import ToolResult, ToolBinaryResult
+    except ImportError:
+        # SDK types not available, fall back to string
+        logger.debug("Copilot SDK types not available, returning text-only result")
+        result_copy = {k: v for k, v in result.items() if k != "images"}
+        result_copy["images_count"] = len(images)
+        result_copy["images_note"] = "Images extracted but cannot be displayed (SDK types unavailable)"
+        return json.dumps(result_copy)
+
+    # Build text result (without images)
+    text_result = {k: v for k, v in result.items() if k != "images"}
+    text_result["images_count"] = len(images)
+
+    # Build binary results for images
+    binary_results = []
+    for img in images:
+        try:
+            binary_results.append(ToolBinaryResult(
+                data=img["data"],
+                mime_type=img.get("mime_type", "image/png"),
+                type="image",
+                description=f"PDF page {img.get('page', '?')}",
+            ))
+            logger.debug("Added image binary result for page %s", img.get("page", "?"))
+        except Exception as e:
+            logger.warning("Failed to add image binary result: %s", e)
+
+    return ToolResult(
+        text_result_for_llm=json.dumps(text_result),
+        binary_results_for_llm=binary_results if binary_results else None,
+    )
+
+
 def convert_langchain_tools_to_copilot(tools: list) -> list:
     """Convert LangChain tools to Copilot tool format.
 
@@ -82,6 +137,10 @@ def convert_langchain_tools_to_copilot(tools: list) -> list:
 
                     # Always use ainvoke since we're in async context
                     result = await t.ainvoke(args)
+
+                    # Handle dict results that may contain images
+                    if isinstance(result, dict):
+                        return _format_result_for_copilot(result)
 
                     result_str = str(result)
                     logger.debug("Tool %s result length: %d", t.name, len(result_str))

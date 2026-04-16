@@ -109,6 +109,9 @@ a = Analysis(
         'certifi',
         # PDF reading support
         'pypdf',
+        'pdf2image',
+        'PIL',
+        'PIL.Image',
         # GitHub Copilot SDK - explicit imports (v0.2.0)
         'copilot',
         'copilot.types',
@@ -133,7 +136,6 @@ a = Analysis(
         # GUI/plotting - not needed
         'tkinter',
         'matplotlib',
-        'PIL',
         # Heavy ML libraries - not needed for markdown-based memories
         'torch',
         'torchvision',
