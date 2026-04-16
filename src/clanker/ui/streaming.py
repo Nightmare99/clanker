@@ -666,54 +666,83 @@ def stream_copilot_response_sync(
             # Register a per-turn handler and unsubscribe when the turn finishes.
             session_subscription = session.on(handle_event)
 
-            # Send message and wait
-            try:
-                with _suppress_subprocess_stderr():
-                    await session.send(prompt)
+            # Send message and wait (with auto-resume on session expiry)
+            max_retries = 2
+            for attempt in range(max_retries):
+                try:
+                    with _suppress_subprocess_stderr():
+                        await session.send(prompt)
 
-                overall_deadline = loop.time() + _COPILOT_MAX_RESPONSE_SECONDS
-                while not done_event.is_set():
-                    remaining = overall_deadline - loop.time()
-                    if remaining <= 0:
-                        raise TimeoutError(
-                            f"Timeout after {_COPILOT_MAX_RESPONSE_SECONDS:.1f}s waiting for session.idle"
-                        )
-
-                    try:
-                        await asyncio.wait_for(
-                            done_event.wait(),
-                            timeout=min(_COPILOT_ACTIVITY_TIMEOUT_SECONDS, remaining),
-                        )
-                    except TimeoutError as timeout_exc:
-                        idle_for = loop.time() - last_activity_at
-                        if idle_for >= _COPILOT_ACTIVITY_TIMEOUT_SECONDS:
+                    overall_deadline = loop.time() + _COPILOT_MAX_RESPONSE_SECONDS
+                    while not done_event.is_set():
+                        remaining = overall_deadline - loop.time()
+                        if remaining <= 0:
                             raise TimeoutError(
-                                f"Timeout after {_COPILOT_ACTIVITY_TIMEOUT_SECONDS:.1f}s "
-                                "without Copilot session activity"
-                            ) from timeout_exc
+                                f"Timeout after {_COPILOT_MAX_RESPONSE_SECONDS:.1f}s waiting for session.idle"
+                            )
 
-                response = response_event[0]
-            except Exception as e:
-                recent_event_list = list(recent_events)
-                log_copilot_error(
-                    streaming_logger,
-                    e,
-                    operation="Copilot response",
-                    recent_events=recent_event_list,
-                    context={
-                        "model": model,
-                        "working_directory": working_directory,
-                        "session_id": getattr(copilot_manager, "session_id", None),
-                        "mcp_enabled": bool(settings.mcp.enabled and settings.mcp.servers),
-                    },
-                )
-                raise RuntimeError(
-                    summarize_copilot_exception(
+                        try:
+                            await asyncio.wait_for(
+                                done_event.wait(),
+                                timeout=min(_COPILOT_ACTIVITY_TIMEOUT_SECONDS, remaining),
+                            )
+                        except TimeoutError as timeout_exc:
+                            idle_for = loop.time() - last_activity_at
+                            if idle_for >= _COPILOT_ACTIVITY_TIMEOUT_SECONDS:
+                                raise TimeoutError(
+                                    f"Timeout after {_COPILOT_ACTIVITY_TIMEOUT_SECONDS:.1f}s "
+                                    "without Copilot session activity"
+                                ) from timeout_exc
+
+                    response = response_event[0]
+                    break  # Success, exit retry loop
+
+                except Exception as e:
+                    # Check if this is a session expiry error and we can retry
+                    if attempt < max_retries - 1 and copilot_manager._is_session_expired_error(e):
+                        streaming_logger.warning(
+                            "Session appears expired, attempting auto-resume (attempt %d/%d)",
+                            attempt + 1, max_retries
+                        )
+                        stop_loading()
+
+                        # Try to resume the session
+                        if await copilot_manager.try_resume_expired_session():
+                            # Re-setup for retry
+                            session = copilot_manager.session
+                            if session_subscription:
+                                try:
+                                    session_subscription()  # Unsubscribe old
+                                except Exception:
+                                    pass
+                            content_parts.clear()
+                            done_event.clear()
+                            error_holder[0] = None
+                            session_subscription = session.on(handle_event)
+                            start_loading()
+                            continue  # Retry with resumed session
+
+                    # Not a retry-able error or retry failed
+                    recent_event_list = list(recent_events)
+                    log_copilot_error(
+                        streaming_logger,
                         e,
-                        recent_events=recent_event_list,
                         operation="Copilot response",
+                        recent_events=recent_event_list,
+                        context={
+                            "model": model,
+                            "working_directory": working_directory,
+                            "session_id": getattr(copilot_manager, "session_id", None),
+                            "mcp_enabled": bool(settings.mcp.enabled and settings.mcp.servers),
+                        },
                     )
-                ) from e
+                    raise RuntimeError(
+                        summarize_copilot_exception(
+                            e,
+                            recent_events=recent_event_list,
+                            operation="Copilot response",
+                        )
+                    ) from e
 
             # Extract content if events didn't capture it
             if not content_parts and response:
