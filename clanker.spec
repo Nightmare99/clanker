@@ -107,11 +107,9 @@ a = Analysis(
         'aiosqlite',
         # SSL certificates for packaged binary
         'certifi',
-        # PDF reading support
+        # PDF reading and rendering support
         'pypdf',
-        'pdf2image',
-        'PIL',
-        'PIL.Image',
+        'fitz',  # pymupdf
         # GitHub Copilot SDK - explicit imports (v0.2.0)
         'copilot',
         'copilot.types',
@@ -136,6 +134,7 @@ a = Analysis(
         # GUI/plotting - not needed
         'tkinter',
         'matplotlib',
+        'PIL',
         # Heavy ML libraries - not needed for markdown-based memories
         'torch',
         'torchvision',
