@@ -4,6 +4,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import SummarizationMiddleware
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
+from clanker.agent.middleware import multimodal_tool_results
 from clanker.agent.prompts import get_system_prompt
 from clanker.config import Settings, get_settings, get_default_model, create_llm_from_config
 from clanker.logging import get_logger
@@ -97,10 +98,12 @@ def create_agent_graph(
     )
 
     # Create agent with middleware
+    # - multimodal_tool_results: converts tool results with images to multimodal ToolMessages
+    # - summarization: handles context window management
     agent = create_agent(
         model=model,
         tools=all_tools,
-        middleware=[summarization],
+        middleware=[multimodal_tool_results, summarization],
         checkpointer=checkpointer,
         system_prompt=get_system_prompt(),
     )
@@ -155,10 +158,12 @@ async def create_agent_graph_async(
     )
 
     # Create agent with middleware
+    # - multimodal_tool_results: converts tool results with images to multimodal ToolMessages
+    # - summarization: handles context window management
     agent = create_agent(
         model=model,
         tools=tools,
-        middleware=[summarization],
+        middleware=[multimodal_tool_results, summarization],
         checkpointer=checkpointer,
         system_prompt=get_system_prompt(),
     )
