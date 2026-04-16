@@ -468,6 +468,52 @@ class CopilotSessionManager:
             raise ValueError("No active session. Call create_session first.")
         return await self._session.send_and_wait(prompt)
 
+    def _is_session_expired_error(self, error: Exception) -> bool:
+        """Check if an error indicates the session has expired/timed out."""
+        error_str = str(error).lower()
+        expired_indicators = [
+            "session not found",
+            "session expired",
+            "connection closed",
+            "connection reset",
+            "broken pipe",
+            "eof",
+            "disconnected",
+            "no longer connected",
+            "process exited",
+            "process terminated",
+        ]
+        return any(indicator in error_str for indicator in expired_indicators)
+
+    async def try_resume_expired_session(self) -> bool:
+        """Attempt to resume an expired session.
+
+        Returns:
+            True if session was successfully resumed, False otherwise.
+        """
+        if not self._session_id:
+            logger.warning("Cannot resume: no session ID stored")
+            return False
+
+        session_id = self._session_id
+        logger.info("Attempting to resume expired session: %s", session_id)
+
+        # Clear current session state
+        self._session = None
+        self._client = None  # Force new client since CLI may have died
+
+        try:
+            await self.resume_session(
+                session_id,
+                model=self._current_model,
+                tools=self._tools,
+            )
+            logger.info("Successfully resumed expired session: %s", session_id)
+            return True
+        except Exception as e:
+            logger.warning("Failed to resume expired session %s: %s", session_id, e)
+            return False
+
     async def cleanup(self) -> None:
         """Clean up the session manager."""
         if self._session is not None:
