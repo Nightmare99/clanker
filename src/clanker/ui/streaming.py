@@ -215,8 +215,8 @@ def stream_agent_response_sync(
                                 shown_tool_calls.add(run_id)
                                 tool_name = event.get("name", "unknown")
                                 tool_input = event.get("data", {}).get("input", {})
-                                # Skip bash display when approval is needed
-                                if tool_name == "bash" and not is_yolo_mode():
+                                # Skip run display when approval is needed
+                                if tool_name == "run" and not is_yolo_mode():
                                     continue
                                 # Skip notify - the tool itself handles display
                                 if tool_name == "notify":

@@ -1,6 +1,6 @@
 """Tool definitions for Clanker agent."""
 
-from clanker.tools.bash_tools import bash
+from clanker.tools.bash_tools import run
 from clanker.tools.file_tools import (
     append_file,
     edit_file,
@@ -21,7 +21,7 @@ ALL_TOOLS = [
     append_file,
     edit_file,
     list_directory,
-    bash,
+    run,
     glob_search,
     grep_search,
     # Communication tools
@@ -41,7 +41,7 @@ __all__ = [
     "append_file",
     "edit_file",
     "list_directory",
-    "bash",
+    "run",
     "glob_search",
     "grep_search",
     "notify",
