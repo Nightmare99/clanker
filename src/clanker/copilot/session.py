@@ -331,6 +331,13 @@ class CopilotSessionManager:
         client = await self.ensure_client()
         self._session_id = session_id
 
+        # If no tools provided, load default tools to ensure we override SDK built-ins
+        if tools is None and self._tools is None:
+            from clanker.tools import ALL_TOOLS
+            from clanker.copilot.tools import convert_langchain_tools_to_copilot
+            tools = convert_langchain_tools_to_copilot(list(ALL_TOOLS))
+            logger.info("Loaded %d default tools for session resume", len(tools))
+
         # Rebuild available_tools for resume
         available_tools: list[str] = []
         if tools:
