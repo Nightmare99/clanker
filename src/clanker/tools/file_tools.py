@@ -26,43 +26,50 @@ MAX_IMAGE_DIMENSION = 1024  # Max width/height for PDF page images
 def _render_pdf_pages_as_images(path: Path, page_indices: list[int]) -> list[dict]:
     """Render PDF pages as base64-encoded PNG images.
 
+    Uses pymupdf (fitz) for rendering - no external dependencies required.
+
     Args:
         path: Path to the PDF file
         page_indices: List of 0-indexed page numbers to render
 
     Returns:
         List of dicts with page number, base64 data, and mime type.
-        Returns empty list if pdf2image is not available.
+        Returns empty list if pymupdf is not available.
     """
     try:
-        from pdf2image import convert_from_path
+        import fitz  # pymupdf
     except ImportError:
-        logger.debug("pdf2image not available for PDF image rendering")
+        logger.debug("pymupdf not available for PDF image rendering")
         return []
 
     images = []
     try:
-        # Convert specified pages (pdf2image uses 1-indexed pages)
+        doc = fitz.open(path)
         for idx in page_indices:
-            page_images = convert_from_path(
-                path,
-                first_page=idx + 1,
-                last_page=idx + 1,
-                size=(MAX_IMAGE_DIMENSION, None),  # Limit width, maintain aspect ratio
-            )
-            if page_images:
-                img = page_images[0]
-                # Convert to PNG bytes
-                buffer = io.BytesIO()
-                img.save(buffer, format="PNG", optimize=True)
-                buffer.seek(0)
-                b64_data = base64.b64encode(buffer.read()).decode("utf-8")
-                images.append({
-                    "page": idx + 1,
-                    "data": b64_data,
-                    "mime_type": "image/png",
-                })
-                logger.debug("Rendered page %d as image (%d bytes)", idx + 1, len(b64_data))
+            if idx >= len(doc):
+                continue
+            page = doc[idx]
+
+            # Calculate zoom to limit max dimension while maintaining aspect ratio
+            rect = page.rect
+            scale = min(MAX_IMAGE_DIMENSION / rect.width, MAX_IMAGE_DIMENSION / rect.height, 2.0)
+            matrix = fitz.Matrix(scale, scale)
+
+            # Render page to pixmap
+            pix = page.get_pixmap(matrix=matrix)
+
+            # Convert to PNG bytes
+            png_data = pix.tobytes("png")
+            b64_data = base64.b64encode(png_data).decode("utf-8")
+
+            images.append({
+                "page": idx + 1,
+                "data": b64_data,
+                "mime_type": "image/png",
+            })
+            logger.debug("Rendered page %d as image (%d bytes)", idx + 1, len(b64_data))
+
+        doc.close()
     except Exception as e:
         logger.warning("Error rendering PDF pages as images: %s", e)
 
