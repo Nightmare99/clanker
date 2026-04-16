@@ -6,6 +6,7 @@ from typing import Callable
 class ToolDisplayHandler:
     """Handles tool call and result display consistently across providers."""
 
+    # Tools that handle their own display - check case-insensitively
     _DISPLAY_ONLY_TOOLS = {"notify"}
 
     def __init__(
@@ -44,7 +45,7 @@ class ToolDisplayHandler:
 
     def _is_display_only_tool(self, tool_name: str) -> bool:
         """Return True for tools that handle their own console output."""
-        return tool_name in self._DISPLAY_ONLY_TOOLS
+        return tool_name.lower() in self._DISPLAY_ONLY_TOOLS
 
     def show_tool(self, tool_name: str, tool_input: dict, force: bool = False) -> bool:
         """Display a single tool call with details.
