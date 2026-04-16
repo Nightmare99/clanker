@@ -387,20 +387,33 @@ class CopilotSessionManager:
 
         Handles model switching and MCP server changes automatically.
         """
+        logger.info(
+            "get_or_create_session: session=%s, session_id=%s, mcp_servers_set=%s, current_model=%s, requested_model=%s",
+            self._session is not None, self._session_id, self._mcp_servers is not None, self._current_model, model
+        )
+
         if self._session is not None:
-            # Check if MCP servers changed - need to recreate session
-            mcp_changed = (mcp_servers is not None and self._mcp_servers != mcp_servers)
-            if mcp_changed:
-                logger.info("MCP servers changed, recreating session")
-                return await self.new_session(model, tools, system_message, mcp_servers)
+            # If _mcp_servers is None, session was just resumed via resume_session().
+            # Adopt the current MCP config without recreating the session.
+            if self._mcp_servers is None:
+                logger.info("Adopting MCP config for resumed session (session_id=%s)", self._session_id)
+                self._mcp_servers = mcp_servers or {}
+            else:
+                # Check if MCP servers changed - need to recreate session
+                mcp_changed = (mcp_servers is not None and self._mcp_servers != mcp_servers)
+                if mcp_changed:
+                    logger.info("MCP servers changed, recreating session")
+                    return await self.new_session(model, tools, system_message, mcp_servers)
 
             # Check if we need to switch models
             if model != self._current_model:
                 logger.info("Switching model from %s to %s", self._current_model, model)
                 await self.resume_session(self._session_id, model, tools)
 
+            logger.info("Returning existing session: %s", self._session_id)
             return self._session
 
+        logger.info("Creating new session (no existing session)")
         return await self.create_session(model, tools, system_message, mcp_servers)
 
     async def new_session(
