@@ -818,7 +818,11 @@ def run_copilot_interactive(
     if resume_session:
         try:
             loop.run_until_complete(
-                copilot_manager.resume_session(resume_session, model=get_copilot_model())
+                copilot_manager.resume_session(
+                    resume_session,
+                    model=get_copilot_model(),
+                    reasoning_effort=get_copilot_reasoning_effort(),
+                )
             )
             console.print_info(f"Resumed Copilot session: {resume_session}")
         except Exception as e:
@@ -861,7 +865,11 @@ def run_copilot_interactive(
                     session_id = result.split(":", 1)[1]
                     try:
                         loop.run_until_complete(
-                            copilot_manager.resume_session(session_id, model=get_copilot_model())
+                            copilot_manager.resume_session(
+                                session_id,
+                                model=get_copilot_model(),
+                                reasoning_effort=get_copilot_reasoning_effort(),
+                            )
                         )
                         console.print_info(f"Restored Copilot session: {session_id}")
                     except Exception as e:
