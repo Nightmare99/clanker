@@ -38,6 +38,9 @@ from clanker.runtime import (
     set_copilot_mode,
     is_copilot_mode,
     set_copilot_model,
+    get_copilot_reasoning_effort,
+    parse_model_selection,
+    format_model_display,
     get_copilot_model,
 )
 
@@ -85,43 +88,76 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
         parts = command.strip().split(maxsplit=1)
 
         if is_copilot_mode():
-            # Copilot mode: only show Copilot models
+            # Copilot mode: show models with reasoning effort variants
             copilot_models = []
             try:
-                from clanker.providers.github_copilot import list_copilot_models
+                from clanker.copilot.client import list_models as list_copilot_models_async
                 import asyncio
                 from clanker.ui.streaming import _get_or_create_loop
                 loop = _get_or_create_loop()
-                copilot_models = loop.run_until_complete(list_copilot_models())
+                # Expand reasoning efforts to show all variants
+                copilot_models = loop.run_until_complete(list_copilot_models_async(expand_reasoning_efforts=True))
             except Exception as e:
                 logger.debug("Failed to list Copilot models: %s", e)
 
             if len(parts) == 1:
-                # Show available Copilot models
+                # Show available Copilot models with reasoning effort variants
                 current_copilot_model = get_copilot_model()
-                console.print_info(f"Current model: {current_copilot_model}")
+                current_effort = get_copilot_reasoning_effort()
+                current_display = format_model_display(current_copilot_model, current_effort)
+                console.print_info(f"Current model: {current_display}")
 
                 if copilot_models:
                     console.print_info("\nAvailable Copilot models:")
                     for m in copilot_models:
-                        marker = " *" if current_copilot_model == m['id'] else ""
-                        console.print(f"  [green]{m['id']}[/green] ({m['name']}){marker}")
+                        display_id = m.get('display_id', m['id'])
+                        is_current = (m['id'] == current_copilot_model and
+                                     m.get('reasoning_effort') == current_effort)
+                        marker = " *" if is_current else ""
+                        # Show reasoning indicator for models with reasoning effort
+                        if m.get('reasoning_effort'):
+                            console.print(f"  [green]{display_id}[/green]{marker}")
+                        else:
+                            # Show capabilities for base models
+                            caps = []
+                            if m.get('capabilities', {}).get('reasoning'):
+                                caps.append("reasoning")
+                            if m.get('capabilities', {}).get('vision'):
+                                caps.append("vision")
+                            cap_str = f" ({', '.join(caps)})" if caps else ""
+                            console.print(f"  [green]{display_id}[/green]{cap_str}{marker}")
                     console.print_info("\nUse /model <model-id> to switch models.")
+                    console.print_info("For reasoning models, use: /model <model-id> (<effort>)")
+                    console.print_info("  e.g., /model claude-sonnet-4 (high)")
                 else:
                     console.print_warning("No Copilot models available.")
             else:
-                # Switch Copilot model
-                target_model = parts[1].strip()
+                # Switch Copilot model (with optional reasoning effort)
+                target_selection = parts[1].strip()
+                target_model, target_effort = parse_model_selection(target_selection)
+
                 # Validate model exists
                 valid_ids = [m['id'] for m in copilot_models]
-                if target_model in valid_ids or not copilot_models:
-                    # Use Copilot-specific model tracking (not BYOK config)
-                    set_copilot_model(target_model)
-                    console.print_success(f"Switched to Copilot model: {target_model}")
+                unique_model_ids = list(set(valid_ids))
+
+                if target_model in unique_model_ids or not copilot_models:
+                    # Check if reasoning effort is valid for this model
+                    model_info = next((m for m in copilot_models if m['id'] == target_model), None)
+                    supports_reasoning = model_info.get('capabilities', {}).get('reasoning', False) if model_info else False
+
+                    if target_effort and not supports_reasoning:
+                        console.print_warning(f"Model '{target_model}' does not support reasoning effort.")
+                        console.print_info("Switching without reasoning effort.")
+                        target_effort = None
+
+                    # Use Copilot-specific model tracking
+                    set_copilot_model(target_model, target_effort)
+                    display = format_model_display(target_model, target_effort)
+                    console.print_success(f"Switched to Copilot model: {display}")
                     console.print_info("Note: Model switch takes effect on next message.")
                 else:
                     console.print_warning(f"Model '{target_model}' not found.")
-                    console.print_info(f"Available: {', '.join(valid_ids)}")
+                    console.print_info(f"Available: {', '.join(unique_model_ids)}")
         else:
             # BYOK mode: only show configured models (no Copilot)
             model_names = list_model_names()
@@ -389,12 +425,12 @@ class CommandCompleter(Completer):
             model_prefix = text[7:]  # Remove "/model "
             try:
                 if is_copilot_mode():
-                    # Copilot mode: show Copilot models
+                    # Copilot mode: show Copilot models with reasoning effort variants
                     copilot_models = self._get_copilot_models()
                     for m in copilot_models:
-                        model_id = m['id']
-                        if model_id.lower().startswith(model_prefix.lower()):
-                            yield Completion(model_id, start_position=-len(model_prefix))
+                        display_id = m.get('display_id', m['id'])
+                        if display_id.lower().startswith(model_prefix.lower()):
+                            yield Completion(display_id, start_position=-len(model_prefix))
                 else:
                     # BYOK mode: show configured models
                     model_names = list_model_names()
@@ -411,17 +447,19 @@ class CommandCompleter(Completer):
                 yield Completion(cmd, start_position=-len(text))
 
     def _get_copilot_models(self) -> list:
-        """Get Copilot models with caching."""
+        """Get Copilot models with reasoning effort variants (cached)."""
         if self._copilot_models_cache is not None:
             return self._copilot_models_cache
 
         try:
-            from clanker.providers.github_copilot import is_copilot_available, list_copilot_models
+            from clanker.copilot.client import is_available as is_copilot_available
+            from clanker.copilot.client import list_models as list_copilot_models_async
             if is_copilot_available():
                 import asyncio
                 from clanker.ui.streaming import _get_or_create_loop
                 loop = _get_or_create_loop()
-                coro = list_copilot_models()
+                # Expand reasoning efforts to show all variants
+                coro = list_copilot_models_async(expand_reasoning_efforts=True)
                 try:
                     if loop.is_running():
                         # Can't use run_until_complete on running loop
@@ -711,7 +749,7 @@ def run_copilot_interactive(
         model_override: Optional model override from CLI.
     """
     from clanker.copilot.session import get_copilot_session_manager
-    from clanker.providers.github_copilot import list_copilot_models
+    from clanker.copilot.client import list_models as list_copilot_models_async
     from clanker.ui.streaming import stream_copilot_response_sync, _get_or_create_loop, cleanup_event_loop
 
     logger.info("Starting Copilot interactive mode")
@@ -724,9 +762,12 @@ def run_copilot_interactive(
     loop = _get_or_create_loop()
 
     # Pre-fetch Copilot models for autocomplete (before REPL loop starts)
+    # Use expand_reasoning_efforts=True to show model variants with reasoning levels
     completer = CommandCompleter()
     try:
-        completer._copilot_models_cache = loop.run_until_complete(list_copilot_models())
+        completer._copilot_models_cache = loop.run_until_complete(
+            list_copilot_models_async(expand_reasoning_efforts=True)
+        )
     except Exception as e:
         logger.debug("Failed to pre-fetch Copilot models for autocomplete: %s", e)
 
@@ -768,7 +809,7 @@ def run_copilot_interactive(
         complete_while_typing=True,
     )
 
-    console.print_welcome(copilot_model=get_copilot_model())
+    console.print_welcome(copilot_model=get_copilot_model(), copilot_reasoning_effort=get_copilot_reasoning_effort())
 
     # Token tracking
     token_tracker = SessionTokenTracker(model_name=get_copilot_model())
@@ -827,9 +868,11 @@ def run_copilot_interactive(
                         console.print_warning(f"Could not restore session: {e}")
                 continue
 
-            # Run agent with Copilot (use current Copilot model)
+            # Run agent with Copilot (use current Copilot model and reasoning effort)
             current_model = get_copilot_model()
-            logger.info("Processing user message (Copilot, model=%s): %s", current_model, user_input[:100] + "..." if len(user_input) > 100 else user_input)
+            current_effort = get_copilot_reasoning_effort()
+            logger.info("Processing user message (Copilot, model=%s, effort=%s): %s",
+                       current_model, current_effort, user_input[:100] + "..." if len(user_input) > 100 else user_input)
             console.rule()
             try:
                 result = stream_copilot_response_sync(
@@ -839,6 +882,7 @@ def run_copilot_interactive(
                     current_model,
                     working_dir,
                     console,
+                    reasoning_effort=current_effort,
                 )
 
                 # Track tokens
@@ -902,9 +946,12 @@ def run_copilot_single_prompt(
 
     # Set Copilot model from override or keep default
     if model_override:
-        set_copilot_model(model_override)
+        # Parse model override for potential reasoning effort
+        model_id, effort = parse_model_selection(model_override)
+        set_copilot_model(model_id, effort)
 
     current_model = get_copilot_model()
+    current_effort = get_copilot_reasoning_effort()
 
     # Token tracking
     token_tracker = SessionTokenTracker(model_name=current_model)
@@ -920,6 +967,7 @@ def run_copilot_single_prompt(
             current_model,
             os.getcwd(),
             console,
+            reasoning_effort=current_effort,
         )
 
         # Display usage (Copilot mode shows premium requests remaining)

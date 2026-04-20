@@ -136,27 +136,60 @@ def get_model_token_limit_sync(model_id: str) -> int:
     return 128000  # Default
 
 
-async def list_models() -> list[dict]:
+async def list_models(expand_reasoning_efforts: bool = False) -> list[dict]:
     """List available Copilot models from subscription.
 
+    Args:
+        expand_reasoning_efforts: If True, generate separate entries for each
+            reasoning effort level (low, medium, high, xhigh) for models that
+            support reasoning effort.
+
     Returns:
-        List of model info dicts with 'id', 'name', and 'capabilities'.
+        List of model info dicts with 'id', 'name', 'capabilities', and
+        optionally 'reasoning_effort'.
     """
+    from clanker.runtime import REASONING_EFFORT_LEVELS
+
     try:
         client = await ensure_client()
         models = await client.list_models()
-        return [
-            {
+        result = []
+
+        for m in models:
+            # Check for reasoning effort support - try multiple attribute paths
+            supports = getattr(m.capabilities, "supports", None)
+            supports_reasoning = False
+            if supports:
+                # Try both snake_case and camelCase
+                supports_reasoning = getattr(supports, "reasoning_effort", None)
+                if supports_reasoning is None:
+                    supports_reasoning = getattr(supports, "reasoningEffort", False)
+            logger.debug("Model %s: supports_reasoning=%s", m.id, supports_reasoning)
+            base_info = {
                 "id": m.id,
                 "name": m.name,
                 "capabilities": {
                     "vision": getattr(m.capabilities.supports, "vision", False),
-                    "reasoning": getattr(m.capabilities.supports, "reasoning_effort", False),
+                    "reasoning": supports_reasoning,
                     "max_tokens": getattr(m.capabilities.limits, "max_context_window_tokens", None),
                 }
             }
-            for m in models
-        ]
+
+            if expand_reasoning_efforts and supports_reasoning:
+                # Generate variants for each reasoning effort level
+                for effort in REASONING_EFFORT_LEVELS:
+                    variant = base_info.copy()
+                    variant["capabilities"] = base_info["capabilities"].copy()
+                    variant["reasoning_effort"] = effort
+                    variant["display_id"] = f"{m.id} ({effort})"
+                    result.append(variant)
+            else:
+                # Add base model (no reasoning effort specified)
+                base_info["reasoning_effort"] = None
+                base_info["display_id"] = m.id
+                result.append(base_info)
+
+        return result
     except Exception as e:
         logger.warning("Failed to list Copilot models: %s", e)
         return []

@@ -643,11 +643,12 @@ class Console:
         panel = Panel(content, title=title, border_style=style)
         self._console.print(panel)
 
-    def print_welcome(self, copilot_model: str | None = None) -> None:
+    def print_welcome(self, copilot_model: str | None = None, copilot_reasoning_effort: str | None = None) -> None:
         """Print welcome message.
 
         Args:
             copilot_model: Optional Copilot model name (for Copilot mode).
+            copilot_reasoning_effort: Optional reasoning effort level (for Copilot mode).
         """
         from clanker.config import get_default_model
         from clanker.runtime import is_yolo_mode, is_copilot_mode
@@ -657,6 +658,8 @@ class Console:
         # Get current model info based on mode
         if is_copilot_mode():
             model_name = copilot_model or "gpt-4.1"
+            if copilot_reasoning_effort:
+                model_name = f"{model_name} ({copilot_reasoning_effort})"
             model_info = f"{model_name} [dim](GitHub Copilot)[/dim]"
             mode_line = "\n  [bold green]COPILOT MODE[/bold green] [dim]- using GitHub Copilot SDK[/dim]"
         else:
