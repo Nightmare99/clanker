@@ -141,6 +141,7 @@ class CopilotSessionManager:
         self._session: Any | None = None
         self._session_id: str | None = None
         self._current_model: str | None = None
+        self._reasoning_effort: str | None = None
         self._tools: list | None = None
         self._tool_callback: Callable | None = None
         self._mcp_servers: dict | None = None
@@ -221,6 +222,7 @@ class CopilotSessionManager:
         tools: list | None = None,
         system_message: str | None = None,
         mcp_servers: dict | None = None,
+        reasoning_effort: str | None = None,
     ) -> Any:
         """Create a new Copilot session with persistence.
 
@@ -229,6 +231,7 @@ class CopilotSessionManager:
             tools: List of Copilot Tool objects.
             system_message: Optional system prompt.
             mcp_servers: MCP server configuration dict for native SDK support.
+            reasoning_effort: Optional reasoning effort level (low, medium, high, xhigh).
 
         Returns:
             The created session.
@@ -240,6 +243,7 @@ class CopilotSessionManager:
         self._session_id = f"clanker-{uuid.uuid4().hex[:8]}"
         self._current_model = model
         self._tools = tools
+        self._reasoning_effort = reasoning_effort
 
         # Build available_tools whitelist: our tools + MCP tools
         # This blocks ALL Copilot built-ins while allowing our tools and MCP tools
@@ -269,6 +273,10 @@ class CopilotSessionManager:
             },
             "available_tools": available_tools,
         }
+
+        if reasoning_effort:
+            session_kwargs["reasoning_effort"] = reasoning_effort
+            logger.info("Using reasoning effort: %s", reasoning_effort)
 
         if tools:
             session_kwargs["tools"] = tools
@@ -315,6 +323,7 @@ class CopilotSessionManager:
         session_id: str,
         model: str | None = None,
         tools: list | None = None,
+        reasoning_effort: str | None = None,
     ) -> Any:
         """Resume an existing Copilot session.
 
@@ -322,6 +331,7 @@ class CopilotSessionManager:
             session_id: The session ID to resume.
             model: Optional model override.
             tools: Optional tools override.
+            reasoning_effort: Optional reasoning effort level (low, medium, high, xhigh).
 
         Returns:
             The resumed session.
@@ -358,6 +368,11 @@ class CopilotSessionManager:
             resume_kwargs["model"] = model
             self._current_model = model
 
+        if reasoning_effort:
+            resume_kwargs["reasoning_effort"] = reasoning_effort
+            self._reasoning_effort = reasoning_effort
+            logger.info("Using reasoning effort: %s", reasoning_effort)
+
         if tools:
             resume_kwargs["tools"] = tools
             self._tools = tools
@@ -372,6 +387,7 @@ class CopilotSessionManager:
                 context={
                     "session_id": session_id,
                     "model": model,
+                    "reasoning_effort": reasoning_effort,
                     "tool_count": len(tools or self._tools or []),
                     "available_tool_count": len(available_tools),
                 },
@@ -389,14 +405,15 @@ class CopilotSessionManager:
         tools: list | None = None,
         system_message: str | None = None,
         mcp_servers: dict | None = None,
+        reasoning_effort: str | None = None,
     ) -> Any:
         """Get existing session or create a new one.
 
-        Handles model switching and MCP server changes automatically.
+        Handles model switching, reasoning effort changes, and MCP server changes automatically.
         """
         logger.info(
-            "get_or_create_session: session=%s, session_id=%s, mcp_servers_set=%s, current_model=%s, requested_model=%s",
-            self._session is not None, self._session_id, self._mcp_servers is not None, self._current_model, model
+            "get_or_create_session: session=%s, session_id=%s, mcp_servers_set=%s, current_model=%s, requested_model=%s, reasoning_effort=%s",
+            self._session is not None, self._session_id, self._mcp_servers is not None, self._current_model, model, reasoning_effort
         )
 
         if self._session is not None:
@@ -410,18 +427,21 @@ class CopilotSessionManager:
                 mcp_changed = (mcp_servers is not None and self._mcp_servers != mcp_servers)
                 if mcp_changed:
                     logger.info("MCP servers changed, recreating session")
-                    return await self.new_session(model, tools, system_message, mcp_servers)
+                    return await self.new_session(model, tools, system_message, mcp_servers, reasoning_effort)
 
-            # Check if we need to switch models
-            if model != self._current_model:
-                logger.info("Switching model from %s to %s", self._current_model, model)
-                await self.resume_session(self._session_id, model, tools)
+            # Check if we need to switch models or reasoning effort
+            model_changed = model != self._current_model
+            effort_changed = reasoning_effort != self._reasoning_effort
+            if model_changed or effort_changed:
+                logger.info("Switching model/effort from %s/%s to %s/%s",
+                           self._current_model, self._reasoning_effort, model, reasoning_effort)
+                await self.resume_session(self._session_id, model, tools, reasoning_effort)
 
             logger.info("Returning existing session: %s", self._session_id)
             return self._session
 
         logger.info("Creating new session (no existing session)")
-        return await self.create_session(model, tools, system_message, mcp_servers)
+        return await self.create_session(model, tools, system_message, mcp_servers, reasoning_effort)
 
     async def new_session(
         self,
@@ -429,6 +449,7 @@ class CopilotSessionManager:
         tools: list | None = None,
         system_message: str | None = None,
         mcp_servers: dict | None = None,
+        reasoning_effort: str | None = None,
     ) -> Any:
         """Start a fresh session (for /clear command)."""
         if self._session is not None:
@@ -445,6 +466,7 @@ class CopilotSessionManager:
             tools=tools or self._tools,
             system_message=system_message,
             mcp_servers=mcp_servers,
+            reasoning_effort=reasoning_effort or self._reasoning_effort,
         )
 
     async def list_sessions(self) -> list[dict]:

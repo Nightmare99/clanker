@@ -495,6 +495,7 @@ def stream_copilot_response_sync(
     model: str,
     working_directory: str,
     console,
+    reasoning_effort: str | None = None,
 ) -> StreamResult:
     """Stream a response using Copilot SDK directly.
 
@@ -507,6 +508,7 @@ def stream_copilot_response_sync(
         model: Copilot model ID.
         working_directory: Current working directory.
         console: Console instance for output.
+        reasoning_effort: Optional reasoning effort level (low, medium, high, xhigh).
 
     Returns:
         StreamResult with response text and token usage.
@@ -613,6 +615,7 @@ def stream_copilot_response_sync(
                 tools=copilot_tools,
                 system_message=system_prompt,
                 mcp_servers=mcp_servers,
+                reasoning_effort=reasoning_effort,
             )
 
             # Event handler for streaming - use mutable containers to share state
