@@ -14,6 +14,13 @@ copilot_datas = collect_data_files('copilot')
 # Get the project root
 project_root = Path(SPECPATH)
 
+# Bake version from pyproject.toml into _version.py for frozen binary
+import re
+_pyproject = (project_root / 'pyproject.toml').read_text()
+_match = re.search(r'^version\s*=\s*"(.+)"', _pyproject, re.M)
+_ver = _match.group(1) if _match else "0.0.0"
+(project_root / 'src' / 'clanker' / '_version.py').write_text(f'__version__ = "{_ver}"\n')
+
 
 def collect_copilot_binary():
     """Find and collect the Copilot SDK binary."""
