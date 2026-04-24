@@ -9,18 +9,19 @@ INSTALL_DIR="${CLANKER_INSTALL_DIR:-$HOME/.local/bin}"
 BINARY_NAME="clanker"
 
 # Colors
+BOLD='\033[1m'
+DIM='\033[2m'
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-info() { echo -e "${CYAN}[INFO]${NC} $1"; }
-success() { echo -e "${GREEN}[OK]${NC} $1"; }
-warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+info()    { echo -e "  ${CYAN}▸${NC} $1"; }
+success() { echo -e "  ${GREEN}✓${NC} $1"; }
+warn()    { echo -e "  ${YELLOW}!${NC} $1"; }
+error()   { echo -e "  ${RED}✗${NC} $1"; exit 1; }
 
-# Detect OS
 detect_os() {
     case "$(uname -s)" in
         Linux*)  echo "linux" ;;
@@ -30,7 +31,6 @@ detect_os() {
     esac
 }
 
-# Detect architecture
 detect_arch() {
     case "$(uname -m)" in
         x86_64|amd64) echo "amd64" ;;
@@ -39,102 +39,84 @@ detect_arch() {
     esac
 }
 
-# Get latest release version
 get_latest_version() {
     curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" |
         grep '"tag_name":' |
         sed -E 's/.*"([^"]+)".*/\1/'
 }
 
-# Get installed version
 get_installed_version() {
-    if command -v clanker &> /dev/null; then
-        clanker --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1
-    elif [ -x "${INSTALL_DIR}/clanker" ]; then
-        "${INSTALL_DIR}/clanker" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1
+    if [ -x "${INSTALL_DIR}/clanker" ]; then
+        "${INSTALL_DIR}/clanker" --version 2>&1 | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1
+    elif command -v clanker &>/dev/null; then
+        clanker --version 2>&1 | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1
     fi
 }
 
-# Main installation
 main() {
     echo ""
-    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║       CLANKER INSTALLATION            ║${NC}"
-    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}"
+    echo -e "  ${BOLD}${CYAN}⚙  Clanker Installer${NC}"
+    echo -e "  ${DIM}─────────────────────${NC}"
     echo ""
 
-    # Detect platform
     OS=$(detect_os)
     ARCH=$(detect_arch)
-    info "Detected platform: ${OS}-${ARCH}"
+    info "Platform: ${BOLD}${OS}-${ARCH}${NC}"
 
-    # Get latest version
-    info "Fetching latest release..."
     VERSION=$(get_latest_version)
     if [ -z "$VERSION" ]; then
         error "Could not determine latest version. Check your internet connection."
     fi
-    info "Latest version: ${VERSION}"
 
-    # Check for existing installation
     INSTALLED_VERSION=$(get_installed_version)
     if [ -n "$INSTALLED_VERSION" ]; then
-        # Normalize versions for comparison (remove 'v' prefix)
         INSTALLED_CLEAN="${INSTALLED_VERSION#v}"
         LATEST_CLEAN="${VERSION#v}"
 
         if [ "$INSTALLED_CLEAN" = "$LATEST_CLEAN" ]; then
-            success "Clanker ${VERSION} is already installed and up to date!"
+            echo ""
+            success "Clanker ${GREEN}${VERSION}${NC} is already installed and up to date!"
+            echo ""
             exit 0
         fi
 
         echo ""
-        info "Current version: ${INSTALLED_VERSION}"
-        info "Latest version:  ${VERSION}"
+        info "Installed: ${YELLOW}v${INSTALLED_CLEAN}${NC}"
+        info "Latest:    ${GREEN}${VERSION}${NC}"
         echo ""
 
-        # Check if running interactively
         if [ -t 0 ]; then
-            read -p "Upgrade to ${VERSION}? [Y/n] " -n 1 -r
+            read -p "  Upgrade? [Y/n] " -n 1 -r
             echo ""
             if [[ $REPLY =~ ^[Nn]$ ]]; then
-                info "Upgrade cancelled."
+                info "Cancelled."
                 exit 0
             fi
         else
-            info "Upgrading to ${VERSION}..."
+            info "Upgrading..."
         fi
+    else
+        info "Version: ${BOLD}${VERSION}${NC}"
     fi
 
-    # Construct download URL based on OS
     case "$OS" in
-        linux)
-            FILENAME="clanker-linux-${ARCH}.tar.gz"
-            ;;
-        darwin)
-            FILENAME="clanker-darwin-${ARCH}.tar.gz"
-            ;;
-        windows)
-            FILENAME="clanker-windows-amd64.zip"
-            BINARY_NAME="clanker.exe"
-            ;;
+        linux)   FILENAME="clanker-linux-${ARCH}.tar.gz" ;;
+        darwin)  FILENAME="clanker-darwin-${ARCH}.tar.gz" ;;
+        windows) FILENAME="clanker-windows-amd64.zip"; BINARY_NAME="clanker.exe" ;;
     esac
 
     DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${FILENAME}"
-    info "Downloading from: ${DOWNLOAD_URL}"
+    info "Downloading ${DIM}${FILENAME}${NC}..."
 
-    # Create install directory and temp directory
     mkdir -p "$INSTALL_DIR"
     TEMP_DIR=$(mktemp -d)
     trap "rm -rf $TEMP_DIR" EXIT
 
-    # Download archive
     ARCHIVE_PATH="${TEMP_DIR}/${FILENAME}"
     if ! curl -fsSL "$DOWNLOAD_URL" -o "$ARCHIVE_PATH"; then
-        error "Failed to download. URL: ${DOWNLOAD_URL}"
+        error "Download failed: ${DOWNLOAD_URL}"
     fi
 
-    # Extract and install
     case "$OS" in
         linux|darwin)
             tar -xzf "$ARCHIVE_PATH" -C "$TEMP_DIR"
@@ -147,44 +129,34 @@ main() {
     esac
 
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
-    success "Installed to ${INSTALL_DIR}/${BINARY_NAME}"
+    success "Installed to ${BOLD}${INSTALL_DIR}/${BINARY_NAME}${NC}"
 
-    # Check if install dir is in PATH
     if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-        warn "${INSTALL_DIR} is not in your PATH"
         echo ""
-        echo "Add it to your shell config:"
+        warn "${INSTALL_DIR} is not in your PATH."
         echo ""
-
         SHELL_NAME=$(basename "$SHELL")
         case "$SHELL_NAME" in
             zsh)
-                echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc"
-                echo "  source ~/.zshrc"
+                echo -e "  ${DIM}echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc${NC}"
+                echo -e "  ${DIM}source ~/.zshrc${NC}"
                 ;;
             bash)
-                echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc"
-                echo "  source ~/.bashrc"
+                echo -e "  ${DIM}echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc${NC}"
+                echo -e "  ${DIM}source ~/.bashrc${NC}"
                 ;;
             fish)
-                echo "  fish_add_path ~/.local/bin"
+                echo -e "  ${DIM}fish_add_path ~/.local/bin${NC}"
                 ;;
             *)
-                echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+                echo -e "  ${DIM}export PATH=\"\$HOME/.local/bin:\$PATH\"${NC}"
                 ;;
         esac
-        echo ""
     fi
 
-    # Verify installation
-    if command -v clanker &> /dev/null || [ -x "${INSTALL_DIR}/${BINARY_NAME}" ]; then
-        success "Installation complete!"
-        echo ""
-        echo -e "${GREEN}Run 'clanker' to get started.${NC}"
-        echo ""
-    else
-        warn "Binary installed but may not be in PATH yet."
-    fi
+    echo ""
+    echo -e "  ${GREEN}${BOLD}Done!${NC} Run ${CYAN}clanker${NC} to get started."
+    echo ""
 }
 
 main "$@"
