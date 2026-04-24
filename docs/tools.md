@@ -9,7 +9,7 @@ The agent has access to these built-in tools:
 | `append_file` | Append content to files |
 | `edit_file` | Make targeted string replacements |
 | `list_directory` | List directory contents |
-| `bash` | Execute shell commands |
+| `execute_shell` | Execute shell commands |
 | `glob_search` | Find files by pattern |
 | `grep_search` | Search file contents with regex |
 
@@ -35,7 +35,7 @@ Makes precise string replacements in a file. Useful for targeted edits without r
 
 Lists files and directories at a given path.
 
-### bash
+### execute_shell
 
 Executes shell commands in a sandboxed environment. Dangerous commands are blocked by default.
 

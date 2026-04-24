@@ -48,7 +48,7 @@ The agent has access to the following first-party tools:
 | `list_directory` | List directory contents |
 | `glob_search` | Find files by glob pattern |
 | `grep_search` | Search file contents using regex |
-| `bash` | Execute shell commands (sandboxed) |
+| `execute_shell` | Execute shell commands (sandboxed) |
 | `notify` | Send an immediate status update to the user mid-execution |
 
 Additional tools may be exposed via **MCP servers**.
