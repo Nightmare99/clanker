@@ -324,6 +324,7 @@ class CopilotSessionManager:
         model: str | None = None,
         tools: list | None = None,
         reasoning_effort: str | None = None,
+        system_message: str | None = None,
     ) -> Any:
         """Resume an existing Copilot session.
 
@@ -332,6 +333,7 @@ class CopilotSessionManager:
             model: Optional model override.
             tools: Optional tools override.
             reasoning_effort: Optional reasoning effort level (low, medium, high, xhigh).
+            system_message: Optional system prompt (re-applied on resume).
 
         Returns:
             The resumed session.
@@ -367,6 +369,13 @@ class CopilotSessionManager:
         if model:
             resume_kwargs["model"] = model
             self._current_model = model
+
+        if system_message:
+            resume_kwargs["system_message"] = {
+                "mode": "replace",
+                "content": system_message,
+            }
+            logger.info("Re-applying system prompt on resume")
 
         if reasoning_effort:
             resume_kwargs["reasoning_effort"] = reasoning_effort
@@ -435,7 +444,7 @@ class CopilotSessionManager:
             if model_changed or effort_changed:
                 logger.info("Switching model/effort from %s/%s to %s/%s",
                            self._current_model, self._reasoning_effort, model, reasoning_effort)
-                await self.resume_session(self._session_id, model, tools, reasoning_effort)
+                await self.resume_session(self._session_id, model, tools, reasoning_effort, system_message)
 
             logger.info("Returning existing session: %s", self._session_id)
             return self._session

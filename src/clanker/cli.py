@@ -817,11 +817,13 @@ def run_copilot_interactive(
     # Resume session if specified
     if resume_session:
         try:
+            from clanker.agent.prompts import get_system_prompt
             loop.run_until_complete(
                 copilot_manager.resume_session(
                     resume_session,
                     model=get_copilot_model(),
                     reasoning_effort=get_copilot_reasoning_effort(),
+                    system_message=get_system_prompt(),
                 )
             )
             console.print_info(f"Resumed Copilot session: {resume_session}")
@@ -864,11 +866,13 @@ def run_copilot_interactive(
                     # Restore a Copilot session
                     session_id = result.split(":", 1)[1]
                     try:
+                        from clanker.agent.prompts import get_system_prompt
                         loop.run_until_complete(
                             copilot_manager.resume_session(
                                 session_id,
                                 model=get_copilot_model(),
                                 reasoning_effort=get_copilot_reasoning_effort(),
+                                system_message=get_system_prompt(),
                             )
                         )
                         console.print_info(f"Restored Copilot session: {session_id}")
