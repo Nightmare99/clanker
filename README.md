@@ -20,8 +20,14 @@ An AI-powered coding assistant CLI built with LangChain and LangGraph.
 
 ### One-Line Install (Recommended)
 
+**Linux / macOS:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.ps1 | iex
 ```
 
 This automatically detects your OS/architecture and installs the latest release.
