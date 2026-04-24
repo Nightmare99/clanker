@@ -173,7 +173,7 @@ class Console:
             else:
                 text.append("Append file", style="tool")
 
-        elif tool_name == "bash":
+        elif tool_name == "execute_shell":
             cmd = self._truncate(args.get("command", ""), 60)
             text.append(f"Run: {cmd}", style="tool")
 

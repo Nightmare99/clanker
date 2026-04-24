@@ -75,7 +75,7 @@ MAX_OUTPUT_SIZE = 100_000  # 100KB
 
 
 @tool
-def run(command: str, timeout: int | None = None) -> str:
+def execute_shell(command: str, timeout: int | None = None) -> str:
     """Execute a bash command and return the output.
 
     Args:
