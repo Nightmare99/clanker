@@ -31,6 +31,9 @@ MANIFEST
 *.spec
 !clanker.spec
 
+# Auto-generated version file
+src/clanker/_version.py
+
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
