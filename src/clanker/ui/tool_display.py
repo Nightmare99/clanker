@@ -1,10 +1,29 @@
 """Unified tool display handling for all providers."""
 
+from dataclasses import dataclass
 from typing import Callable
+
+from rich.console import Group
+from rich.live import Live
+from rich.spinner import Spinner
+from rich.text import Text
+
+
+@dataclass
+class PendingToolCall:
+    """A tool call waiting for its result."""
+    tool_id: str
+    tool_name: str
+    tool_input: dict
 
 
 class ToolDisplayHandler:
-    """Handles tool call and result display consistently across providers."""
+    """Handles tool call and result display consistently across providers.
+
+    Uses a Live display to show pending tools with spinners, then prints
+    the final result when each tool completes. This ensures tool headers
+    and results are always displayed together, even with parallel execution.
+    """
 
     # Tools that handle their own display - check case-insensitively
     _DISPLAY_ONLY_TOOLS = {"notify"}
@@ -36,6 +55,12 @@ class ToolDisplayHandler:
         self._pending_inputs: list[tuple[str, dict]] = []  # Queue of (tool_name, input) for matching results
         # Flag to indicate Copilot callback is handling tools (skip LangGraph events)
         self._copilot_callback_active: bool = False
+
+        # Live display for pending tools (Copilot SDK mode)
+        self._live: Live | None = None
+        self._pending_calls: dict[str, PendingToolCall] = {}  # tool_id -> PendingToolCall
+        self._pending_order: list[str] = []  # Insertion order
+        self._tool_id_counter: int = 0  # For generating unique IDs
 
     def _make_tool_key(self, tool_name: str, tool_input: dict) -> str:
         """Create a unique key for a tool call to detect duplicates."""
@@ -178,30 +203,180 @@ class ToolDisplayHandler:
         """Check if there are pending tools to display."""
         return len(self._pending_tools) > 0
 
+    def _format_tool_header_text(self, tool_name: str, tool_input: dict) -> Text:
+        """Format a tool header as Rich Text for Live display."""
+        text = Text()
+        text.append("  > ", style="dim")
+        args = tool_input or {}
+
+        if tool_name == "read_file":
+            text.append("Read ", style="magenta")
+            text.append(args.get("file_path", "file"), style="cyan")
+        elif tool_name == "write_file":
+            text.append("Write ", style="magenta")
+            text.append(args.get("file_path", "file"), style="cyan")
+        elif tool_name == "edit_file":
+            text.append("Edit ", style="magenta")
+            text.append(args.get("file_path", "file"), style="cyan")
+        elif tool_name == "execute_shell":
+            cmd = (args.get("command", "") or "")[:60]
+            text.append(f"Run: {cmd}", style="magenta")
+        elif tool_name == "glob_search":
+            text.append("Find ", style="magenta")
+            text.append(args.get("pattern", "*"), style="cyan")
+        elif tool_name == "grep_search":
+            text.append("Search ", style="magenta")
+            text.append((args.get("pattern", "") or "")[:40], style="cyan")
+        elif tool_name == "list_directory":
+            text.append("List ", style="magenta")
+            text.append(args.get("path", "."), style="cyan")
+        else:
+            text.append(tool_name, style="magenta")
+
+        return text
+
+    def _render_pending_live(self) -> Group:
+        """Render pending tools with spinners for Live display."""
+        items = []
+        for tool_id in self._pending_order:
+            if tool_id not in self._pending_calls:
+                continue
+            call = self._pending_calls[tool_id]
+            header = self._format_tool_header_text(call.tool_name, call.tool_input)
+            header.append(" ", style="dim")
+            items.append(header)
+            items.append(Spinner("dots", style="dim cyan"))
+            items.append(Text("\n"))
+        return Group(*items) if items else Text("")
+
+    def _update_live_display(self) -> None:
+        """Update or create the Live display for pending tools."""
+        if not self._pending_calls:
+            if self._live:
+                self._live.stop()
+                self._live = None
+            return
+
+        if self._live is None:
+            self._live = Live(
+                self._render_pending_live(),
+                console=self._console._console,
+                refresh_per_second=10,
+                transient=True,
+            )
+            self._live.start()
+        else:
+            self._live.update(self._render_pending_live())
+
     def handle_tool_start(self, tool_name: str, tool_input: dict) -> None:
-        """Handle tool start event from Copilot callback."""
-        # Mark that Copilot callback is handling tools (skip LangGraph events)
+        """Handle tool start event from Copilot callback.
+
+        Adds tool to pending display with a spinner. The actual header + result
+        will be printed together when handle_tool_end is called.
+        """
         self._copilot_callback_active = True
         if self._on_tool_start:
             self._on_tool_start()
         if self._is_display_only_tool(tool_name):
             return
-        # Force show even if duplicate detection would skip (callback is authoritative)
-        self.show_tool(tool_name, tool_input, force=True)
+        if not self._show_tool_calls:
+            return
+
+        # Generate unique ID for this tool call
+        self._tool_id_counter += 1
+        tool_id = f"{tool_name}:{self._tool_id_counter}"
+
+        # Add to pending
+        self._pending_calls[tool_id] = PendingToolCall(
+            tool_id=tool_id,
+            tool_name=tool_name,
+            tool_input=tool_input,
+        )
+        self._pending_order.append(tool_id)
+
+        # Store input for result matching
+        self._pending_inputs.append((tool_id, tool_name, tool_input))
+
+        # Update Live display
+        self._update_live_display()
 
     def handle_tool_end(self, tool_name: str, result: str) -> None:
-        """Handle tool end event - display result and call on_tool_end callback."""
+        """Handle tool end event - display header + result together.
+
+        Removes tool from pending display and prints final output.
+        """
         if self._is_display_only_tool(tool_name):
             self.clear_tool_tracking(tool_name)
             if self._on_tool_end:
                 self._on_tool_end()
             return
-        # Force show even if duplicate detection would skip (callback is authoritative)
-        self.show_tool_result(tool_name, result, force=True)
-        # Clear tracking for this tool so it can be called again
+
+        if not self._show_tool_calls:
+            if self._on_tool_end:
+                self._on_tool_end()
+            return
+
+        # Find matching pending tool
+        tool_id = None
+        tool_input = {}
+        for i, (tid, tname, tinput) in enumerate(self._pending_inputs):
+            if tname == tool_name:
+                tool_id = tid
+                tool_input = tinput
+                self._pending_inputs.pop(i)
+                break
+
+        # Stop Live display before printing
+        if self._live:
+            self._live.stop()
+            self._live = None
+
+        # Print header + result together (permanent output)
+        self._console.print_tool_use(tool_name, tool_input)
+
+        # Show diffs for file modification tools
+        if tool_name == "edit_file":
+            old_str = tool_input.get("old_string", "")
+            new_str = tool_input.get("new_string", "")
+            if old_str or new_str:
+                self._console.print_edit_diff(old_str, new_str)
+        elif tool_name == "write_file":
+            content = tool_input.get("content", "")
+            if content:
+                self._console.print_write_content(content, is_append=False)
+        elif tool_name == "append_file":
+            content = tool_input.get("content", "")
+            if content:
+                self._console.print_write_content(content, is_append=True)
+
+        # Show result
+        if result and result.strip():
+            self._console.print_tool_result(result, tool_name=tool_name, tool_input=tool_input)
+
+        # Remove from pending
+        if tool_id and tool_id in self._pending_calls:
+            del self._pending_calls[tool_id]
+            if tool_id in self._pending_order:
+                self._pending_order.remove(tool_id)
+
+        # Restart Live display if there are still pending tools
+        self._update_live_display()
+
         self.clear_tool_tracking(tool_name)
         if self._on_tool_end:
             self._on_tool_end()
+
+    def finalize_live(self) -> None:
+        """Stop the Live display and clean up pending state.
+
+        Call this at the end of a response to ensure no stale displays remain.
+        """
+        if self._live:
+            self._live.stop()
+            self._live = None
+        self._pending_calls.clear()
+        self._pending_order.clear()
+        self._pending_inputs.clear()
 
     def create_callback(self) -> Callable[[str, dict, str | None], None]:
         """Create a callback function for Copilot SDK tool events.
