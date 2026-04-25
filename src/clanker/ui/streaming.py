@@ -869,6 +869,7 @@ def stream_copilot_response_sync(
 
         except CommandRejectedError as e:
             stop_loading()
+            tool_handler.finalize_live()
             rich_console.print(f"\n[bold yellow]Operation cancelled:[/bold yellow] {e}")
             return StreamResult(
                 response="",
@@ -879,6 +880,7 @@ def stream_copilot_response_sync(
 
         except (KeyboardInterrupt, asyncio.CancelledError):
             stop_loading()
+            tool_handler.finalize_live()
             rich_console.print("\n[bold yellow]*BZZZT*[/bold yellow] Agent halted. Control returned to you. [bold yellow]*CLANK*[/bold yellow]")
             return StreamResult(
                 response=current_response,
@@ -891,6 +893,7 @@ def stream_copilot_response_sync(
             if session_subscription is not None:
                 session_subscription()
             stop_loading()
+            tool_handler.finalize_live()
             set_notify_callback(None)
             set_tool_call_callback(None)
 
