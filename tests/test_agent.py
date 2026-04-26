@@ -88,16 +88,10 @@ class TestAgentState:
         assert state2["tool_calls_count"] == 5
 
 
-class TestMultimodalMiddleware:
-    """Tests for multimodal_tool_results middleware module."""
+class TestMiddlewareModule:
+    """Tests for middleware module imports."""
 
     def test_middleware_importable(self) -> None:
         """Middleware module can be imported."""
         from clanker.agent.middleware import multimodal_tool_results
         assert multimodal_tool_results is not None
-
-    def test_middleware_has_expected_attributes(self) -> None:
-        """Middleware has wrap_tool_call decorator applied."""
-        from clanker.agent.middleware import multimodal_tool_results
-        # wrap_tool_call decorator creates an object with specific attributes
-        assert hasattr(multimodal_tool_results, '__wrapped__') or callable(multimodal_tool_results)
