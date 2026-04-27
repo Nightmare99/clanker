@@ -9,6 +9,12 @@ from pathlib import Path
 
 
 WORKFLOWS_DIR = "workflows"
+MAX_WORKFLOW_CHARS = 1500
+
+WORKFLOW_PREAMBLE = (
+    "Below is a workflow containing a series of instructions to be executed sequentially. "
+    "Complete each step thoroughly before moving to the next.\n\n"
+)
 
 
 def get_workflows_dir(working_directory: str | None = None) -> Path:
