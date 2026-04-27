@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import signal
 import sys
 from collections import deque
 from contextlib import contextmanager
@@ -24,6 +25,21 @@ from clanker.ui.tool_display import ToolDisplayHandler, normalize_tool_output
 _persistent_loop: asyncio.AbstractEventLoop | None = None
 _COPILOT_ACTIVITY_TIMEOUT_SECONDS = 60.0
 _COPILOT_MAX_RESPONSE_SECONDS = 900.0
+
+# Track the currently running streaming task for signal-based cancellation
+_current_streaming_task: asyncio.Task | None = None
+_interrupted: bool = False
+
+
+def _cancel_streaming_task() -> None:
+    """Cancel the current streaming task if running.
+
+    Called from signal handler to abort the current operation.
+    """
+    global _current_streaming_task, _interrupted
+    _interrupted = True
+    if _current_streaming_task is not None and not _current_streaming_task.done():
+        _current_streaming_task.cancel()
 
 
 def _asyncio_exception_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
@@ -479,13 +495,33 @@ def stream_agent_response_sync(
             summarization_occurred=summarization_detected,
         )
 
-    # Run the async function using persistent loop to maintain Copilot session
-    # KeyboardInterrupt (Ctrl+C) may surface here if it fires between asyncio yield points
+    # Run the async function using persistent loop with proper signal handling
+    global _current_streaming_task, _interrupted
+    _interrupted = False
+
+    # Install signal handler to cancel task on Ctrl+C
+    original_handler = signal.getsignal(signal.SIGINT)
+
+    def _sigint_handler(signum, frame):
+        """Handle SIGINT by cancelling the streaming task."""
+        _cancel_streaming_task()
+
+    loop = _get_or_create_loop()
+
     try:
-        loop = _get_or_create_loop()
-        return loop.run_until_complete(_stream_async())
-    except KeyboardInterrupt:
+        signal.signal(signal.SIGINT, _sigint_handler)
+        _current_streaming_task = loop.create_task(_stream_async())
+        return loop.run_until_complete(_current_streaming_task)
+    except asyncio.CancelledError:
+        # Task was cancelled via signal handler
         return StreamResult(response="")
+    except KeyboardInterrupt:
+        # Fallback if interrupt happens outside async context
+        _cancel_streaming_task()
+        return StreamResult(response="")
+    finally:
+        _current_streaming_task = None
+        signal.signal(signal.SIGINT, original_handler)
 
 
 def stream_copilot_response_sync(
@@ -727,6 +763,11 @@ def stream_copilot_response_sync(
 
                     overall_deadline = loop.time() + _COPILOT_MAX_RESPONSE_SECONDS
                     while not done_event.is_set():
+                        # Check for interrupt flag (set by signal handler)
+                        if _interrupted:
+                            interrupted = True
+                            raise asyncio.CancelledError("Interrupted by user")
+
                         remaining = overall_deadline - loop.time()
                         if remaining <= 0:
                             raise TimeoutError(
@@ -911,9 +952,30 @@ def stream_copilot_response_sync(
             quota_limit=quota_limit,
         )
 
-    # Run using persistent loop
+    # Run using persistent loop with proper signal handling
+    global _current_streaming_task, _interrupted
+    _interrupted = False
+
+    # Install signal handler to cancel task on Ctrl+C
+    original_handler = signal.getsignal(signal.SIGINT)
+
+    def _sigint_handler(signum, frame):
+        """Handle SIGINT by cancelling the streaming task."""
+        _cancel_streaming_task()
+
+    loop = _get_or_create_loop()
+
     try:
-        loop = _get_or_create_loop()
-        return loop.run_until_complete(_stream_copilot_async())
-    except KeyboardInterrupt:
+        signal.signal(signal.SIGINT, _sigint_handler)
+        _current_streaming_task = loop.create_task(_stream_copilot_async())
+        return loop.run_until_complete(_current_streaming_task)
+    except asyncio.CancelledError:
+        # Task was cancelled via signal handler
         return StreamResult(response="")
+    except KeyboardInterrupt:
+        # Fallback if interrupt happens outside async context
+        _cancel_streaming_task()
+        return StreamResult(response="")
+    finally:
+        _current_streaming_task = None
+        signal.signal(signal.SIGINT, original_handler)
