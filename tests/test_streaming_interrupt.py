@@ -46,8 +46,13 @@ class TestInterruptFlag:
 
         assert module._interrupted is True
 
-    def test_cancel_streaming_task_cancels_task(self) -> None:
-        """_cancel_streaming_task cancels the running task."""
+    def test_cancel_streaming_task_does_not_cancel_task(self) -> None:
+        """_cancel_streaming_task sets flag but does NOT cancel task.
+
+        We intentionally don't cancel the task because that would interrupt
+        session.abort() and corrupt the Copilot session. Instead, the streaming
+        code checks the _interrupted flag and aborts gracefully.
+        """
         module = _load_streaming_module()
 
         # Create a mock task
@@ -60,7 +65,8 @@ class TestInterruptFlag:
         module._cancel_streaming_task()
 
         assert module._interrupted is True
-        mock_task.cancel.assert_called_once()
+        # Task should NOT be cancelled - graceful abort happens in streaming code
+        mock_task.cancel.assert_not_called()
 
     def test_cancel_streaming_task_skips_done_task(self) -> None:
         """_cancel_streaming_task doesn't cancel already-done tasks."""

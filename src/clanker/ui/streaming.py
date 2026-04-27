@@ -29,17 +29,31 @@ _COPILOT_MAX_RESPONSE_SECONDS = 900.0
 # Track the currently running streaming task for signal-based cancellation
 _current_streaming_task: asyncio.Task | None = None
 _interrupted: bool = False
+_current_loading_live = None  # Reference to current loading spinner for interrupt updates
 
 
 def _cancel_streaming_task() -> None:
-    """Cancel the current streaming task if running.
+    """Signal that the current streaming task should stop.
 
-    Called from signal handler to abort the current operation.
+    Called by signal handler when Ctrl+C is pressed. Sets the interrupt flag
+    and updates the spinner. Does NOT cancel the task - the task checks the
+    flag and calls session.abort() gracefully to preserve the session.
     """
-    global _current_streaming_task, _interrupted
+    global _interrupted, _current_loading_live
     _interrupted = True
-    if _current_streaming_task is not None and not _current_streaming_task.done():
-        _current_streaming_task.cancel()
+
+    # Update spinner to show stopping message immediately
+    if _current_loading_live is not None:
+        try:
+            from rich.spinner import Spinner
+            from rich.text import Text
+            spinner = Spinner("dots", text=Text(" Stopping...", style="bold red"))
+            _current_loading_live.update(spinner)
+        except Exception:
+            pass
+    # NOTE: We intentionally do NOT cancel the task here.
+    # Cancelling would interrupt session.abort() and corrupt the session.
+    # Instead, the streaming code checks _interrupted and aborts gracefully.
 
 
 def _asyncio_exception_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
@@ -207,19 +221,23 @@ def stream_agent_response_sync(
 
         def start_loading(message: str | None = None):
             """Start the loading spinner."""
+            global _current_loading_live
             nonlocal loading_live
             if loading_live is None:
                 msg = message or console.get_loading_message()
                 spinner = Spinner("dots", text=Text(f" {msg}", style="cyan"))
                 loading_live = Live(spinner, console=rich_console, refresh_per_second=10, transient=True)
                 loading_live.start()
+                _current_loading_live = loading_live
 
         def stop_loading():
             """Stop the loading spinner."""
+            global _current_loading_live
             nonlocal loading_live
             if loading_live is not None:
                 loading_live.stop()
                 loading_live = None
+                _current_loading_live = None
 
         def update_loading(message: str):
             """Update the loading spinner message."""
@@ -572,18 +590,22 @@ def stream_copilot_response_sync(
         loading_live: Live | None = None
 
         def start_loading(message: str | None = None):
+            global _current_loading_live
             nonlocal loading_live
             if loading_live is None:
                 msg = message or console.get_loading_message()
                 spinner = Spinner("dots", text=Text(f" {msg}", style="cyan"))
                 loading_live = Live(spinner, console=rich_console, refresh_per_second=10, transient=True)
                 loading_live.start()
+                _current_loading_live = loading_live
 
         def stop_loading():
+            global _current_loading_live
             nonlocal loading_live
             if loading_live is not None:
                 loading_live.stop()
                 loading_live = None
+                _current_loading_live = None
 
         # Tool display handler
         tool_handler = ToolDisplayHandler(
@@ -646,13 +668,23 @@ def stream_copilot_response_sync(
             start_loading()
 
             # Get or create session with native MCP support
-            session = await copilot_manager.get_or_create_session(
-                model=model,
-                tools=copilot_tools,
-                system_message=system_prompt,
-                mcp_servers=mcp_servers,
-                reasoning_effort=reasoning_effort,
-            )
+            # Handle interrupt during session creation (CLI process killed by SIGINT)
+            try:
+                session = await copilot_manager.get_or_create_session(
+                    model=model,
+                    tools=copilot_tools,
+                    system_message=system_prompt,
+                    mcp_servers=mcp_servers,
+                    reasoning_effort=reasoning_effort,
+                )
+            except Exception as e:
+                # Check if this is a CLI exit due to Ctrl+C
+                if _interrupted or "process exited" in str(e).lower():
+                    stop_loading()
+                    tool_handler.finalize_live()
+                    rich_console.print("\n[bold yellow]*BZZZT*[/bold yellow] Agent halted. Control returned to you. [bold yellow]*CLANK*[/bold yellow]")
+                    return StreamResult(response="", model_name=model)
+                raise
 
             # Event handler for streaming - use mutable containers to share state
             content_parts = []
@@ -765,8 +797,14 @@ def stream_copilot_response_sync(
                     while not done_event.is_set():
                         # Check for interrupt flag (set by signal handler)
                         if _interrupted:
+                            # Abort gracefully - this preserves the session for future messages
                             interrupted = True
-                            raise asyncio.CancelledError("Interrupted by user")
+                            try:
+                                await session.abort()
+                            except Exception:
+                                pass
+                            done_event.set()
+                            break  # Exit wait loop cleanly, don't raise
 
                         remaining = overall_deadline - loop.time()
                         if remaining <= 0:
@@ -775,22 +813,22 @@ def stream_copilot_response_sync(
                             )
 
                         try:
+                            # Short timeout to check interrupt flag frequently
                             await asyncio.wait_for(
                                 done_event.wait(),
-                                timeout=min(_COPILOT_ACTIVITY_TIMEOUT_SECONDS, remaining),
+                                timeout=0.5,
                             )
-                        except asyncio.CancelledError:
-                            # Ctrl+C during wait - abort gracefully
-                            interrupted = True
-                            raise
-                        except TimeoutError as timeout_exc:
+                        except asyncio.TimeoutError:
+                            # Check activity timeout (but not during tool execution)
                             idle_for = loop.time() - last_activity_at
-                            # Skip activity timeout while tool is executing (tools can take a long time)
                             if idle_for >= _COPILOT_ACTIVITY_TIMEOUT_SECONDS and not tool_executing:
                                 raise TimeoutError(
                                     f"Timeout after {_COPILOT_ACTIVITY_TIMEOUT_SECONDS:.1f}s "
                                     "without Copilot session activity"
-                                ) from timeout_exc
+                                )
+
+                    if interrupted:
+                        break  # Exit retry loop on interrupt
 
                     response = response_event[0]
                     break  # Success, exit retry loop
@@ -799,14 +837,18 @@ def stream_copilot_response_sync(
                     # Gracefully abort the SDK turn on interrupt
                     interrupted = True
                     try:
-                        if hasattr(session, 'abort'):
-                            await session.abort()
+                        await session.abort()
                     except Exception:
                         pass
-                    done_event.set()  # Ensure we exit cleanly
-                    raise
+                    break  # Exit retry loop cleanly, don't re-raise
 
                 except Exception as e:
+                    error_str = str(e).lower()
+                    # Check if CLI process was killed by SIGINT
+                    if _interrupted or "process exited" in error_str:
+                        interrupted = True
+                        break  # Exit retry loop, handle as interrupt
+
                     # Check if this is a session expiry error and we can retry
                     if attempt < max_retries - 1 and copilot_manager._is_session_expired_error(e):
                         streaming_logger.warning(
@@ -852,6 +894,19 @@ def stream_copilot_response_sync(
                             operation="Copilot response",
                         )
                     ) from e
+
+            # Handle interrupt - return early with partial content
+            if interrupted:
+                stop_loading()
+                tool_handler.finalize_live()
+                rich_console.print("\n[bold yellow]*BZZZT*[/bold yellow] Agent halted. Control returned to you. [bold yellow]*CLANK*[/bold yellow]")
+                current_response = "".join(content_parts)
+                return StreamResult(
+                    response=current_response,
+                    input_tokens=usage_data.get("input_tokens", 0),
+                    output_tokens=usage_data.get("output_tokens", 0),
+                    model_name=model,
+                )
 
             # Extract content if events didn't capture it
             if not content_parts and response:
