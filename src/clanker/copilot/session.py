@@ -296,6 +296,13 @@ class CopilotSessionManager:
         try:
             self._session = await client.create_session(**session_kwargs)
         except Exception as e:
+            # Reset client if the CLI process died (e.g., killed by SIGINT)
+            error_str = str(e).lower()
+            if "process exited" in error_str or "broken pipe" in error_str:
+                self._client = None
+                self._session = None
+                self._session_id = None
+
             log_copilot_error(
                 logger,
                 e,
