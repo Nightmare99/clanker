@@ -71,6 +71,8 @@ Inside the interactive session:
 | `/clear` | Clear conversation history |
 | `/model` | List available models and show current |
 | `/model <name>` | Switch to a different model |
+| `/workflow` | List available workflows |
+| `/workflow <name>` | Execute a stored workflow |
 | `/config` | Show configuration |
 | `/mcp` | Show MCP server status |
 | `/logs` | Show logging status and log files |

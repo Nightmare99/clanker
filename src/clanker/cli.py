@@ -384,6 +384,31 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
             else:
                 console.print_warning(f"Memory {memory_id} not found.")
 
+    elif cmd.startswith("/workflow"):
+        from clanker.workflows import list_workflows, load_workflow
+        parts = command.strip().split(maxsplit=1)
+        if len(parts) < 2:
+            # List available workflows
+            workflows = list_workflows()
+            if not workflows:
+                console.print_info("No workflows found.")
+                console.print_info("Create .md files in .clanker/workflows/ to add workflows.")
+            else:
+                console.print_info(f"Available workflows ({len(workflows)}):\n")
+                for name in workflows:
+                    console.print(f"  [bold cyan]{name}[/bold cyan]")
+                console.print_info("\nUse /workflow <name> to execute a workflow.")
+        else:
+            workflow_name = parts[1].strip()
+            content = load_workflow(workflow_name)
+            if content:
+                return f"workflow:{content}"
+            else:
+                console.print_warning(f"Workflow '{workflow_name}' not found.")
+                workflows = list_workflows()
+                if workflows:
+                    console.print_info(f"Available: {', '.join(workflows)}")
+
     else:
         console.print_warning(f"Unknown command: {command}")
         console.print_info("Type /help for available commands.")
@@ -410,6 +435,7 @@ class CommandCompleter(Completer):
         "/memories",
         "/remember",
         "/forget",
+        "/workflow",
     ]
 
     # Cache for Copilot models (fetched once per session)
@@ -439,6 +465,19 @@ class CommandCompleter(Completer):
                             yield Completion(name, start_position=-len(model_prefix))
             except Exception:
                 pass  # Silently fail if model loading fails
+            return
+
+        # Check if this is a /workflow command with a space (user wants workflow name completion)
+        if text.startswith("/workflow "):
+            workflow_prefix = text[10:]  # Remove "/workflow "
+            try:
+                from clanker.workflows import list_workflows
+                workflows = list_workflows()
+                for name in workflows:
+                    if name.lower().startswith(workflow_prefix.lower()):
+                        yield Completion(name, start_position=-len(workflow_prefix))
+            except Exception:
+                pass
             return
 
         # Regular command completion
@@ -597,7 +636,11 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
                             console.print(f"  [{role}] {content}")
                     else:
                         console.print_warning(f"Session {session_id} not found")
-                continue
+                elif result and result.startswith("workflow:"):
+                    # Execute workflow: treat content as user input
+                    user_input = result.split(":", 1)[1]
+                else:
+                    continue
 
             # Add user message to tracking
             user_msg = HumanMessage(content=user_input)
@@ -884,7 +927,11 @@ def run_copilot_interactive(
                         console.print_info(f"Restored Copilot session: {session_id}")
                     except Exception as e:
                         console.print_warning(f"Could not restore session: {e}")
-                continue
+                elif result and result.startswith("workflow:"):
+                    # Execute workflow: treat content as user input
+                    user_input = result.split(":", 1)[1]
+                else:
+                    continue
 
             # Run agent with Copilot (use current Copilot model and reasoning effort)
             current_model = get_copilot_model()
