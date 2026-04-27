@@ -734,6 +734,9 @@ Commands:
   /remember   Store a memory (usage: /remember <text>)
   /forget     Delete a memory (usage: /forget <id>)
 
+[bold]Workflows:[/bold]
+  /workflow    List or run a stored workflow (usage: /workflow <name>)
+
 [bold]Operational Capabilities:[/bold]
   • File operations: read, write, edit, append
   • Codebase search: glob patterns, regex content search
