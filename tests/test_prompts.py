@@ -159,3 +159,67 @@ class TestPromptCommunicationGuidelines:
         """Prompt should discourage asking unnecessary permission."""
         SYSTEM_PROMPT = _get_system_prompt()
         assert "shall I" in SYSTEM_PROMPT or "should I" in SYSTEM_PROMPT
+
+
+def _get_load_user_instructions():
+    return _load_prompts_module().load_user_instructions
+
+
+class TestUserInstructions:
+    """Tests for user instructions loaded from .clanker/instructions.md."""
+
+    def test_no_file_returns_empty(self, tmp_path) -> None:
+        """Returns empty string when instructions.md doesn't exist."""
+        load = _get_load_user_instructions()
+        assert load(str(tmp_path)) == ""
+
+    def test_reads_instructions_file(self, tmp_path) -> None:
+        """Reads content from .clanker/instructions.md."""
+        load = _get_load_user_instructions()
+        clanker_dir = tmp_path / ".clanker"
+        clanker_dir.mkdir()
+        (clanker_dir / "instructions.md").write_text("Always respond in French.")
+        assert load(str(tmp_path)) == "Always respond in French."
+
+    def test_truncates_to_250_words(self, tmp_path) -> None:
+        """Truncates instructions to first 250 words."""
+        load = _get_load_user_instructions()
+        clanker_dir = tmp_path / ".clanker"
+        clanker_dir.mkdir()
+        words = [f"word{i}" for i in range(400)]
+        (clanker_dir / "instructions.md").write_text(" ".join(words))
+        result = load(str(tmp_path))
+        assert len(result.split()) == 250
+
+    def test_under_250_words_unchanged(self, tmp_path) -> None:
+        """Instructions under 250 words are returned in full."""
+        load = _get_load_user_instructions()
+        clanker_dir = tmp_path / ".clanker"
+        clanker_dir.mkdir()
+        text = "Short instruction set."
+        (clanker_dir / "instructions.md").write_text(text)
+        assert load(str(tmp_path)) == text
+
+    def test_empty_file_returns_empty(self, tmp_path) -> None:
+        """Empty instructions file returns empty string."""
+        load = _get_load_user_instructions()
+        clanker_dir = tmp_path / ".clanker"
+        clanker_dir.mkdir()
+        (clanker_dir / "instructions.md").write_text("   \n  \n  ")
+        assert load(str(tmp_path)) == ""
+
+    def test_injected_into_system_prompt(self, tmp_path) -> None:
+        """User instructions appear in system prompt under USER INSTRUCTIONS."""
+        get_system_prompt = _get_system_prompt_fn()
+        clanker_dir = tmp_path / ".clanker"
+        clanker_dir.mkdir()
+        (clanker_dir / "instructions.md").write_text("Always use TypeScript.")
+        prompt = get_system_prompt(working_directory=str(tmp_path))
+        assert "# USER INSTRUCTIONS" in prompt
+        assert "Always use TypeScript." in prompt
+
+    def test_not_injected_when_no_file(self, tmp_path) -> None:
+        """USER INSTRUCTIONS section absent when no instructions file."""
+        get_system_prompt = _get_system_prompt_fn()
+        prompt = get_system_prompt(working_directory=str(tmp_path))
+        assert "# USER INSTRUCTIONS" not in prompt

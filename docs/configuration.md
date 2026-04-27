@@ -89,6 +89,35 @@ Use the `/model` command in interactive mode:
 
 The current model is shown on startup.
 
+## User Instructions
+
+You can provide custom instructions that are included in every conversation's system prompt. Create a file at `.clanker/instructions.md` in your workspace (the same `.clanker` directory that stores memories and conversations):
+
+```bash
+# Create the instructions file
+mkdir -p .clanker
+echo "Always use TypeScript for new files. Prefer functional components in React." > .clanker/instructions.md
+```
+
+The contents are automatically injected into the system prompt under a `# USER INSTRUCTIONS` section. This is useful for:
+
+- Specifying preferred languages, frameworks, or coding styles
+- Setting project-specific conventions the agent should follow
+- Providing standing instructions that apply to every interaction
+
+**Word limit**: Only the first **250 words** are used. Content beyond 250 words is silently truncated. Keep instructions concise and focused.
+
+**Example** `.clanker/instructions.md`:
+
+```markdown
+Always write Python code following PEP 8.
+Use type hints for all function signatures.
+Prefer pathlib over os.path.
+When writing tests, use pytest fixtures and parametrize where appropriate.
+```
+
+> **Note**: User instructions are per-workspace. Different projects can have different instructions. If the file doesn't exist or is empty, no extra instructions are added.
+
 ## General Settings
 
 General settings (non-model) are stored in `~/.clanker/config.yaml`:

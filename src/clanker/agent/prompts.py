@@ -1,5 +1,44 @@
 """System prompts for the Clanker agent."""
 
+import os
+from pathlib import Path
+
+INSTRUCTIONS_FILE = "instructions.md"
+MAX_INSTRUCTION_WORDS = 250
+
+
+def load_user_instructions(working_directory: str | None = None) -> str:
+    """Load user instructions from .clanker/instructions.md in the workspace.
+
+    Reads the file and truncates to the first MAX_INSTRUCTION_WORDS words.
+
+    Args:
+        working_directory: Workspace root. Defaults to current directory.
+
+    Returns:
+        User instructions string, or empty string if file doesn't exist.
+    """
+    workspace = Path(working_directory or os.getcwd())
+    instructions_path = workspace / ".clanker" / INSTRUCTIONS_FILE
+
+    if not instructions_path.is_file():
+        return ""
+
+    try:
+        text = instructions_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+    if not text:
+        return ""
+
+    words = text.split()
+    if len(words) > MAX_INSTRUCTION_WORDS:
+        words = words[:MAX_INSTRUCTION_WORDS]
+
+    return " ".join(words)
+
+
 SYSTEM_PROMPT = """\
 You are CLANKER, an expert software engineer with deep knowledge across the entire stack. You write clean, maintainable code and solve problems efficiently.
 
@@ -103,6 +142,18 @@ def get_system_prompt(working_directory: str | None = None, user_query: str | No
         Complete system prompt string.
     """
     prompt = SYSTEM_PROMPT
+
+    # Inject user instructions from .clanker/instructions.md
+    user_instructions = load_user_instructions(working_directory)
+    if user_instructions:
+        prompt += f"""
+# USER INSTRUCTIONS
+
+The user has provided the following custom instructions. Follow them in addition to the core principles above:
+
+{user_instructions}
+
+"""
 
     if working_directory:
         prompt += f"""
