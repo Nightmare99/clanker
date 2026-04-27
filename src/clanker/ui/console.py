@@ -643,12 +643,13 @@ class Console:
         panel = Panel(content, title=title, border_style=style)
         self._console.print(panel)
 
-    def print_welcome(self, copilot_model: str | None = None, copilot_reasoning_effort: str | None = None) -> None:
+    def print_welcome(self, copilot_model: str | None = None, copilot_reasoning_effort: str | None = None, user_instructions_loaded: bool = False) -> None:
         """Print welcome message.
 
         Args:
             copilot_model: Optional Copilot model name (for Copilot mode).
             copilot_reasoning_effort: Optional reasoning effort level (for Copilot mode).
+            user_instructions_loaded: Whether user instructions were loaded from .clanker/instructions.md.
         """
         from clanker.config import get_default_model
         from clanker.runtime import is_yolo_mode, is_copilot_mode
@@ -675,6 +676,11 @@ class Console:
         if is_yolo_mode():
             yolo_line = "\n  [bold yellow]YOLO MODE[/bold yellow] [dim]- bash commands auto-approved[/dim]"
 
+        # User instructions indicator
+        instructions_line = ""
+        if user_instructions_loaded:
+            instructions_line = "\n  [bold magenta]USER INSTRUCTIONS[/bold magenta] [dim]- custom instructions loaded[/dim]"
+
         welcome = f"""
 [bold cyan]
    █████████  █████       ██████   █████ █████   ████ ███████████
@@ -689,7 +695,7 @@ class Console:
 
 [dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]
   Systems online. Circuits humming. Ready to build.
-  Model: [bold cyan]{model_info}[/bold cyan]{mode_line}{yolo_line}
+  Model: [bold cyan]{model_info}[/bold cyan]{mode_line}{yolo_line}{instructions_line}
 [dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]
 
 Commands:

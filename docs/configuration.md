@@ -105,7 +105,7 @@ The contents are automatically injected into the system prompt under a `# USER I
 - Setting project-specific conventions the agent should follow
 - Providing standing instructions that apply to every interaction
 
-**Word limit**: Only the first **250 words** are used. Content beyond 250 words is silently truncated. Keep instructions concise and focused.
+**Character limit**: Only the first **250 characters** are used. Content beyond 250 characters is silently truncated. Keep instructions concise and focused.
 
 **Example** `.clanker/instructions.md`:
 

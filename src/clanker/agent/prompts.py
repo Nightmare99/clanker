@@ -4,13 +4,13 @@ import os
 from pathlib import Path
 
 INSTRUCTIONS_FILE = "instructions.md"
-MAX_INSTRUCTION_WORDS = 250
+MAX_INSTRUCTION_CHARS = 250
 
 
 def load_user_instructions(working_directory: str | None = None) -> str:
     """Load user instructions from .clanker/instructions.md in the workspace.
 
-    Reads the file and truncates to the first MAX_INSTRUCTION_WORDS words.
+    Reads the file and truncates to the first MAX_INSTRUCTION_CHARS characters.
 
     Args:
         working_directory: Workspace root. Defaults to current directory.
@@ -32,11 +32,7 @@ def load_user_instructions(working_directory: str | None = None) -> str:
     if not text:
         return ""
 
-    words = text.split()
-    if len(words) > MAX_INSTRUCTION_WORDS:
-        words = words[:MAX_INSTRUCTION_WORDS]
-
-    return " ".join(words)
+    return text[:MAX_INSTRUCTION_CHARS]
 
 
 SYSTEM_PROMPT = """\

@@ -527,7 +527,10 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
         complete_while_typing=True,
     )
 
-    console.print_welcome()
+    from clanker.agent.prompts import load_user_instructions
+    _has_user_instructions = bool(load_user_instructions())
+
+    console.print_welcome(user_instructions_loaded=_has_user_instructions)
 
     # Check for updates (non-blocking, silent on failure)
     try:
@@ -809,7 +812,10 @@ def run_copilot_interactive(
         complete_while_typing=True,
     )
 
-    console.print_welcome(copilot_model=get_copilot_model(), copilot_reasoning_effort=get_copilot_reasoning_effort())
+    from clanker.agent.prompts import load_user_instructions
+    _has_user_instructions = bool(load_user_instructions())
+
+    console.print_welcome(copilot_model=get_copilot_model(), copilot_reasoning_effort=get_copilot_reasoning_effort(), user_instructions_loaded=_has_user_instructions)
 
     # Token tracking
     token_tracker = SessionTokenTracker(model_name=get_copilot_model())
