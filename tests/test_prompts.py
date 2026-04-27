@@ -181,18 +181,18 @@ class TestUserInstructions:
         (clanker_dir / "instructions.md").write_text("Always respond in French.")
         assert load(str(tmp_path)) == "Always respond in French."
 
-    def test_truncates_to_250_words(self, tmp_path) -> None:
-        """Truncates instructions to first 250 words."""
+    def test_truncates_to_250_characters(self, tmp_path) -> None:
+        """Truncates instructions to first 250 characters."""
         load = _get_load_user_instructions()
         clanker_dir = tmp_path / ".clanker"
         clanker_dir.mkdir()
-        words = [f"word{i}" for i in range(400)]
-        (clanker_dir / "instructions.md").write_text(" ".join(words))
+        text = "a" * 400
+        (clanker_dir / "instructions.md").write_text(text)
         result = load(str(tmp_path))
-        assert len(result.split()) == 250
+        assert len(result) == 250
 
-    def test_under_250_words_unchanged(self, tmp_path) -> None:
-        """Instructions under 250 words are returned in full."""
+    def test_under_250_chars_unchanged(self, tmp_path) -> None:
+        """Instructions under 250 characters are returned in full."""
         load = _get_load_user_instructions()
         clanker_dir = tmp_path / ".clanker"
         clanker_dir.mkdir()
