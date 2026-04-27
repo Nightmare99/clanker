@@ -385,7 +385,7 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
                 console.print_warning(f"Memory {memory_id} not found.")
 
     elif cmd.startswith("/workflow"):
-        from clanker.workflows import list_workflows, load_workflow
+        from clanker.workflows import list_workflows, load_workflow, MAX_WORKFLOW_CHARS, WORKFLOW_PREAMBLE
         parts = command.strip().split(maxsplit=1)
         if len(parts) < 2:
             # List available workflows
@@ -402,7 +402,10 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
             workflow_name = parts[1].strip()
             content = load_workflow(workflow_name)
             if content:
-                return f"workflow:{content}"
+                if len(content) > MAX_WORKFLOW_CHARS:
+                    console.print_error(f"Workflow '{workflow_name}' is too large ({len(content)} chars). Workflows must be less than {MAX_WORKFLOW_CHARS} characters.")
+                else:
+                    return f"workflow:{WORKFLOW_PREAMBLE}{content}"
             else:
                 console.print_warning(f"Workflow '{workflow_name}' not found.")
                 workflows = list_workflows()

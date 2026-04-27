@@ -73,6 +73,7 @@ The `/workflow` command supports tab completion. Type `/workflow ` and press Tab
 ## Tips
 
 - Keep workflow prompts focused on a single task or related set of tasks
+- **Character limit**: Workflows must be less than **1500 characters**. Oversized workflows will not execute.
 - Use markdown formatting in workflow files — the agent handles it well
 - Workflows can reference files, run commands, and use all agent capabilities
 - Combine with MCP tools for powerful automation (e.g., GitHub workflows)
