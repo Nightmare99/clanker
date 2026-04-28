@@ -1,6 +1,7 @@
 """Bash command execution tools."""
 
 import asyncio
+import os
 import shlex
 import subprocess
 from typing import Any
@@ -14,6 +15,31 @@ from clanker.utils.sandbox import is_command_safe, requires_confirmation
 
 # Module logger
 logger = get_logger("tools.bash")
+
+
+def _get_clean_env() -> dict[str, str]:
+    """Get a clean environment for subprocesses.
+
+    Removes PyInstaller-specific variables that can interfere with
+    child processes (e.g., SSL issues, library paths).
+    """
+    env = os.environ.copy()
+
+    # Remove PyInstaller-specific variables
+    pyinstaller_vars = [
+        "_MEIPASS",
+        "_MEIPASS2",
+        "LD_LIBRARY_PATH",
+        "DYLD_LIBRARY_PATH",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
+        "CURL_CA_BUNDLE",
+    ]
+    for var in pyinstaller_vars:
+        env.pop(var, None)
+
+    return env
 
 
 class CommandRejectedError(Exception):
@@ -114,6 +140,7 @@ def execute_shell(command: str, timeout: int | None = None) -> str:
             text=True,
             timeout=timeout_seconds,
             cwd=None,  # Use current directory
+            env=_get_clean_env(),
         )
 
         output_parts = []
@@ -183,6 +210,7 @@ async def bash_async(command: str, timeout: int | None = None) -> str:
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=_get_clean_env(),
         )
 
         stdout, stderr = await asyncio.wait_for(
