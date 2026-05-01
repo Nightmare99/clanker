@@ -103,6 +103,7 @@ interface ModelConfig {
   api_version: string | null
   // Token limits
   max_tokens: number | null
+  max_input_tokens: number | null
   // Extended thinking (Anthropic only)
   thinking_enabled: boolean
   thinking_budget_tokens: number
@@ -137,6 +138,7 @@ const modelForm = ref<ModelConfig>({
   deployment_name: null,
   api_version: null,
   max_tokens: null,
+  max_input_tokens: null,
   thinking_enabled: false,
   thinking_budget_tokens: 10000,
   reasoning_effort: null,
@@ -250,6 +252,7 @@ function openAddModel() {
     deployment_name: null,
     api_version: null,
     max_tokens: null,
+    max_input_tokens: null,
     thinking_enabled: false,
     thinking_budget_tokens: 10000,
     reasoning_effort: null,
@@ -640,6 +643,10 @@ onMounted(() => {
                     <span class="detail-label">Max Tokens:</span>
                     <code class="detail-value">{{ model.max_tokens?.toLocaleString() }}</code>
                   </div>
+                  <div v-if="model.max_input_tokens" class="model-detail-row">
+                    <span class="detail-label">Max Input:</span>
+                    <code class="detail-value">{{ model.max_input_tokens?.toLocaleString() }}</code>
+                  </div>
                   <div v-if="model.thinking_enabled" class="model-detail-row">
                     <span class="detail-label">Thinking:</span>
                     <NTag size="small" type="info">{{ model.thinking_budget_tokens?.toLocaleString() }} tokens</NTag>
@@ -772,6 +779,17 @@ onMounted(() => {
                   :min="1"
                   :max="200000"
                   placeholder="Default (4096 for Anthropic)"
+                  clearable
+                  style="width: 100%"
+                />
+              </NFormItem>
+
+              <NFormItem v-if="isModelFormOpenAI" label="Max Input Tokens">
+                <NInputNumber
+                  v-model:value="modelForm.max_input_tokens"
+                  :min="1"
+                  :max="1000000"
+                  placeholder="Required for OpenRouter/custom endpoints"
                   clearable
                   style="width: 100%"
                 />

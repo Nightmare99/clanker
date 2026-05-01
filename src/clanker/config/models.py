@@ -32,6 +32,7 @@ class ModelConfig(BaseModel):
 
     # Token limits
     max_tokens: int | None = Field(default=None, description="Maximum tokens for response")
+    max_input_tokens: int | None = Field(default=None, description="Maximum input tokens (for OpenRouter/custom endpoints)")
 
     # Extended thinking (Anthropic)
     thinking_enabled: bool = Field(default=False, description="Enable extended thinking mode")
@@ -174,6 +175,10 @@ def create_llm_from_config(model_config: ModelConfig):
         # Max tokens if specified
         if model_config.max_tokens:
             kwargs["max_tokens"] = model_config.max_tokens
+
+        # Model profile for OpenRouter/custom endpoints (needed for fractional token limits)
+        if model_config.max_input_tokens:
+            kwargs["model_kwargs"] = {"profile": {"max_input_tokens": model_config.max_input_tokens}}
 
         # stream_usage enables token counts in streaming responses
         return ChatOpenAI(
