@@ -147,6 +147,10 @@ context:
 memory:
   persist_sessions: true
   max_history_length: 100
+
+# Web search (uses DuckDuckGo, no API key needed)
+web_search:
+  enabled: true
 ```
 
 ## Web Configuration UI

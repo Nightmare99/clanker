@@ -87,6 +87,8 @@ At conversation start, call `read_project_instructions` to load AGENTS.md. These
 ## Search
 - `glob_search(pattern, path)` - Find files: `**/*.py`, `src/**/*.ts`
 - `grep_search(pattern, path)` - Search content with regex.
+- `web_search(query, max_results)` - Search the web via DuckDuckGo. Use for docs, errors, libraries.
+- `web_read(url, max_length)` - Extract clean text content from a web page. If a webpage gives HTTP errors, try one or two more other pages from the search results. If not possible, mention what error occured.
 
 ## Execution
 - `execute_shell(command)` - Run shell commands. Timeout: 120s.

@@ -77,6 +77,12 @@ class LoggingSettings(BaseModel):
     detailed_format: bool = True  # Include function/line info in logs
 
 
+class WebSearchSettings(BaseModel):
+    """Web search configuration."""
+
+    enabled: bool = True
+
+
 class AgentSettings(BaseModel):
     """Agent identity settings."""
 
@@ -100,6 +106,7 @@ class Settings(BaseSettings):
     context: ContextSettings = Field(default_factory=ContextSettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
+    web_search: WebSearchSettings = Field(default_factory=WebSearchSettings)
 
     @classmethod
     def from_yaml(cls, path: Path, create_default: bool = True) -> "Settings":

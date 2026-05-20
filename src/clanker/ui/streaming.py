@@ -573,7 +573,7 @@ def stream_copilot_response_sync(
         from rich.text import Text
 
         from clanker.agent.prompts import get_system_prompt
-        from clanker.tools import ALL_TOOLS
+        from clanker.tools import get_tools
         from clanker.providers.github_copilot import _convert_langchain_tools_to_copilot
 
         rich_console = console._console
@@ -626,7 +626,7 @@ def stream_copilot_response_sync(
 
         try:
             # Load built-in tools (non-MCP)
-            tools = list(ALL_TOOLS)
+            tools = get_tools()
 
             # Convert built-in tools to Copilot format
             copilot_tools = _convert_langchain_tools_to_copilot(tools)

@@ -230,6 +230,12 @@ class ToolDisplayHandler:
         elif tool_name == "list_directory":
             text.append("List ", style="magenta")
             text.append(args.get("path", "."), style="cyan")
+        elif tool_name == "web_search":
+            text.append("Search web: ", style="magenta")
+            text.append((args.get("query", "") or "")[:60], style="cyan")
+        elif tool_name == "web_read":
+            text.append("Read URL: ", style="magenta")
+            text.append((args.get("url", "") or "")[:80], style="cyan")
         else:
             text.append(tool_name, style="magenta")
 
