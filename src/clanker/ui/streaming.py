@@ -495,9 +495,9 @@ def stream_agent_response_sync(
             current_response = current_thinking
             current_thinking = ""
 
-        # Print final response as plain text
+        # Print final response
         if current_response.strip():
-            rich_console.print(current_response)
+            console.print_assistant_message(current_response)
 
         # Show thinking summary if present
         if current_thinking:
@@ -995,7 +995,7 @@ def stream_copilot_response_sync(
 
         # Print final response
         if current_response.strip():
-            rich_console.print(current_response)
+            console.print_assistant_message(current_response)
 
         return StreamResult(
             response=current_response,

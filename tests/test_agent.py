@@ -89,9 +89,36 @@ class TestAgentState:
 
 
 class TestMiddlewareModule:
-    """Tests for middleware module imports."""
+    """Tests for middleware module imports and functionality."""
 
     def test_middleware_importable(self) -> None:
         """Middleware module can be imported."""
         from clanker.agent.middleware import multimodal_tool_results
         assert multimodal_tool_results is not None
+
+    def test_middleware_sync_and_async(self) -> None:
+        """Middleware supports both sync and async wrapping."""
+        from clanker.agent.middleware import multimodal_tool_results
+
+        # Test sync wrapping
+        dummy_request = "dummy_request"
+
+        def dummy_handler(req: str) -> str:
+            return "dummy_result"
+
+        res = multimodal_tool_results.wrap_tool_call(dummy_request, dummy_handler)
+        assert res == "dummy_result"
+
+        # Test async wrapping
+        import asyncio
+
+        async def dummy_async_handler(req: str) -> str:
+            return "dummy_async_result"
+
+        async def run_async_test() -> None:
+            res_async = await multimodal_tool_results.awrap_tool_call(
+                dummy_request, dummy_async_handler
+            )
+            assert res_async == "dummy_async_result"
+
+        asyncio.run(run_async_test())
