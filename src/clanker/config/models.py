@@ -178,7 +178,7 @@ def create_llm_from_config(model_config: ModelConfig):
 
         # Model profile for OpenRouter/custom endpoints (needed for fractional token limits)
         if model_config.max_input_tokens:
-            kwargs["model_kwargs"] = {"profile": {"max_input_tokens": model_config.max_input_tokens}}
+            kwargs["profile"] = {"max_input_tokens": model_config.max_input_tokens}
 
         # stream_usage enables token counts in streaming responses
         return ChatOpenAI(

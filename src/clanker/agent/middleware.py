@@ -3,7 +3,7 @@
 import json
 from typing import Any, Callable
 
-from langchain.agents.middleware import wrap_tool_call
+from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.messages import ToolMessage
 
 from clanker.logging import get_logger
@@ -11,24 +11,8 @@ from clanker.logging import get_logger
 logger = get_logger("agent.middleware")
 
 
-@wrap_tool_call
-def multimodal_tool_results(request: Any, handler: Callable) -> ToolMessage:
-    """Middleware that converts tool results with images to multimodal ToolMessages.
-
-    When a tool returns a dict with an 'images' key containing base64-encoded images,
-    this middleware converts the result to a multimodal ToolMessage that includes
-    both text and image content, allowing vision-capable models to "see" the images.
-
-    Args:
-        request: The tool call request.
-        handler: The next handler in the chain.
-
-    Returns:
-        ToolMessage with multimodal content if images present, otherwise normal result.
-    """
-    # Execute the tool
-    result = handler(request)
-
+def _process_tool_message(result: Any) -> Any:
+    """Helper to convert a ToolMessage containing images into multimodal content."""
     # Check if result is a ToolMessage we can process
     if not isinstance(result, ToolMessage):
         return result
@@ -87,3 +71,26 @@ def multimodal_tool_results(request: Any, handler: Callable) -> ToolMessage:
         tool_call_id=result.tool_call_id,
         name=result.name if hasattr(result, "name") else None,
     )
+
+
+class MultimodalToolResultsMiddleware(AgentMiddleware):
+    """Middleware class that converts tool results with images to multimodal ToolMessages.
+
+    Supports both synchronous and asynchronous agent execution.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.tools = []
+        self.state_schema = AgentState
+
+    def wrap_tool_call(self, request: Any, handler: Callable) -> Any:
+        result = handler(request)
+        return _process_tool_message(result)
+
+    async def awrap_tool_call(self, request: Any, handler: Callable) -> Any:
+        result = await handler(request)
+        return _process_tool_message(result)
+
+
+multimodal_tool_results = MultimodalToolResultsMiddleware()

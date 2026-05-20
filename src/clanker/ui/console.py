@@ -99,8 +99,24 @@ class Console:
         self._console.print(message)
 
     def print_assistant_message(self, message: str) -> None:
-        """Print an assistant message using rich text markup."""
-        self.print_rich_text(message)
+        """Print an assistant message using Markdown wrapped in a visual panel."""
+        from rich.markdown import Markdown
+
+        message_str = message.strip()
+        if not message_str:
+            return
+
+        agent_name = self._settings.agent.name or "Clanker"
+        markdown_content = Markdown(message_str)
+
+        panel = Panel(
+            markdown_content,
+            title=f"[bold green]{agent_name}[/bold green]",
+            title_align="left",
+            border_style="green",
+            padding=(1, 2),
+        )
+        self._console.print(panel)
 
     def print_tool_call(self, tool_name: str, args: dict | None = None) -> None:
         """Print a tool call indicator (detailed version)."""
