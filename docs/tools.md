@@ -12,6 +12,8 @@ The agent has access to these built-in tools:
 | `execute_shell` | Execute shell commands |
 | `glob_search` | Find files by pattern |
 | `grep_search` | Search file contents with regex |
+| `web_search` | Search the web via DuckDuckGo |
+| `web_read` | Extract clean content from a web page |
 
 ## Tool Details
 
@@ -46,6 +48,53 @@ Finds files matching a glob pattern (e.g., `**/*.py`, `src/**/*.js`).
 ### grep_search
 
 Searches file contents using regular expressions. Returns matching lines with context.
+
+### web_search
+
+Searches the web using DuckDuckGo. No API key required.
+
+**Parameters:**
+- `query` — Search query string. Be specific for best results.
+- `max_results` — Number of results to return (1–10, default 5).
+
+**Returns:** Titles, URLs, and content snippets for each result.
+
+**Example usage by the agent:**
+```
+web_search("python asyncio gather exception handling", max_results=3)
+```
+
+### web_read
+
+Fetches a web page and extracts the main content as clean text, stripping navigation, ads, scripts, and boilerplate HTML.
+
+**Parameters:**
+- `url` — The URL to read (must start with `http://` or `https://`).
+- `max_length` — Maximum characters to return (1000–50000, default 20000).
+
+**Returns:** Clean extracted text content from the page.
+
+**Notes:**
+- Uses browser-like headers to avoid bot detection on most sites.
+- Falls back to an alternative fetcher if the primary method fails.
+- Some sites with aggressive anti-bot protection (Cloudflare JS challenges) cannot be read. The tool will return an HTTP error code in those cases.
+
+**Example workflow:**
+```
+web_search("fastapi middleware order")  → finds relevant docs page
+web_read("https://fastapi.tiangolo.com/advanced/middleware/")  → reads full content
+```
+
+## Web Search Configuration
+
+Web search is enabled by default. To disable it, add to `~/.clanker/config.yaml`:
+
+```yaml
+web_search:
+  enabled: false
+```
+
+When disabled, `web_search` and `web_read` are removed from the agent entirely (no wasted prompt tokens).
 
 ## MCP Tools
 

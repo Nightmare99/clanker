@@ -117,6 +117,9 @@ a = Analysis(
         # PDF reading and rendering support
         'pypdf',
         'fitz',  # pymupdf
+        # Web search and page reading
+        'ddgs',
+        'trafilatura',
         # GitHub Copilot SDK - explicit imports (v0.2.0)
         'copilot',
         'copilot.types',

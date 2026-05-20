@@ -12,6 +12,7 @@ from clanker.tools.file_tools import (
 from clanker.tools.memory_tools import forget, list_memories, recall, remember
 from clanker.tools.notify_tools import notify
 from clanker.tools.search_tools import glob_search, grep_search
+from clanker.tools.web_tools import web_read, web_search
 
 # All available tools
 ALL_TOOLS = [
@@ -31,10 +32,28 @@ ALL_TOOLS = [
     recall,
     forget,
     list_memories,
+    # Web tools
+    web_search,
+    web_read,
 ]
+
+
+def get_tools() -> list:
+    """Get active tools based on configuration.
+
+    Returns all tools, excluding web tools if web_search is disabled in config.
+    """
+    from clanker.config.settings import get_settings
+
+    settings = get_settings()
+    if not settings.web_search.enabled:
+        return [t for t in ALL_TOOLS if t not in (web_search, web_read)]
+    return list(ALL_TOOLS)
+
 
 __all__ = [
     "ALL_TOOLS",
+    "get_tools",
     "read_project_instructions",
     "read_file",
     "write_file",
@@ -49,4 +68,6 @@ __all__ = [
     "recall",
     "forget",
     "list_memories",
+    "web_search",
+    "web_read",
 ]

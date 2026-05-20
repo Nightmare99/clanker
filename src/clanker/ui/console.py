@@ -243,6 +243,16 @@ class Console:
             if message:
                 text.append(f": {self._truncate(message, 40)}", style="dim")
 
+        elif tool_name == "web_search":
+            query = args.get("query", "")
+            text.append("Search web: ", style="tool")
+            text.append(self._truncate(query, 60), style="cyan")
+
+        elif tool_name == "web_read":
+            url = args.get("url", "")
+            text.append("Read URL: ", style="tool")
+            text.append(self._truncate(url, 80), style="cyan")
+
         else:
             # Handle MCP tools and other unknown tools
             # MCP tools often have format "server__tool" or "mcp_server_tool"

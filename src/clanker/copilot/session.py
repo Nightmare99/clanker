@@ -352,9 +352,9 @@ class CopilotSessionManager:
 
         # If no tools provided, load default tools to ensure we override SDK built-ins
         if tools is None and self._tools is None:
-            from clanker.tools import ALL_TOOLS
+            from clanker.tools import get_tools
             from clanker.copilot.tools import convert_langchain_tools_to_copilot
-            tools = convert_langchain_tools_to_copilot(list(ALL_TOOLS))
+            tools = convert_langchain_tools_to_copilot(get_tools())
             logger.info("Loaded %d default tools for session resume", len(tools))
 
         # Rebuild available_tools for resume

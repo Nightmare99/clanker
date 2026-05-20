@@ -9,7 +9,7 @@ from clanker.agent.prompts import get_system_prompt
 from clanker.config import Settings, get_settings, get_default_model, create_llm_from_config
 from clanker.logging import get_logger
 from clanker.mcp import load_mcp_tools, load_mcp_tools_async
-from clanker.tools import ALL_TOOLS
+from clanker.tools import get_tools
 
 # Module logger
 logger = get_logger("agent")
@@ -24,7 +24,7 @@ def _get_all_tools(settings: Settings) -> list:
     Returns:
         Combined list of built-in and MCP tools.
     """
-    tools = list(ALL_TOOLS)
+    tools = get_tools()
     logger.debug("Loaded %d built-in tools", len(tools))
 
     # Load MCP tools if enabled
@@ -127,7 +127,7 @@ async def create_agent_graph_async(
     settings = settings or get_settings()
 
     # Get built-in tools
-    tools = list(ALL_TOOLS)
+    tools = get_tools()
     logger.debug("Loaded %d built-in tools", len(tools))
 
     # Load MCP tools asynchronously
