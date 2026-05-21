@@ -21,6 +21,17 @@ MAX_LINES_DEFAULT = 2000
 MAX_LINE_LENGTH = 2000
 MAX_PDF_PAGES_PER_REQUEST = 20
 MAX_IMAGE_DIMENSION = 1024  # Max width/height for PDF page images
+MAX_IMAGE_FILE_SIZE = 20_000_000  # 20MB max for image files
+
+IMAGE_EXTENSIONS = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".svg": "image/svg+xml",
+}
 
 
 def _render_pdf_pages_as_images(path: Path, page_indices: list[int]) -> list[dict]:
@@ -74,6 +85,95 @@ def _render_pdf_pages_as_images(path: Path, page_indices: list[int]) -> list[dic
         logger.warning("Error rendering PDF pages as images: %s", e)
 
     return images
+
+
+def _read_image(path: Path) -> dict:
+    """Read an image file and return it as base64 for multimodal LLM consumption.
+
+    Args:
+        path: Path to the image file.
+
+    Returns:
+        Dict with ok status, description, and images list for multimodal handling.
+    """
+    suffix = path.suffix.lower()
+    mime_type = IMAGE_EXTENSIONS.get(suffix, "image/png")
+
+    # Check file size
+    file_size = path.stat().st_size
+    if file_size > MAX_IMAGE_FILE_SIZE:
+        return {"ok": False, "error": f"Image too large ({file_size} bytes, max {MAX_IMAGE_FILE_SIZE})"}
+
+    try:
+        raw_data = path.read_bytes()
+    except OSError as e:
+        return {"ok": False, "error": f"Error reading image: {e}"}
+
+    # For non-SVG images, resize if too large to save tokens
+    if suffix != ".svg" and suffix != ".svgz":
+        raw_data = _resize_image_if_needed(raw_data, mime_type)
+
+    b64_data = base64.b64encode(raw_data).decode("utf-8")
+    logger.info("Read image %s (%s, %d bytes encoded)", path.name, mime_type, len(b64_data))
+
+    return {
+        "ok": True,
+        "path": str(path),
+        "content": f"Image file: {path.name} ({mime_type}, {file_size} bytes)",
+        "images": [{
+            "data": b64_data,
+            "mime_type": mime_type,
+            "page": 1,
+        }],
+    }
+
+
+def _resize_image_if_needed(data: bytes, mime_type: str) -> bytes:
+    """Resize image if dimensions exceed MAX_IMAGE_DIMENSION.
+
+    Returns original data if resizing isn't possible or not needed.
+    """
+    try:
+        from io import BytesIO
+
+        try:
+            import fitz  # pymupdf - can handle image resizing
+        except ImportError:
+            return data
+
+        # Open image with pymupdf
+        img = fitz.Pixmap(data)
+
+        if img.width <= MAX_IMAGE_DIMENSION and img.height <= MAX_IMAGE_DIMENSION:
+            return data
+
+        # Calculate new dimensions maintaining aspect ratio
+        scale = min(MAX_IMAGE_DIMENSION / img.width, MAX_IMAGE_DIMENSION / img.height)
+        new_width = int(img.width * scale)
+        new_height = int(img.height * scale)
+
+        # Resize using pymupdf
+        # Create a new document with the image, render at target size
+        doc = fitz.open()
+        page = doc.new_page(width=img.width, height=img.height)
+        page.insert_image(page.rect, pixmap=img)
+
+        # Render at scaled size
+        matrix = fitz.Matrix(scale, scale)
+        pix = page.get_pixmap(matrix=matrix)
+
+        # Output as PNG
+        resized_data = pix.tobytes("png")
+        doc.close()
+
+        logger.debug(
+            "Resized image from %dx%d to %dx%d (%d -> %d bytes)",
+            img.width, img.height, new_width, new_height, len(data), len(resized_data),
+        )
+        return resized_data
+    except Exception as e:
+        logger.debug("Image resize failed, using original: %s", e)
+        return data
 
 
 def _parse_page_range(pages: str, total_pages: int) -> list[int]:
@@ -209,6 +309,10 @@ def read_file(
     Set include_images=True for PDFs to render pages as images for visual
     analysis (charts, diagrams, layouts). Requires pdf2image and poppler.
 
+    For image files (PNG, JPG, GIF, WEBP, BMP, SVG), returns the image
+    directly for visual analysis. The image is passed to the LLM for
+    understanding diagrams, screenshots, UI mockups, charts, etc.
+
     Args:
         file_path: Path to the file to read
         offset: Line offset for text files (ignored for PDFs)
@@ -231,13 +335,24 @@ def read_file(
         return {"ok": False, "error": "Not a file", "path": file_path}
 
     settings = get_settings()
-    if path.stat().st_size > settings.safety.max_file_size:
+    file_size = path.stat().st_size
+
+    # Image files have their own size limit (larger than text)
+    is_image = path.suffix.lower() in IMAGE_EXTENSIONS
+    if is_image and file_size > MAX_IMAGE_FILE_SIZE:
+        return {"ok": False, "error": "Image too large", "path": file_path}
+    elif not is_image and file_size > settings.safety.max_file_size:
         return {"ok": False, "error": "File too large", "path": file_path}
 
     # Handle PDF files
     if path.suffix.lower() == ".pdf":
         logger.info("Reading PDF file: %s (pages=%s, include_images=%s)", file_path, pages, include_images)
         return _read_pdf(path, pages, include_images)
+
+    # Handle image files
+    if path.suffix.lower() in IMAGE_EXTENSIONS:
+        logger.info("Reading image file: %s", file_path)
+        return _read_image(path)
 
     # Handle regular text files
     lines_out = []
