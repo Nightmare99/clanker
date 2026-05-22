@@ -108,6 +108,135 @@ async def _query_mcp_tool_names(mcp_servers: dict | None) -> list[str]:
         logger.warning("Failed to query MCP tools: %s", e)
         return []
 
+
+def _patch_session_for_binary_results(session: Any) -> None:
+    """Monkey-patch a Copilot session to support binary (image) tool results.
+
+    The SDK's RPC layer doesn't include `binaryResultsForLlm` in tool response
+    payloads. This patches the session's internal tool execution to inject
+    binary data (images) into the JSON-RPC call when a ToolResult carries them.
+    """
+    import inspect
+    import types as pytypes
+
+    try:
+        from copilot.types import ToolResult, ToolInvocation
+        from copilot.generated.rpc import SessionToolsHandlePendingToolCallParams
+    except ImportError:
+        return
+
+    # Get reference to the SDK's internal trace_context if available
+    try:
+        from copilot.session import trace_context
+    except ImportError:
+        trace_context = None
+
+    async def _patched_execute_tool_and_respond(
+        self, request_id, tool_name, tool_call_id, arguments, handler,
+        traceparent=None, tracestate=None,
+    ):
+        """Execute tool and send result, injecting binary data if present."""
+        try:
+            invocation = ToolInvocation(
+                session_id=self.session_id,
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                arguments=arguments,
+            )
+
+            if trace_context is not None:
+                with trace_context(traceparent, tracestate):
+                    result = handler(invocation)
+                    if inspect.isawaitable(result):
+                        result = await result
+            else:
+                result = handler(invocation)
+                if inspect.isawaitable(result):
+                    result = await result
+
+            tool_result: ToolResult
+            if result is None:
+                tool_result = ToolResult(
+                    text_result_for_llm="Tool returned no result.",
+                    result_type="failure",
+                    error="tool returned no result",
+                    tool_telemetry={},
+                )
+            else:
+                tool_result = result
+
+            # Check for binary results (images)
+            binary_results = getattr(tool_result, "binary_results_for_llm", None)
+
+            if tool_result.result_type == "failure" and tool_result.error:
+                # Error path - use standard SDK mechanism
+                await self.rpc.tools.handle_pending_tool_call(
+                    SessionToolsHandlePendingToolCallParams(
+                        request_id=request_id,
+                        error=tool_result.error,
+                    )
+                )
+            elif binary_results:
+                # Has images - send directly via JSON-RPC with binary data
+                params_dict = {
+                    "requestId": request_id,
+                    "sessionId": self.rpc.tools._session_id,
+                    "result": {
+                        "textResultForLlm": tool_result.text_result_for_llm,
+                        "resultType": tool_result.result_type or "success",
+                        "binaryResultsForLlm": [
+                            {
+                                "data": br.data,
+                                "mimeType": br.mime_type,
+                                "type": br.type,
+                                "description": br.description or "",
+                            }
+                            for br in binary_results
+                        ],
+                    },
+                }
+                if tool_result.tool_telemetry:
+                    params_dict["result"]["toolTelemetry"] = tool_result.tool_telemetry
+
+                logger.info(
+                    "Sending %d image(s) in tool response for %s",
+                    len(binary_results), tool_name,
+                )
+                await self.rpc.tools._client.request(
+                    "session.tools.handlePendingToolCall", params_dict
+                )
+            else:
+                # Normal text-only path - use standard SDK mechanism
+                from copilot.generated.rpc import ResultResult
+                await self.rpc.tools.handle_pending_tool_call(
+                    SessionToolsHandlePendingToolCallParams(
+                        request_id=request_id,
+                        result=ResultResult(
+                            text_result_for_llm=tool_result.text_result_for_llm,
+                            result_type=tool_result.result_type,
+                            tool_telemetry=tool_result.tool_telemetry,
+                        ),
+                    )
+                )
+
+        except Exception as exc:
+            try:
+                await self.rpc.tools.handle_pending_tool_call(
+                    SessionToolsHandlePendingToolCallParams(
+                        request_id=request_id,
+                        error=str(exc),
+                    )
+                )
+            except Exception:
+                pass
+
+    # Bind the patched method to the session instance
+    session._execute_tool_and_respond = pytypes.MethodType(
+        _patched_execute_tool_and_respond, session
+    )
+    logger.debug("Patched session for binary tool results support")
+
+
 # Global session manager instance
 _session_manager: CopilotSessionManager | None = None
 
@@ -322,6 +451,9 @@ class CopilotSessionManager:
         self._mcp_servers = mcp_servers
         logger.info("Created Copilot session: %s with model: %s", self._session_id, model)
 
+        # Patch session to support image/binary results in tool responses
+        _patch_session_for_binary_results(self._session)
+
         register_session(self._session_id, model)
         return self._session
 
@@ -413,6 +545,10 @@ class CopilotSessionManager:
             ) from e
 
         logger.info("Resumed Copilot session: %s", session_id)
+
+        # Patch session to support image/binary results in tool responses
+        _patch_session_for_binary_results(self._session)
+
         return self._session
 
     async def get_or_create_session(

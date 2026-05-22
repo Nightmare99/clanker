@@ -86,10 +86,12 @@ class MultimodalToolResultsMiddleware(AgentMiddleware):
 
     def wrap_tool_call(self, request: Any, handler: Callable) -> Any:
         result = handler(request)
+        logger.debug("wrap_tool_call intercepted: %s", type(result).__name__)
         return _process_tool_message(result)
 
     async def awrap_tool_call(self, request: Any, handler: Callable) -> Any:
         result = await handler(request)
+        logger.debug("awrap_tool_call intercepted: %s", type(result).__name__)
         return _process_tool_message(result)
 
 
