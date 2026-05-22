@@ -56,6 +56,7 @@ def _format_result_for_copilot(result: dict) -> any:
         # No images, return as JSON string
         return json.dumps(result)
 
+    logger.info("Formatting result with %d images for Copilot", len(images))
     # Build ToolResult with binary content for images
     try:
         from copilot.types import ToolResult, ToolBinaryResult
@@ -67,9 +68,14 @@ def _format_result_for_copilot(result: dict) -> any:
         result_copy["images_note"] = "Images extracted but cannot be displayed (SDK types unavailable)"
         return json.dumps(result_copy)
 
-    # Build text result (without images)
+    # Build text result (without raw image data but with helpful context)
     text_result = {k: v for k, v in result.items() if k != "images"}
     text_result["images_count"] = len(images)
+    text_result["note"] = (
+        "Image data has been attached. Describe what you see in the image. "
+        "If you cannot see the image, inform the user that image viewing "
+        "may not be supported with the current model/provider."
+    )
 
     # Build binary results for images
     binary_results = []
@@ -79,7 +85,7 @@ def _format_result_for_copilot(result: dict) -> any:
                 data=img["data"],
                 mime_type=img.get("mime_type", "image/png"),
                 type="image",
-                description=f"PDF page {img.get('page', '?')}",
+                description=f"Image page {img.get('page', '?')}",
             ))
             logger.debug("Added image binary result for page %s", img.get("page", "?"))
         except Exception as e:
@@ -140,6 +146,10 @@ def convert_langchain_tools_to_copilot(tools: list) -> list:
 
                     # Handle dict results that may contain images
                     if isinstance(result, dict):
+                        logger.debug(
+                            "Tool %s returned dict with keys: %s",
+                            t.name, list(result.keys()),
+                        )
                         return _format_result_for_copilot(result)
 
                     result_str = str(result)
