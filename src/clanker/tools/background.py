@@ -471,6 +471,11 @@ async def bash_status(job_id: str | None = None) -> str:
         Human-readable status report. States: running, exited, failed,
         killed, timed_out.
     """
+    return _status_text(job_id)
+
+
+def _status_text(job_id: str | None) -> str:
+    """Build the human-readable status report (shared by bash_status/bash_wait)."""
     mgr = get_job_manager()
 
     if job_id is None:
@@ -608,7 +613,7 @@ async def bash_wait(job_id: str, timeout: float | None = 300.0) -> str:
     if job is None:
         return f"Error: unknown job_id '{job_id}'"
 
-    status = await bash_status.ainvoke({"job_id": job_id})
+    status = _status_text(job_id)
     if finished:
         return status
 
