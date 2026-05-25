@@ -279,7 +279,6 @@ def stream_agent_response_sync(
                     # Show tool calls immediately (don't batch)
                     if event_type == "on_tool_start":
                         tools_started = True
-                        stop_loading()
                         if settings.output.show_tool_calls:
                             run_id = event.get("run_id", "")
                             if run_id and run_id not in shown_tool_calls:
@@ -292,8 +291,11 @@ def stream_agent_response_sync(
                                 # Skip notify - the tool itself handles display
                                 if tool_name.lower() == "notify":
                                     continue
-                                # Show tool immediately for proper interleaving
-                                tool_handler.show_tool(tool_name, tool_input)
+                                # Queue tool with spinner - result will be
+                                # printed together with header when tool ends
+                                tool_handler.handle_tool_start(tool_name, tool_input)
+                        else:
+                            stop_loading()
 
                     # Show tool result
                     elif event_type == "on_tool_end":
@@ -301,14 +303,15 @@ def stream_agent_response_sync(
                         if tool_name_end.lower() == "notify":
                             start_loading()
                             continue
-                        # Show tool output
+                        # Show tool header + output together
                         if settings.output.show_tool_calls:
                             data = event.get("data", {})
                             tool_output = normalize_tool_output(data.get("output"))
-                            tool_handler.show_tool_result(tool_name_end, tool_output)
-                        # Clear tracking so tool can be called again
-                        tool_handler.clear_tool_tracking(tool_name_end)
-                        start_loading()
+                            tool_handler.handle_tool_end(tool_name_end, tool_output)
+                        else:
+                            # Clear tracking so tool can be called again
+                            tool_handler.clear_tool_tracking(tool_name_end)
+                            start_loading()
 
                     # Track model calls to detect summarization
                     elif event_type == "on_chat_model_start":
