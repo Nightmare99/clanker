@@ -369,7 +369,9 @@ class ToolDisplayHandler:
         self._update_live_display()
 
         self.clear_tool_tracking(tool_name)
-        if self._on_tool_end:
+        # Only signal tool_end (which restarts the loading spinner) when no
+        # more tools are pending - avoids two Live displays at once.
+        if self._on_tool_end and not self._pending_calls:
             self._on_tool_end()
 
     def finalize_live(self) -> None:
