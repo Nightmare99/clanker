@@ -50,6 +50,7 @@ interface Config {
     sandbox_commands: boolean
     max_file_size: number
     command_timeout: number
+    foreground_promote_after_seconds: number
   }
   output: {
     syntax_highlighting: boolean
@@ -933,6 +934,23 @@ onMounted(() => {
                   @update:value="markChanged"
                 />
               </NFormItem>
+
+              <NFormItem label="Auto-promote to Background (s)">
+                <NInputNumber
+                  v-model:value="config.safety.foreground_promote_after_seconds"
+                  :min="0"
+                  style="width: 100%"
+                  @update:value="markChanged"
+                />
+              </NFormItem>
+              <div class="form-hint">
+                Foreground <code>execute_shell</code> commands running longer
+                than this threshold are auto-promoted to a background job, so
+                the agent can keep working and poll progress with
+                <code>bash_status</code> / <code>bash_output</code>. Set to
+                <strong>0</strong> to disable promotion (legacy blocking
+                behavior).
+              </div>
             </NForm>
           </NCard>
 
@@ -1210,6 +1228,29 @@ onMounted(() => {
   padding: 24px;
   border: 1px dashed rgba(0, 240, 255, 0.2);
   border-radius: 4px;
+}
+
+.form-hint {
+  color: #888;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: -8px 0 16px 184px;
+  padding: 8px 12px;
+  border-left: 2px solid rgba(255, 0, 128, 0.4);
+  background: rgba(255, 0, 128, 0.04);
+}
+
+.form-hint code {
+  color: #00f0ff;
+  background: rgba(0, 240, 255, 0.08);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+
+.form-hint strong {
+  color: #b6ff00;
 }
 
 .mcp-servers {

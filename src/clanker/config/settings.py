@@ -16,6 +16,10 @@ class SafetySettings(BaseModel):
     sandbox_commands: bool = True
     max_file_size: int = Field(default=1_000_000, gt=0)  # 1MB
     command_timeout: int = Field(default=120_000, gt=0)  # 2 minutes in ms
+    # Seconds before a foreground `execute_shell` command is auto-promoted
+    # to a background job (returns immediately with a job id so the agent
+    # can keep working). Set to 0 to disable auto-promotion.
+    foreground_promote_after_seconds: int = Field(default=30, ge=0)
 
 
 class OutputSettings(BaseModel):
@@ -172,6 +176,7 @@ safety:
   sandbox_commands: true
   max_file_size: 1000000
   command_timeout: 120000
+  foreground_promote_after_seconds: 30  # 0 disables auto-promotion to background
 
 output:
   syntax_highlighting: true

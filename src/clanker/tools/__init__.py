@@ -1,5 +1,12 @@
 """Tool definitions for Clanker agent."""
 
+from clanker.tools.background import (
+    bash_background,
+    bash_kill,
+    bash_output,
+    bash_status,
+    bash_wait,
+)
 from clanker.tools.bash_tools import execute_shell
 from clanker.tools.file_tools import (
     append_file,
@@ -23,6 +30,11 @@ ALL_TOOLS = [
     edit_file,
     list_directory,
     execute_shell,
+    bash_background,
+    bash_status,
+    bash_output,
+    bash_wait,
+    bash_kill,
     glob_search,
     grep_search,
     # Communication tools
@@ -61,6 +73,11 @@ __all__ = [
     "edit_file",
     "list_directory",
     "execute_shell",
+    "bash_background",
+    "bash_status",
+    "bash_output",
+    "bash_wait",
+    "bash_kill",
     "glob_search",
     "grep_search",
     "notify",

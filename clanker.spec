@@ -11,6 +11,15 @@ block_cipher = None
 copilot_imports = collect_submodules('copilot')
 copilot_datas = collect_data_files('copilot')
 
+# Pygments uses string-based lazy imports for lexers/formatters/styles, so
+# PyInstaller can't auto-detect which ones to bundle. Pull in everything to
+# avoid runtime "incorrect header check" failures on PYZ extraction.
+pygments_imports = (
+    collect_submodules('pygments.lexers')
+    + collect_submodules('pygments.formatters')
+    + collect_submodules('pygments.styles')
+)
+
 # Get the project root
 project_root = Path(SPECPATH)
 
@@ -109,6 +118,11 @@ a = Analysis(
         'rich',
         'prompt_toolkit',
         'click',
+        # Pygments - rich.syntax / rich.markdown depend on lazy lexer lookup.
+        'pygments',
+        'pygments.lexers',
+        'pygments.formatters',
+        'pygments.styles',
         # SQLite for checkpointing
         'sqlite3',
         'aiosqlite',
@@ -133,7 +147,7 @@ a = Analysis(
         'copilot.generated',
         'copilot.generated.rpc',
         'copilot.generated.session_events',
-    ] + copilot_imports,
+    ] + copilot_imports + pygments_imports,
     hookspath=[str(project_root / 'hooks')],
     hooksconfig={},
     runtime_hooks=[],

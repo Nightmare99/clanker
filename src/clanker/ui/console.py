@@ -5,15 +5,84 @@ import random
 from contextlib import contextmanager
 
 from rich.console import Console as RichConsole
+from rich.live import Live
+from rich import box
+from rich.markdown import Heading, Markdown
+
+
+class _LeftAlignedHeading(Heading):
+    """Heading that renders left-aligned instead of Rich's default center."""
+
+    def __rich_console__(self, console, options):  # type: ignore[override]
+        text = self.text
+        text.justify = "left"
+        if self.tag == "h1":
+            yield Panel(text, box=box.HEAVY, style="markdown.h1.border")
+        else:
+            if self.tag == "h2":
+                yield Text("")
+            yield text
+
+
+# Replace default heading renderer for our Markdown output.
+Markdown.elements["heading_open"] = _LeftAlignedHeading
+from rich.markup import escape
 from rich.panel import Panel
 from rich.spinner import Spinner
 from rich.syntax import Syntax
 from rich.text import Text
-from rich.markup import escape
 from rich.theme import Theme
-from rich.live import Live
+
+# Eagerly materialize pygments lexers AND styles at module import time.
+# Rich's Markdown/Syntax renderers do lazy string-based lookup
+# (`get_lexer_by_name(...)`, `get_style_by_name(...)`) which under
+# PyInstaller can fail later with `zlib.error: incorrect header check`
+# once subprocesses have been spawned (the bundle archive FD state gets
+# corrupted by forks). Touching the registries now guarantees everything
+# is in sys.modules before any subprocess runs.
+try:
+    from pygments.lexers import get_all_lexers, get_lexer_by_name
+    from pygments.styles import get_all_styles, get_style_by_name
+
+    _ = list(get_all_lexers())
+    for _name in (
+        "python", "bash", "shell", "json", "yaml", "toml",
+        "javascript", "typescript", "html", "css", "markdown",
+        "text", "diff", "sql", "go", "rust", "c", "cpp", "java",
+    ):
+        try:
+            get_lexer_by_name(_name)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Force every style module into sys.modules. Rich defaults to
+    # "monokai" but users / themes may pick others.
+    for _style in list(get_all_styles()):
+        try:
+            get_style_by_name(_style)
+        except Exception:  # noqa: BLE001
+            pass
+except Exception:  # noqa: BLE001
+    # Pygments missing or import failure — Rich will degrade gracefully.
+    pass
 
 from clanker.config import get_settings
+
+
+def _job_label(job_id: str) -> str:
+    """Return a friendly label for a job id, falling back to the id itself."""
+    jid = str(job_id or "")
+    if not jid or jid == "all":
+        return jid or "all"
+    try:
+        from clanker.tools.background import get_job_manager
+
+        job = get_job_manager().get(jid)
+        if job and job.name:
+            return job.name
+    except Exception:  # noqa: BLE001
+        pass
+    return jid
 
 # Clanker-themed loading messages
 LOADING_MESSAGES = [
@@ -100,23 +169,32 @@ class Console:
 
     def print_assistant_message(self, message: str) -> None:
         """Print an assistant message using Markdown wrapped in a visual panel."""
-        from rich.markdown import Markdown
-
         message_str = message.strip()
         if not message_str:
             return
 
         agent_name = self._settings.agent.name or "Clanker"
-        markdown_content = Markdown(message_str)
-
-        panel = Panel(
-            markdown_content,
-            title=f"[bold green]{agent_name}[/bold green]",
-            title_align="left",
-            border_style="green",
-            padding=(1, 2),
-        )
-        self._console.print(panel)
+        try:
+            markdown_content = Markdown(message_str)
+            panel = Panel(
+                markdown_content,
+                title=f"[bold green]{agent_name}[/bold green]",
+                title_align="left",
+                border_style="green",
+                padding=(1, 2),
+            )
+            self._console.print(panel)
+        except Exception:  # noqa: BLE001
+            # Fall back to plain text rendering if Markdown parsing fails.
+            self._console.print(
+                Panel(
+                    message_str,
+                    title=f"[bold green]{agent_name}[/bold green]",
+                    title_align="left",
+                    border_style="green",
+                    padding=(1, 2),
+                )
+            )
 
     def print_tool_call(self, tool_name: str, args: dict | None = None) -> None:
         """Print a tool call indicator (detailed version)."""
@@ -192,6 +270,33 @@ class Console:
         elif tool_name == "execute_shell":
             cmd = self._truncate(args.get("command", ""), 60)
             text.append(f"Run: {cmd}", style="tool")
+
+        elif tool_name == "bash_background":
+            name = (args.get("name") or "").strip()
+            cmd = self._truncate(args.get("command", ""), 60)
+            if name:
+                text.append("Run (bg) ", style="tool")
+                text.append(f"[{name}]", style="cyan")
+                text.append(f": {cmd}", style="tool")
+            else:
+                text.append(f"Run (bg): {cmd}", style="tool")
+
+        elif tool_name == "bash_status":
+            jid = args.get("job_id") or "all"
+            text.append("Job status: ", style="tool")
+            text.append(_job_label(jid), style="cyan")
+
+        elif tool_name == "bash_output":
+            text.append("Job output: ", style="tool")
+            text.append(_job_label(args.get("job_id", "")), style="cyan")
+
+        elif tool_name == "bash_wait":
+            text.append("Wait for job: ", style="tool")
+            text.append(_job_label(args.get("job_id", "")), style="cyan")
+
+        elif tool_name == "bash_kill":
+            text.append("Job kill: ", style="tool")
+            text.append(_job_label(args.get("job_id", "")), style="cyan")
 
         elif tool_name == "glob_search":
             pattern = args.get("pattern", "*")

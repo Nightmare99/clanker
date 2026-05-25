@@ -8,6 +8,10 @@ from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
 
+from rich.live import Live
+from rich.spinner import Spinner
+from rich.text import Text
+
 from clanker.config import Settings
 from clanker.copilot.errors import (
     log_copilot_error,
@@ -45,8 +49,6 @@ def _cancel_streaming_task() -> None:
     # Update spinner to show stopping message immediately
     if _current_loading_live is not None:
         try:
-            from rich.spinner import Spinner
-            from rich.text import Text
             spinner = Spinner("dots", text=Text(" Stopping...", style="bold red"))
             _current_loading_live.update(spinner)
         except Exception:
@@ -179,9 +181,6 @@ def stream_agent_response_sync(
         StreamResult with response text and token usage.
     """
     async def _stream_async() -> StreamResult:
-        from rich.live import Live
-        from rich.spinner import Spinner
-        from rich.text import Text
 
         from clanker.agent import create_agent_graph_async
 
@@ -571,9 +570,6 @@ def stream_copilot_response_sync(
         StreamResult with response text and token usage.
     """
     async def _stream_copilot_async() -> StreamResult:
-        from rich.live import Live
-        from rich.spinner import Spinner
-        from rich.text import Text
 
         from clanker.agent.prompts import get_system_prompt
         from clanker.tools import get_tools

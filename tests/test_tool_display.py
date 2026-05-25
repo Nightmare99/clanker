@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 from pathlib import Path
+
+from rich.console import Console as RichConsole
 
 
 def _load_tool_display_module():
@@ -22,7 +25,11 @@ class FakeConsole:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, ...]] = []
-        self._console = None  # For Live display compatibility
+        # Per-instance Rich console so Live displays don't leak onto Rich's
+        # global singleton between tests (would raise LiveError).
+        self._console = RichConsole(
+            file=io.StringIO(), force_terminal=False, width=80
+        )
 
     def print_tool_use(self, tool_name: str, tool_input: dict) -> None:
         self.calls.append(("use", tool_name, tool_input))

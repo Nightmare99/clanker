@@ -91,7 +91,14 @@ At conversation start, call `read_project_instructions` to load AGENTS.md. These
 - `web_read(url, max_length)` - Extract clean text content from a web page. If a webpage gives HTTP errors, try one or two more other pages from the search results. If not possible, mention what error occured.
 
 ## Execution
-- `execute_shell(command)` - Run shell commands. Timeout: 120s.
+- `execute_shell(command)` - Run shell commands. Timeout: 120s. If a command runs longer than ~30s it is auto-promoted to a background job and you get a job id back instead of output — poll it with `bash_status`/`bash_output`.
+- `bash_background(command, name=None, timeout=None)` - Launch a long-running command in the background; returns a job id immediately so you can keep working. Always pass a short `name` (e.g. "pytest suite", "vite dev", "npm install") so the user can tell jobs apart at a glance.
+- `bash_status(job_id=None)` - List all jobs or inspect one (state, returncode, runtime, bytes).
+- `bash_output(job_id, tail=None, since_byte=None)` - Read captured output. Use `since_byte` from a previous read to poll incrementally.
+- `bash_wait(job_id, timeout=300)` - Block until a job finishes; returns its final status + output. Use this when your next step depends on the job's result and you have no other useful work to do. Don't poll with `bash_status` in a loop.
+- `bash_kill(job_id)` - Terminate a background job.
+
+Prefer `bash_background` for tests, builds, installs, dev servers, long greps, or anything you expect to take more than a few seconds. After launching, do other useful work, then come back with `bash_status` / `bash_output`.
 
 ## Communication
 - `notify(message, level)` - Send status during long tasks. Use sparingly.

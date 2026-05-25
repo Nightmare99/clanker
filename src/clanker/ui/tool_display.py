@@ -9,6 +9,22 @@ from rich.spinner import Spinner
 from rich.text import Text
 
 
+def _job_label(job_id: str) -> str:
+    """Return a friendly label for a job id, falling back to the id itself."""
+    jid = str(job_id or "")
+    if not jid or jid == "all":
+        return jid or "all"
+    try:
+        from clanker.tools.background import get_job_manager
+
+        job = get_job_manager().get(jid)
+        if job and job.name:
+            return job.name
+    except Exception:  # noqa: BLE001
+        pass
+    return jid
+
+
 @dataclass
 class PendingToolCall:
     """A tool call waiting for its result."""
@@ -221,6 +237,28 @@ class ToolDisplayHandler:
         elif tool_name == "execute_shell":
             cmd = (args.get("command", "") or "")[:60]
             text.append(f"Run: {cmd}", style="magenta")
+        elif tool_name == "bash_background":
+            name = (args.get("name") or "").strip()
+            cmd = (args.get("command", "") or "")[:60]
+            if name:
+                text.append("Run (bg) ", style="magenta")
+                text.append(f"[{name}]", style="cyan")
+                text.append(f": {cmd}", style="magenta")
+            else:
+                text.append(f"Run (bg): {cmd}", style="magenta")
+        elif tool_name == "bash_status":
+            jid = args.get("job_id") or "all"
+            text.append("Job status: ", style="magenta")
+            text.append(_job_label(jid), style="cyan")
+        elif tool_name == "bash_output":
+            text.append("Job output: ", style="magenta")
+            text.append(_job_label(args.get("job_id", "")), style="cyan")
+        elif tool_name == "bash_wait":
+            text.append("Wait for job: ", style="magenta")
+            text.append(_job_label(args.get("job_id", "")), style="cyan")
+        elif tool_name == "bash_kill":
+            text.append("Job kill: ", style="magenta")
+            text.append(_job_label(args.get("job_id", "")), style="cyan")
         elif tool_name == "glob_search":
             text.append("Find ", style="magenta")
             text.append(args.get("pattern", "*"), style="cyan")
