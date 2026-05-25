@@ -28,11 +28,7 @@ import {
 } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
 import {
-  SettingsOutline,
-  KeyOutline,
-  CodeSlashOutline,
   ShieldCheckmarkOutline,
-  ServerOutline,
   DocumentTextOutline,
   ExtensionPuzzleOutline,
   HardwareChipOutline,
@@ -40,7 +36,6 @@ import {
   AddOutline,
   CreateOutline,
   TrashOutline,
-  CheckmarkCircleOutline,
   PlayOutline,
   StarOutline,
   Star,
@@ -85,14 +80,6 @@ interface Config {
   }
 }
 
-interface EnvStatus {
-  OPENAI_API_KEY: boolean
-  ANTHROPIC_API_KEY: boolean
-  AZURE_OPENAI_API_KEY: boolean
-  AZURE_OPENAI_ENDPOINT: boolean
-  AZURE_OPENAI_DEPLOYMENT_NAME: boolean
-}
-
 interface ModelConfig {
   name: string
   provider: string
@@ -118,7 +105,6 @@ const saving = ref(false)
 const activeKey = ref('model')
 const config = ref<Config | null>(null)
 const configPath = ref('')
-const envStatus = ref<EnvStatus | null>(null)
 const hasChanges = ref(false)
 
 // Models management
@@ -161,14 +147,10 @@ const testingServer = ref<string | null>(null)
 // Menu items
 const menuOptions: MenuOption[] = [
   { label: 'Models', key: 'model', icon: () => h(NIcon, null, { default: () => h(HardwareChipOutline) }) },
-  { label: 'API Keys', key: 'keys', icon: () => h(NIcon, null, { default: () => h(KeyOutline) }) },
-  { label: 'Output', key: 'output', icon: () => h(NIcon, null, { default: () => h(CodeSlashOutline) }) },
   { label: 'Context', key: 'context', icon: () => h(NIcon, null, { default: () => h(ColorPaletteOutline) }) },
   { label: 'Safety', key: 'safety', icon: () => h(NIcon, null, { default: () => h(ShieldCheckmarkOutline) }) },
-  { label: 'Memory', key: 'memory', icon: () => h(NIcon, null, { default: () => h(ServerOutline) }) },
   { label: 'MCP Servers', key: 'mcp', icon: () => h(NIcon, null, { default: () => h(ExtensionPuzzleOutline) }) },
   { label: 'Logging', key: 'logging', icon: () => h(NIcon, null, { default: () => h(DocumentTextOutline) }) },
-  { label: 'Agent', key: 'agent', icon: () => h(NIcon, null, { default: () => h(SettingsOutline) }) },
 ]
 
 // Provider options for model config
@@ -179,12 +161,12 @@ const modelProviderOptions = [
   { label: 'Ollama', value: 'Ollama', description: 'Local models via Ollama' },
 ]
 
-// Provider colors and icons for visual distinction
+// Provider colors and icons for visual distinction (neon palette)
 const providerStyles: Record<string, { color: string; bgColor: string }> = {
-  'OpenAI': { color: '#10a37f', bgColor: 'rgba(16, 163, 127, 0.1)' },
-  'AzureOpenAI': { color: '#0078d4', bgColor: 'rgba(0, 120, 212, 0.1)' },
-  'Anthropic': { color: '#d97706', bgColor: 'rgba(217, 119, 6, 0.1)' },
-  'Ollama': { color: '#6366f1', bgColor: 'rgba(99, 102, 241, 0.1)' },
+  'OpenAI': { color: '#b6ff1a', bgColor: 'rgba(182, 255, 26, 0.12)' },
+  'AzureOpenAI': { color: '#00f0ff', bgColor: 'rgba(0, 240, 255, 0.12)' },
+  'Anthropic': { color: '#ff2bd6', bgColor: 'rgba(255, 43, 214, 0.12)' },
+  'Ollama': { color: '#ffe600', bgColor: 'rgba(255, 230, 0, 0.12)' },
 }
 
 const logLevelOptions = [
@@ -219,7 +201,6 @@ async function fetchConfig() {
     const data = await response.json()
     config.value = data.config
     configPath.value = data.config_path
-    envStatus.value = data.env_status
   } catch (error) {
     message.error('Failed to load configuration')
     console.error(error)
@@ -777,18 +758,16 @@ onMounted(() => {
                 <NInputNumber
                   v-model:value="modelForm.max_tokens"
                   :min="1"
-                  :max="200000"
                   placeholder="Default (4096 for Anthropic)"
                   clearable
                   style="width: 100%"
                 />
               </NFormItem>
 
-              <NFormItem v-if="isModelFormOpenAI" label="Max Input Tokens">
+              <NFormItem label="Max Input Tokens">
                 <NInputNumber
                   v-model:value="modelForm.max_input_tokens"
                   :min="1"
-                  :max="1000000"
                   placeholder="Required for OpenRouter/custom endpoints"
                   clearable
                   style="width: 100%"
@@ -858,9 +837,9 @@ onMounted(() => {
                 <NFormItem v-if="modelForm.thinking_enabled" label="Budget Tokens">
                   <NInputNumber
                     v-model:value="modelForm.thinking_budget_tokens"
-                    :min="1000"
-                    :max="100000"
+                    :min="1"
                     :step="1000"
+                    style="width: 100%"
                   />
                 </NFormItem>
 
@@ -884,55 +863,11 @@ onMounted(() => {
             </template>
           </NModal>
 
-          <!-- API Keys -->
-          <NCard v-if="activeKey === 'keys'" class="settings-card">
-            <NAlert type="info" style="margin-bottom: 16px">
-              API keys are read from environment variables for security.
-              Set them in your shell profile or .env file.
-            </NAlert>
-
-            <div class="env-status-grid">
-              <div v-for="(isSet, key) in envStatus" :key="key" class="env-item">
-                <NTag :type="isSet ? 'success' : 'default'" size="small">
-                  {{ isSet ? '✓' : '○' }}
-                </NTag>
-                <code>{{ key }}</code>
-              </div>
-            </div>
-          </NCard>
-
-          <!-- Output Settings -->
-          <NCard v-if="activeKey === 'output'" class="settings-card">
-            <NForm label-placement="left" label-width="180">
-              <NFormItem label="Syntax Highlighting">
-                <NSwitch
-                  v-model:value="config.output.syntax_highlighting"
-                  @update:value="markChanged"
-                />
-              </NFormItem>
-
-              <NFormItem label="Show Tool Calls">
-                <NSwitch
-                  v-model:value="config.output.show_tool_calls"
-                  @update:value="markChanged"
-                />
-              </NFormItem>
-
-              <NFormItem label="Stream Responses">
-                <NSwitch
-                  v-model:value="config.output.stream_responses"
-                  @update:value="markChanged"
-                />
-              </NFormItem>
-
-              <NFormItem label="Show Token Usage">
-                <NSwitch
-                  v-model:value="config.output.show_token_usage"
-                  @update:value="markChanged"
-                />
-              </NFormItem>
-            </NForm>
-          </NCard>
+          <!-- API Keys, Output, Memory, Agent tabs removed:
+               - API Keys: informational only (env var display)
+               - Output.stream_responses was dead; rest moved out of UI
+               - Memory: persist_sessions/max_history_length were dead; storage_path is read-only
+               - Agent.name was barely used; removed to simplify -->
 
           <!-- Context Settings -->
           <NCard v-if="activeKey === 'context'" class="settings-card">
@@ -961,7 +896,12 @@ onMounted(() => {
 
           <!-- Safety Settings -->
           <NCard v-if="activeKey === 'safety'" class="settings-card">
-            <NForm label-placement="left" label-width="180">
+            <NAlert type="info" style="margin-bottom: 16px">
+              <strong>Require Confirmation:</strong> prompts you before every bash command (bypassed by <code>--yolo</code>).<br />
+              <strong>Sandbox Commands:</strong> blocks dangerous commands (<code>rm -rf /</code>, fork bombs, etc.) before they reach the shell.
+            </NAlert>
+
+            <NForm label-placement="left" label-width="200">
               <NFormItem label="Require Confirmation">
                 <NSwitch
                   v-model:value="config.safety.require_confirmation"
@@ -980,6 +920,7 @@ onMounted(() => {
                 <NInputNumber
                   v-model:value="config.safety.max_file_size"
                   :min="1000"
+                  style="width: 100%"
                   @update:value="markChanged"
                 />
               </NFormItem>
@@ -988,39 +929,14 @@ onMounted(() => {
                 <NInputNumber
                   v-model:value="config.safety.command_timeout"
                   :min="1000"
+                  style="width: 100%"
                   @update:value="markChanged"
                 />
               </NFormItem>
             </NForm>
           </NCard>
 
-          <!-- Memory Settings -->
-          <NCard v-if="activeKey === 'memory'" class="settings-card">
-            <NForm label-placement="left" label-width="180">
-              <NFormItem label="Persist Sessions">
-                <NSwitch
-                  v-model:value="config.memory.persist_sessions"
-                  @update:value="markChanged"
-                />
-              </NFormItem>
-
-              <NFormItem label="Max History Length">
-                <NInputNumber
-                  v-model:value="config.memory.max_history_length"
-                  :min="1"
-                  @update:value="markChanged"
-                />
-              </NFormItem>
-
-              <NFormItem label="Storage Path">
-                <NInput
-                  :value="config.memory.storage_path"
-                  disabled
-                  placeholder="Read-only"
-                />
-              </NFormItem>
-            </NForm>
-          </NCard>
+          <!-- Memory tab removed (all toggles were dead, storage_path is read-only) -->
 
           <!-- MCP Settings -->
           <NCard v-if="activeKey === 'mcp'" class="settings-card">
@@ -1208,18 +1124,7 @@ onMounted(() => {
             </NForm>
           </NCard>
 
-          <!-- Agent Settings -->
-          <NCard v-if="activeKey === 'agent'" class="settings-card">
-            <NForm label-placement="left" label-width="180">
-              <NFormItem label="Agent Name">
-                <NInput
-                  v-model:value="config.agent.name"
-                  placeholder="Clanker"
-                  @update:value="markChanged"
-                />
-              </NFormItem>
-            </NForm>
-          </NCard>
+          <!-- Agent tab removed (only had name field, not worth a whole tab) -->
 
           <!-- Footer -->
           <div class="content-footer">
@@ -1234,38 +1139,45 @@ onMounted(() => {
 <style scoped>
 .app-layout {
   height: 100vh;
+  background: #000;
 }
 
 .sidebar {
-  background: #141414;
+  background: #000;
+  border-right: 1px solid rgba(0, 240, 255, 0.18) !important;
 }
 
 .logo {
-  padding: 20px;
+  padding: 22px 16px 18px;
   text-align: center;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid rgba(255, 43, 214, 0.25);
+  background: linear-gradient(180deg, rgba(255, 43, 214, 0.08), transparent);
 }
 
 .logo-icon {
-  font-size: 24px;
+  font-size: 26px;
+  filter: drop-shadow(0 0 6px rgba(0, 240, 255, 0.7));
 }
 
 .logo-text {
   display: block;
   font-size: 18px;
-  font-weight: bold;
-  color: #63e2b7;
+  font-weight: 800;
+  color: var(--neon-pink);
   margin-top: 8px;
-  letter-spacing: 2px;
+  letter-spacing: 4px;
+  text-shadow:
+    0 0 6px rgba(255, 43, 214, 0.9),
+    0 0 14px rgba(255, 43, 214, 0.5);
 }
 
 .main-content {
-  padding: 24px;
-  background: #1a1a1a;
+  padding: 28px;
+  background: #000;
 }
 
 .content-wrapper {
-  max-width: 800px;
+  max-width: 900px;
 }
 
 .content-header {
@@ -1276,60 +1188,54 @@ onMounted(() => {
 
 .content-header h1 {
   margin: 0;
-  font-size: 24px;
-  color: #fff;
+  font-size: 26px;
+  letter-spacing: 1.5px;
+  color: var(--neon-cyan);
+  text-transform: uppercase;
+  text-shadow:
+    0 0 6px rgba(0, 240, 255, 0.7),
+    0 0 14px rgba(0, 240, 255, 0.35);
 }
 
 .settings-card {
   margin-bottom: 16px;
-}
-
-.env-status-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 12px;
-}
-
-.env-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.env-item code {
-  font-size: 13px;
-  color: #aaa;
+  background: var(--oled-surface);
+  border: 1px solid rgba(0, 240, 255, 0.18);
+  box-shadow: 0 0 0 1px rgba(0, 240, 255, 0.04), 0 0 24px rgba(0, 240, 255, 0.05);
 }
 
 .empty-state {
   color: #666;
   text-align: center;
-  padding: 20px;
+  padding: 24px;
+  border: 1px dashed rgba(0, 240, 255, 0.2);
+  border-radius: 4px;
 }
 
 .mcp-servers {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .content-footer {
-  margin-top: 24px;
+  margin-top: 28px;
   padding-top: 16px;
-  border-top: 1px solid #333;
+  border-top: 1px dashed rgba(255, 43, 214, 0.25);
 }
 
 .content-footer code {
-  color: #666;
+  color: rgba(0, 240, 255, 0.55);
   font-size: 12px;
+  letter-spacing: 0.5px;
 }
 
 .server-detail {
   margin-top: 8px;
-  color: #666;
+  color: #777;
 }
 
-/* Models Section Styles */
+/* Models Section */
 .models-section {
   max-width: 100%;
 }
@@ -1338,7 +1244,8 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
+  gap: 20px;
 }
 
 .models-header-text {
@@ -1347,35 +1254,65 @@ onMounted(() => {
 
 .models-description {
   margin: 0;
-  color: #888;
+  color: #b0b0b0;
   font-size: 14px;
+  line-height: 1.6;
 }
 
 .models-description code {
-  background: #2a2a2a;
-  padding: 2px 6px;
-  border-radius: 4px;
+  background: var(--oled-surface-2);
+  padding: 2px 8px;
+  border-radius: 3px;
   font-size: 12px;
+  color: var(--neon-lime);
+  border: 1px solid rgba(182, 255, 26, 0.25);
 }
 
 .models-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 18px;
 }
 
 .model-card {
-  border: 1px solid #333;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  background: var(--oled-surface) !important;
+  border: 1px solid rgba(0, 240, 255, 0.2);
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.model-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--neon-pink), var(--neon-cyan), transparent);
+  opacity: 0.6;
 }
 
 .model-card:hover {
-  border-color: #555;
+  border-color: var(--neon-cyan);
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 0 1px rgba(0, 240, 255, 0.3),
+    0 8px 32px rgba(0, 240, 255, 0.15);
 }
 
 .model-card-default {
-  border-width: 2px;
-  box-shadow: 0 0 12px rgba(99, 226, 183, 0.15);
+  border-color: var(--neon-pink) !important;
+  box-shadow:
+    0 0 0 1px rgba(255, 43, 214, 0.4),
+    0 0 20px rgba(255, 43, 214, 0.25),
+    0 0 40px rgba(255, 43, 214, 0.1);
+}
+
+.model-card-default::before {
+  background: linear-gradient(90deg, var(--neon-pink), var(--neon-lime), var(--neon-cyan));
+  opacity: 1;
+  height: 2px;
 }
 
 .model-card-header {
@@ -1387,17 +1324,20 @@ onMounted(() => {
 .model-info {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .model-name {
-  font-weight: 600;
+  font-weight: 700;
   font-size: 16px;
+  color: #fff;
+  letter-spacing: 0.5px;
 }
 
 .default-star {
-  color: #f0c000;
-  font-size: 16px;
+  color: var(--neon-lime);
+  font-size: 18px;
+  filter: drop-shadow(0 0 4px rgba(182, 255, 26, 0.8));
 }
 
 .model-details {
@@ -1409,27 +1349,32 @@ onMounted(() => {
 .model-detail-row {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: 10px;
   font-size: 13px;
 }
 
 .detail-label {
-  color: #888;
-  min-width: 80px;
+  color: var(--neon-cyan);
+  min-width: 84px;
   flex-shrink: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  opacity: 0.8;
 }
 
 .detail-value {
-  color: #aaa;
-  background: #2a2a2a;
-  padding: 2px 6px;
-  border-radius: 4px;
+  color: #ddd;
+  background: var(--oled-surface-2);
+  padding: 2px 8px;
+  border-radius: 3px;
   font-size: 12px;
   word-break: break-all;
+  border: 1px solid rgba(255, 43, 214, 0.12);
 }
 
 .detail-url {
-  max-width: 200px;
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1437,6 +1382,8 @@ onMounted(() => {
 
 .empty-models-card {
   text-align: center;
-  padding: 40px 20px;
+  padding: 48px 24px;
+  background: var(--oled-surface) !important;
+  border: 1px dashed rgba(255, 43, 214, 0.3);
 }
 </style>

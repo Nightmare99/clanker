@@ -320,6 +320,7 @@ class ModelRequest(BaseModel):
     api_version: str | None = None
     # Token limits
     max_tokens: int | None = None
+    max_input_tokens: int | None = None
     # Extended thinking (Anthropic only)
     thinking_enabled: bool = False
     thinking_budget_tokens: int = 10000
@@ -366,6 +367,7 @@ async def create_model_config(request: ModelRequest) -> MessageResponse:
             deployment_name=request.deployment_name,
             api_version=request.api_version,
             max_tokens=request.max_tokens,
+            max_input_tokens=request.max_input_tokens,
             thinking_enabled=request.thinking_enabled,
             thinking_budget_tokens=request.thinking_budget_tokens,
             reasoning_effort=request.reasoning_effort,
@@ -399,6 +401,7 @@ async def update_model_config(name: str, request: ModelRequest) -> MessageRespon
             deployment_name=request.deployment_name,
             api_version=request.api_version,
             max_tokens=request.max_tokens,
+            max_input_tokens=request.max_input_tokens,
             thinking_enabled=request.thinking_enabled,
             thinking_budget_tokens=request.thinking_budget_tokens,
             reasoning_effort=request.reasoning_effort,

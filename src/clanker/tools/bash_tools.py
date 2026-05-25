@@ -119,14 +119,15 @@ def execute_shell(command: str, timeout: int | None = None) -> str:
 
     settings = get_settings()
 
-    # Security check
-    is_safe, reason = is_command_safe(command)
-    if not is_safe:
-        logger.warning("Command blocked: %s - %s", command[:50], reason)
-        return f"Error: Command blocked - {reason}"
+    # Security check (skip if sandboxing disabled)
+    if settings.safety.sandbox_commands:
+        is_safe, reason = is_command_safe(command)
+        if not is_safe:
+            logger.warning("Command blocked: %s - %s", command[:50], reason)
+            return f"Error: Command blocked - {reason}"
 
-    # Command approval (unless in yolo mode)
-    if not is_yolo_mode():
+    # Command approval (skip if in yolo mode or confirmation disabled)
+    if not is_yolo_mode() and settings.safety.require_confirmation:
         prompt_for_approval(command)  # Raises CommandRejectedError if rejected
 
     # Set timeout
@@ -195,12 +196,13 @@ async def bash_async(command: str, timeout: int | None = None) -> str:
 
     settings = get_settings()
 
-    is_safe, reason = is_command_safe(command)
-    if not is_safe:
-        return f"Error: Command blocked - {reason}"
+    if settings.safety.sandbox_commands:
+        is_safe, reason = is_command_safe(command)
+        if not is_safe:
+            return f"Error: Command blocked - {reason}"
 
-    # Command approval (unless in yolo mode)
-    if not is_yolo_mode():
+    # Command approval (skip if in yolo mode or confirmation disabled)
+    if not is_yolo_mode() and settings.safety.require_confirmation:
         prompt_for_approval(command)  # Raises CommandRejectedError if rejected
 
     timeout_seconds = timeout or (settings.safety.command_timeout // 1000)
