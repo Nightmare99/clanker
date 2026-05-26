@@ -639,6 +639,7 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
                             console.print(f"  [{role}] {content}")
                     else:
                         console.print_warning(f"Session {session_id} not found")
+                    continue
                 elif result and result.startswith("workflow:"):
                     # Execute workflow: treat content as user input
                     user_input = result.split(":", 1)[1]
@@ -914,6 +915,7 @@ def run_copilot_interactive(
                         console.print("[bold cyan]*WHIRR*[/bold cyan] Memory banks wiped. Fresh slate initialized. [bold cyan]*CLANK*[/bold cyan]")
                     except Exception as e:
                         console.print_error(f"Failed to create new session: {e}")
+                    continue
                 elif result and result.startswith("copilot_restore:"):
                     # Restore a Copilot session
                     session_id = result.split(":", 1)[1]
@@ -930,6 +932,7 @@ def run_copilot_interactive(
                         console.print_info(f"Restored Copilot session: {session_id}")
                     except Exception as e:
                         console.print_warning(f"Could not restore session: {e}")
+                    continue
                 elif result and result.startswith("workflow:"):
                     # Execute workflow: treat content as user input
                     user_input = result.split(":", 1)[1]
