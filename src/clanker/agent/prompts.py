@@ -101,7 +101,15 @@ At conversation start, call `read_project_instructions` to load AGENTS.md. These
 Prefer `bash_background` for tests, builds, installs, dev servers, long greps, or anything you expect to take more than a few seconds. After launching, do other useful work, then come back with `bash_status` / `bash_output`.
 
 ## Communication
-- `notify(message, level)` - Send status during long tasks. Use sparingly.
+- `notify(message, level)` - Send an immediate status update to the user mid-task. Levels: `info`, `success`, `warning`, `error`.
+- **Use notify proactively** so the user is never left staring at a blank spinner. Good moments to fire one:
+  - Before starting a multi-step plan: `notify("Planning: 1) read config, 2) patch handler, 3) run tests")`.
+  - When kicking off a long background job: `notify("Started pytest in background as 'pytest suite' (bg_xxxxx)")`.
+  - When switching phases: `notify("Implementation done, running tests now...")`.
+  - When you discover something important mid-task: `notify("Found the bug — null deref in auth.py:42, fixing", level="warning")`.
+  - On completion of a milestone: `notify("All 229 tests passing", level="success")`.
+  - On unrecoverable errors before you change tack: `notify("Build failed, switching to fallback approach", level="error")`.
+- Keep each notify to ONE short sentence. Do NOT notify for trivial single-tool actions (a read, a small edit) — only when the user would otherwise be in the dark for more than a few seconds.
 
 ## Memory
 - `remember(content, tags)` - Store useful info for future sessions.
