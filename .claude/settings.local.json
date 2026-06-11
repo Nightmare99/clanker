@@ -15,7 +15,9 @@
       "WebFetch(domain:pypi.org)",
       "Bash(python -m py_compile /home/mnq/Experiments/clanker/src/clanker/config/settings.py)",
       "Bash(python -m py_compile /home/mnq/Experiments/clanker/src/clanker/agent/graph.py)",
-      "Bash(/home/mnq/Experiments/clanker/venv/bin/pip install -e /home/mnq/Experiments/clanker)"
+      "Bash(/home/mnq/Experiments/clanker/venv/bin/pip install -e /home/mnq/Experiments/clanker)",
+      "Bash(rm -f ../src/clanker/config/web/static/assets/*)",
+      "Bash(cp -r dist/* ../src/clanker/config/web/static/)"
     ]
   }
 }

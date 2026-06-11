@@ -61,6 +61,7 @@ interface Config {
   context: {
     summarization_threshold: number
     keep_recent_turns: number
+    max_tool_result_tokens: number
   }
   memory: {
     persist_sessions: boolean
@@ -892,6 +893,22 @@ onMounted(() => {
                   @update:value="markChanged"
                 />
               </NFormItem>
+
+              <NFormItem label="Max Tool Result Tokens">
+                <NInputNumber
+                  v-model:value="config.context.max_tool_result_tokens"
+                  :min="0"
+                  :step="1000"
+                  style="width: 100%"
+                  @update:value="markChanged"
+                />
+              </NFormItem>
+              <div class="form-hint">
+                Caps any single tool result (file reads, command output, MCP
+                tools) to this many tokens. Oversized results are truncated at
+                the tool boundary so one large output cannot overflow the
+                context window. Set to <strong>0</strong> to disable truncation.
+              </div>
             </NForm>
           </NCard>
 
