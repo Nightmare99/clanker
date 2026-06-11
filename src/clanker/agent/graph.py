@@ -3,7 +3,10 @@
 from langchain.agents import create_agent
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
-from clanker.agent.middleware import multimodal_tool_results
+from clanker.agent.middleware import (
+    ToolResultTruncationMiddleware,
+    multimodal_tool_results,
+)
 from clanker.agent.prompts import get_system_prompt
 from clanker.agent.summarization import RobustSummarizationMiddleware
 from clanker.config import Settings, get_settings, get_default_model, create_llm_from_config
@@ -97,13 +100,22 @@ def create_agent_graph(
         keep=("messages", settings.context.keep_recent_turns * 2),
     )
 
+    # Cap oversized tool results at the tool boundary so a single large result
+    # cannot overflow the context window even within summarization's kept window.
+    tool_truncation = ToolResultTruncationMiddleware(
+        max_tokens=settings.context.max_tool_result_tokens,
+    )
+
     # Create agent with middleware
+    # Order matters: tool_truncation runs first (outermost) so it truncates AFTER
+    # multimodal_tool_results extracts images; summarization manages the window.
+    # - tool_truncation: bounds any single tool result
     # - multimodal_tool_results: converts tool results with images to multimodal ToolMessages
     # - summarization: handles context window management
     agent = create_agent(
         model=model,
         tools=all_tools,
-        middleware=[multimodal_tool_results, summarization],
+        middleware=[tool_truncation, multimodal_tool_results, summarization],
         checkpointer=checkpointer,
         system_prompt=get_system_prompt(),
     )
@@ -157,13 +169,22 @@ async def create_agent_graph_async(
         keep=("messages", settings.context.keep_recent_turns * 2),
     )
 
+    # Cap oversized tool results at the tool boundary so a single large result
+    # cannot overflow the context window even within summarization's kept window.
+    tool_truncation = ToolResultTruncationMiddleware(
+        max_tokens=settings.context.max_tool_result_tokens,
+    )
+
     # Create agent with middleware
+    # Order matters: tool_truncation runs first (outermost) so it truncates AFTER
+    # multimodal_tool_results extracts images; summarization manages the window.
+    # - tool_truncation: bounds any single tool result
     # - multimodal_tool_results: converts tool results with images to multimodal ToolMessages
     # - summarization: handles context window management
     agent = create_agent(
         model=model,
         tools=tools,
-        middleware=[multimodal_tool_results, summarization],
+        middleware=[tool_truncation, multimodal_tool_results, summarization],
         checkpointer=checkpointer,
         system_prompt=get_system_prompt(),
     )

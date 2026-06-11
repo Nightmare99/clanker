@@ -143,6 +143,7 @@ output:
 context:
   keep_recent_turns: 4
   summarization_threshold: 80.0  # % of context window
+  max_tool_result_tokens: 20000  # Cap any single tool result (0 disables)
 
 memory:
   persist_sessions: true

@@ -38,6 +38,10 @@ class ContextSettings(BaseModel):
     keep_recent_turns: int = Field(default=4, ge=1, le=20)
     # Percentage of context window to trigger summarization (0-100)
     summarization_threshold: float = Field(default=80.0, ge=50.0, le=99.0)
+    # Maximum tokens of any single tool result kept in the conversation.
+    # Oversized results are head/tail truncated at the tool boundary so one
+    # large output cannot overflow the context window. 0 disables truncation.
+    max_tool_result_tokens: int = Field(default=20_000, ge=0)
 
 
 class MemorySettings(BaseModel):
@@ -190,6 +194,7 @@ output:
 context:
   keep_recent_turns: 4  # Keep last N conversation turns after summarization
   summarization_threshold: 80.0  # Trigger at this % of context window (50-99)
+  max_tool_result_tokens: 20000  # Cap any single tool result to this many tokens (0 disables)
 
 memory:
   persist_sessions: true
