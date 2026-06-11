@@ -652,24 +652,61 @@ class Console:
         self._console.print(text)
 
     def print_edit_diff(self, old_string: str, new_string: str) -> None:
-        """Print a diff showing what was changed in an edit operation."""
+        """Print a compact diff showing only the changed lines (with context)."""
         if not self._settings.output.show_tool_calls:
             return
 
-        # Truncate long strings for display
-        max_len = 200
-        old_display = old_string if len(old_string) <= max_len else old_string[:max_len] + "..."
-        new_display = new_string if len(new_string) <= max_len else new_string[:max_len] + "..."
+        import difflib
 
-        text = Text()
-        text.append("    - ", style="red")
-        text.append(escape(old_display), style="red")
-        self._console.print(text)
+        old_lines = old_string.splitlines() or [""]
+        new_lines = new_string.splitlines() or [""]
 
-        text = Text()
-        text.append("    + ", style="green")
-        text.append(escape(new_display), style="green")
-        self._console.print(text)
+        # Unified diff with small context window so unchanged shared prefix/suffix
+        # (common when old_string/new_string overlap heavily) is collapsed.
+        context = 2
+        max_lines = 20
+        max_line_len = 120
+
+        diff_iter = difflib.unified_diff(old_lines, new_lines, n=context, lineterm="")
+        # Skip the file header lines (---, +++) that unified_diff emits.
+        rendered: list[Text] = []
+        for raw in diff_iter:
+            if raw.startswith("---") or raw.startswith("+++"):
+                continue
+            if raw.startswith("@@"):
+                t = Text()
+                t.append("    " + raw, style="dim cyan")
+                rendered.append(t)
+                continue
+            sign = raw[:1]
+            body = raw[1:]
+            if len(body) > max_line_len:
+                body = body[:max_line_len] + "..."
+            if sign == "+":
+                style = "green"
+                prefix = "    + "
+            elif sign == "-":
+                style = "red"
+                prefix = "    - "
+            else:
+                style = "dim"
+                prefix = "      "
+            t = Text()
+            t.append(prefix, style=style)
+            t.append(escape(body), style=style)
+            rendered.append(t)
+
+        if not rendered:
+            # Identical strings (shouldn't normally happen for edits) — show a note.
+            self._console.print(Text("    (no textual changes)", style="dim"))
+            return
+
+        for line in rendered[:max_lines]:
+            self._console.print(line)
+        if len(rendered) > max_lines:
+            self._console.print(
+                Text(f"    ... (+{len(rendered) - max_lines} more diff lines)", style="dim")
+            )
 
     def print_write_content(self, content: str, is_append: bool = False) -> None:
         """Print a preview of content being written to a file."""
