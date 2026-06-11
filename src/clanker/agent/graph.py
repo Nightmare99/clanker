@@ -1,11 +1,11 @@
-"""Agent creation using LangChain with SummarizationMiddleware."""
+"""Agent creation using LangChain with RobustSummarizationMiddleware."""
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import SummarizationMiddleware
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from clanker.agent.middleware import multimodal_tool_results
 from clanker.agent.prompts import get_system_prompt
+from clanker.agent.summarization import RobustSummarizationMiddleware
 from clanker.config import Settings, get_settings, get_default_model, create_llm_from_config
 from clanker.logging import get_logger
 from clanker.mcp import load_mcp_tools, load_mcp_tools_async
@@ -91,7 +91,7 @@ def create_agent_graph(
 
     # Create summarization middleware using the same model
     # Uses fraction-based trigger which automatically uses model's context window
-    summarization = SummarizationMiddleware(
+    summarization = RobustSummarizationMiddleware(
         model=model,
         trigger=("fraction", trigger_fraction),
         keep=("messages", settings.context.keep_recent_turns * 2),
@@ -151,7 +151,7 @@ async def create_agent_graph_async(
 
     # Create summarization middleware using the same model
     # Uses fraction-based trigger which automatically uses model's context window
-    summarization = SummarizationMiddleware(
+    summarization = RobustSummarizationMiddleware(
         model=model,
         trigger=("fraction", trigger_fraction),
         keep=("messages", settings.context.keep_recent_turns * 2),
