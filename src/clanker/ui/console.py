@@ -358,6 +358,11 @@ class Console:
             text.append("Read URL: ", style="tool")
             text.append(self._truncate(url, 80), style="cyan")
 
+        elif tool_name == "load_skill":
+            name = args.get("name", "")
+            text.append("Load skill: ", style="tool")
+            text.append(name or "?", style="cyan")
+
         else:
             # Handle MCP tools and other unknown tools
             # MCP tools often have format "server__tool" or "mcp_server_tool"
@@ -496,6 +501,26 @@ class Console:
                     self._print_dim("No AGENTS.md found")
             elif parsed and not parsed.get("ok"):
                 self._print_dim(str(parsed.get("error", result))[:max_chars])
+            return
+
+        # ── load_skill: show the loaded skill name + directory, not the JSON ─────
+        if tool_name == "load_skill":
+            if parsed and parsed.get("ok"):
+                name = parsed.get("name", "")
+                skill_dir = parsed.get("skill_directory", "")
+                label = Text()
+                label.append("    ", style="dim")
+                label.append("Loaded skill ", style="dim")
+                label.append(name or "?", style="dim cyan")
+                if skill_dir:
+                    label.append(f"  ({skill_dir})", style="dim")
+                self._console.print(label)
+            elif parsed and not parsed.get("ok"):
+                available = parsed.get("available", [])
+                msg = str(parsed.get("error", "Skill not found"))
+                if available:
+                    msg += f" Available: {', '.join(available)}"
+                self._print_dim(msg[:max_chars])
             return
 
         # ── bash: show stdout/stderr trimmed ────────────────────────────────────

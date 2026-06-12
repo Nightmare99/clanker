@@ -274,6 +274,9 @@ class ToolDisplayHandler:
         elif tool_name == "web_read":
             text.append("Read URL: ", style="magenta")
             text.append((args.get("url", "") or "")[:80], style="cyan")
+        elif tool_name == "load_skill":
+            text.append("Load skill: ", style="magenta")
+            text.append(args.get("name", "") or "?", style="cyan")
         else:
             text.append(tool_name, style="magenta")
 
