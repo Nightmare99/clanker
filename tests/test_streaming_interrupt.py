@@ -24,6 +24,18 @@ def _load_streaming_module():
     return streaming
 
 
+def _console_has_active_live(console) -> bool:
+    """Return True if a Rich console has an active Live display.
+
+    Rich changed this internal across versions: Rich <14 used a single
+    ``Console._live`` (None when idle), Rich >=14 uses a ``Console._live_stack``
+    list. Check both so these tests pass regardless of the installed Rich.
+    """
+    if getattr(console, "_live", None) is not None:
+        return True
+    return bool(getattr(console, "_live_stack", None))
+
+
 # Skip entire module if deps not available
 pytestmark = pytest.mark.skipif(
     not _deps_available(),
@@ -264,31 +276,36 @@ class TestSingleLiveGuard:
     """Regression tests for the 'Only one live display' LiveError crash.
 
     Two independent Live owners (the loading spinner and the ToolDisplayHandler)
-    share one Rich Console. Rich raises LiveError if a second Live starts while
-    one is active. start_loading() must therefore skip when the shared console
-    already has an active Live (e.g. the notify on_tool_end path used to crash).
+    share one Rich Console. Rich <14 raises LiveError if a second Live starts
+    while one is active; Rich >=14 permits nesting but stacking two spinners is
+    still wrong. start_loading() therefore skips when the shared console already
+    has an active Live (e.g. the notify on_tool_end path used to crash).
+
+    These assert against a version-agnostic predicate (Rich moved
+    ``Console._live`` to ``Console._live_stack`` in 14.x) that mirrors the guard
+    expression in start_loading().
     """
 
-    def test_second_live_on_same_console_raises_without_guard(self) -> None:
-        """Baseline: this is the exact failure the guard prevents."""
+    def test_detects_active_live_on_shared_console(self) -> None:
+        """The predicate flips to True while a Live is up, back to False after."""
         from rich.console import Console
-        from rich.errors import LiveError
         from rich.live import Live
         from rich.spinner import Spinner
 
         console = Console()
+        assert _console_has_active_live(console) is False  # idle
+
         live1 = Live(Spinner("dots"), console=console, transient=True)
         live1.start()
         try:
-            assert console._live is not None  # this is the flag the guard checks
-            with pytest.raises(LiveError):
-                Live(Spinner("dots"), console=console, transient=True).start()
+            # This is the condition the guard checks before starting a 2nd Live.
+            assert _console_has_active_live(console) is True
         finally:
             live1.stop()
-        assert console._live is None
+        assert _console_has_active_live(console) is False
 
     def test_guard_condition_blocks_then_allows(self) -> None:
-        """The guard expression (console._live is None) gates a second spinner.
+        """The guard predicate gates a second spinner.
 
         Mirrors the start_loading() guard: only start when no Live is active on
         the shared console. We assert the condition flips correctly so a second
@@ -301,8 +318,8 @@ class TestSingleLiveGuard:
         console = Console()
 
         def guard_allows_start() -> bool:
-            # Same predicate used in streaming.start_loading()
-            return getattr(console, "_live", None) is None
+            # Same predicate used in streaming.start_loading().
+            return not _console_has_active_live(console)
 
         assert guard_allows_start() is True  # idle -> spinner may start
 
@@ -319,12 +336,13 @@ class TestSingleLiveGuard:
 class TestTeardownLiveDisplays:
     """Tests for _teardown_live_displays - the finally-block hardening.
 
-    Ensures an exception mid-stream can't leave console._live set (which would
-    make the guarded start_loading no-op for the rest of the session).
+    Ensures an exception mid-stream can't leave an active Live on the console
+    (which would make the guarded start_loading no-op for the rest of the
+    session).
     """
 
     def test_clears_console_live_when_live_left_active(self) -> None:
-        """If a Live is still active, teardown force-clears console._live."""
+        """If a Live is still active, teardown force-clears it."""
         module = _load_streaming_module()
         from rich.console import Console
         from rich.live import Live
@@ -334,7 +352,7 @@ class TestTeardownLiveDisplays:
         # Simulate a tool-handler Live that was never stopped (e.g. exception).
         live = Live(Spinner("dots"), console=console, transient=True)
         live.start()
-        assert console._live is not None
+        assert _console_has_active_live(console) is True
 
         # Handler whose finalize_live does nothing (simulates the leak).
         tool_handler = mock.MagicMock()
@@ -343,7 +361,7 @@ class TestTeardownLiveDisplays:
         module._teardown_live_displays(console, stop_loading=lambda: None, tool_handler=tool_handler)
 
         # Last-resort clear_live ran -> next turn can start a spinner.
-        assert console._live is None
+        assert _console_has_active_live(console) is False
 
     def test_runs_all_steps_even_if_one_raises(self) -> None:
         """A failure in stop_loading must not skip finalize_live / clear_live."""
