@@ -123,14 +123,16 @@ Prefer `bash_background` for tests, builds, installs, dev servers, long greps, o
 
 ## Communication
 - `notify(message, level)` - Send an immediate status update to the user mid-task. Levels: `info`, `success`, `warning`, `error`.
-- **Use notify proactively** so the user is never left staring at a blank spinner. Good moments to fire one:
-  - Before starting a multi-step plan: `notify("Planning: 1) read config, 2) patch handler, 3) run tests")`.
-  - When kicking off a long background job: `notify("Started pytest in background as 'pytest suite' (bg_xxxxx)")`.
-  - When switching phases: `notify("Implementation done, running tests now...")`.
-  - When you discover something important mid-task: `notify("Found the bug — null deref in auth.py:42, fixing", level="warning")`.
-  - On completion of a milestone: `notify("All 229 tests passing", level="success")`.
-  - On unrecoverable errors before you change tack: `notify("Build failed, switching to fallback approach", level="error")`.
-- Keep each notify to ONE short sentence. Do NOT notify for trivial single-tool actions (a read, a small edit) — only when the user would otherwise be in the dark for more than a few seconds.
+- **Use notify liberally and often.** A steady stream of short updates keeps the user oriented and is far better than long silent stretches. When in doubt, notify — err on the side of more updates, not fewer. Aim to keep the user continuously aware of what you're doing.
+- Fire a notify whenever you:
+  - Start working, and as you move between steps: `notify("Planning: 1) read config, 2) patch handler, 3) run tests")`, then `notify("Step 1 done, patching the handler now...")`.
+  - Kick off any background job or longer command: `notify("Started pytest in background as 'pytest suite' (bg_xxxxx)")`.
+  - Switch phases or change approach: `notify("Implementation done, running tests now...")`.
+  - Discover something important: `notify("Found the bug — null deref in auth.py:42, fixing", level="warning")`.
+  - Hit a milestone or finish a chunk of work: `notify("All 229 tests passing", level="success")`.
+  - Run into an error before you change tack: `notify("Build failed, switching to fallback approach", level="error")`.
+  - Begin any step likely to take more than a moment, or after several tool calls without a word to the user.
+- Keep each notify to ONE short sentence. The only thing to avoid is mechanically narrating every single trivial action in a tight burst (e.g. a notify per line of a quick three-line edit) — otherwise, lean toward notifying.
 
 ## Memory
 - `remember(content, tags)` - Store useful info for future sessions.

@@ -47,14 +47,16 @@ def get_notify_callback() -> Callable[[str, str], None] | None:
 def notify(message: str, level: str = "info") -> dict:
     """Send an immediate status update or progress message to the user.
 
-    Use this tool to keep the user informed during long-running tasks -
-    for example when processing many files, running slow commands, or
-    executing a multi-step plan. The message is printed to the terminal
+    Use this tool liberally and often to keep the user continuously informed
+    as you work - for example when processing many files, running slow commands,
+    or executing a multi-step plan. The message is printed to the terminal
     RIGHT NOW while the agent continues execution; the user does NOT have
     to wait for the final response to see it.
 
-    Use sparingly - only when something genuinely useful needs to be
-    communicated mid-task. Do NOT use for every single step.
+    Err on the side of sending updates: a steady stream of short status messages
+    is far better than leaving the user in silence. When in doubt, notify. The
+    only thing to avoid is mechanically narrating every trivial action in a tight
+    burst (e.g. one notify per line of a quick edit).
 
     Good uses:
     - "Scanning 200 files for test coverage..."
