@@ -258,3 +258,117 @@ class TestSuppressSubprocessStderr:
         # After context, should still be able to write to stderr
         current_fd = sys.stderr.fileno()
         assert current_fd == original_fd
+
+
+class TestSingleLiveGuard:
+    """Regression tests for the 'Only one live display' LiveError crash.
+
+    Two independent Live owners (the loading spinner and the ToolDisplayHandler)
+    share one Rich Console. Rich raises LiveError if a second Live starts while
+    one is active. start_loading() must therefore skip when the shared console
+    already has an active Live (e.g. the notify on_tool_end path used to crash).
+    """
+
+    def test_second_live_on_same_console_raises_without_guard(self) -> None:
+        """Baseline: this is the exact failure the guard prevents."""
+        from rich.console import Console
+        from rich.errors import LiveError
+        from rich.live import Live
+        from rich.spinner import Spinner
+
+        console = Console()
+        live1 = Live(Spinner("dots"), console=console, transient=True)
+        live1.start()
+        try:
+            assert console._live is not None  # this is the flag the guard checks
+            with pytest.raises(LiveError):
+                Live(Spinner("dots"), console=console, transient=True).start()
+        finally:
+            live1.stop()
+        assert console._live is None
+
+    def test_guard_condition_blocks_then_allows(self) -> None:
+        """The guard expression (console._live is None) gates a second spinner.
+
+        Mirrors the start_loading() guard: only start when no Live is active on
+        the shared console. We assert the condition flips correctly so a second
+        start is skipped while one is up, and permitted again once it stops.
+        """
+        from rich.console import Console
+        from rich.live import Live
+        from rich.spinner import Spinner
+
+        console = Console()
+
+        def guard_allows_start() -> bool:
+            # Same predicate used in streaming.start_loading()
+            return getattr(console, "_live", None) is None
+
+        assert guard_allows_start() is True  # idle -> spinner may start
+
+        live = Live(Spinner("dots"), console=console, transient=True)
+        live.start()
+        try:
+            assert guard_allows_start() is False  # active -> start_loading no-ops
+        finally:
+            live.stop()
+
+        assert guard_allows_start() is True  # cleared -> spinner may start again
+
+
+class TestTeardownLiveDisplays:
+    """Tests for _teardown_live_displays - the finally-block hardening.
+
+    Ensures an exception mid-stream can't leave console._live set (which would
+    make the guarded start_loading no-op for the rest of the session).
+    """
+
+    def test_clears_console_live_when_live_left_active(self) -> None:
+        """If a Live is still active, teardown force-clears console._live."""
+        module = _load_streaming_module()
+        from rich.console import Console
+        from rich.live import Live
+        from rich.spinner import Spinner
+
+        console = Console()
+        # Simulate a tool-handler Live that was never stopped (e.g. exception).
+        live = Live(Spinner("dots"), console=console, transient=True)
+        live.start()
+        assert console._live is not None
+
+        # Handler whose finalize_live does nothing (simulates the leak).
+        tool_handler = mock.MagicMock()
+        tool_handler.finalize_live = mock.MagicMock()
+
+        module._teardown_live_displays(console, stop_loading=lambda: None, tool_handler=tool_handler)
+
+        # Last-resort clear_live ran -> next turn can start a spinner.
+        assert console._live is None
+
+    def test_runs_all_steps_even_if_one_raises(self) -> None:
+        """A failure in stop_loading must not skip finalize_live / clear_live."""
+        module = _load_streaming_module()
+
+        console = mock.MagicMock()
+        tool_handler = mock.MagicMock()
+
+        def boom():
+            raise RuntimeError("stop_loading blew up")
+
+        # Should not propagate, and must still call the later steps.
+        module._teardown_live_displays(console, stop_loading=boom, tool_handler=tool_handler)
+
+        tool_handler.finalize_live.assert_called_once()
+        console.clear_live.assert_called_once()
+
+    def test_swallows_clear_live_errors(self) -> None:
+        """Even clear_live raising must not propagate out of teardown."""
+        module = _load_streaming_module()
+
+        console = mock.MagicMock()
+        console.clear_live.side_effect = RuntimeError("no live")
+        tool_handler = mock.MagicMock()
+
+        # Must not raise.
+        module._teardown_live_displays(console, stop_loading=lambda: None, tool_handler=tool_handler)
+

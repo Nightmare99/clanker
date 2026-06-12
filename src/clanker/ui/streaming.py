@@ -112,6 +112,35 @@ def cleanup_event_loop() -> None:
         _persistent_loop = None
 
 
+def _teardown_live_displays(rich_console, stop_loading, tool_handler) -> None:
+    """Tear down every Rich Live owner so none leak past the turn.
+
+    Two independent owners (the loading spinner and the ToolDisplayHandler) share
+    one Rich console, and Rich permits only one active Live at a time. If an
+    exception propagates mid-stream and leaves either Live active, the console's
+    ``_live`` stays set -- which makes the guarded ``start_loading`` no-op for the
+    rest of the session (the spinner silently dies). Call this from the streaming
+    ``finally`` blocks.
+
+    Each step is isolated so a failure in one can't prevent the others, and a
+    final ``clear_live()`` force-resets the console as a last resort.
+    """
+    try:
+        stop_loading()
+    except Exception:
+        pass
+    try:
+        tool_handler.finalize_live()
+    except Exception:
+        pass
+    # Last-resort hard reset: even if the steps above partially failed, ensure the
+    # console no longer believes a Live is active so the next turn can start one.
+    try:
+        rich_console.clear_live()
+    except Exception:
+        pass
+
+
 @dataclass
 class StreamResult:
     """Result from streaming an agent response."""
@@ -222,7 +251,10 @@ def stream_agent_response_sync(
             """Start the loading spinner."""
             global _current_loading_live
             nonlocal loading_live
-            if loading_live is None:
+            # Guard against a second Live: the ToolDisplayHandler owns a separate
+            # Live on the same console, and Rich allows only one active at a time.
+            # Starting another would raise LiveError ("Only one live display...").
+            if loading_live is None and getattr(rich_console, "_live", None) is None:
                 msg = message or console.get_loading_message()
                 spinner = Spinner("dots", text=Text(f" {msg}", style="cyan"))
                 loading_live = Live(spinner, console=rich_console, refresh_per_second=10, transient=True)
@@ -488,7 +520,7 @@ def stream_agent_response_sync(
             )
 
         finally:
-            stop_loading()
+            _teardown_live_displays(rich_console, stop_loading, tool_handler)
             set_notify_callback(None)
             set_tool_call_callback(None)
 
@@ -591,7 +623,8 @@ def stream_copilot_response_sync(
         def start_loading(message: str | None = None):
             global _current_loading_live
             nonlocal loading_live
-            if loading_live is None:
+            # Guard against a second Live on the same console (see BYOK path above).
+            if loading_live is None and getattr(rich_console, "_live", None) is None:
                 msg = message or console.get_loading_message()
                 spinner = Spinner("dots", text=Text(f" {msg}", style="cyan"))
                 loading_live = Live(spinner, console=rich_console, refresh_per_second=10, transient=True)
@@ -987,8 +1020,7 @@ def stream_copilot_response_sync(
         finally:
             if session_subscription is not None:
                 session_subscription()
-            stop_loading()
-            tool_handler.finalize_live()
+            _teardown_live_displays(rich_console, stop_loading, tool_handler)
             set_notify_callback(None)
             set_tool_call_callback(None)
 
