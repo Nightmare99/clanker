@@ -35,6 +35,27 @@ def load_user_instructions(working_directory: str | None = None) -> str:
     return text[:MAX_INSTRUCTION_CHARS]
 
 
+def load_skills_catalog(working_directory: str | None = None) -> str:
+    """Load the always-on skills catalog for injection into the system prompt.
+
+    Returns a formatted list of available skills (name + description), or an
+    empty string if none exist. Discovery never raises -- on any error we return
+    empty so the prompt is unaffected.
+
+    Args:
+        working_directory: Workspace root. Defaults to current directory.
+
+    Returns:
+        Catalog string, or empty string if no skills / on error.
+    """
+    try:
+        from clanker.skills import get_skills_catalog
+
+        return get_skills_catalog(working_directory)
+    except Exception:
+        return ""
+
+
 SYSTEM_PROMPT = """\
 You are CLANKER, an expert software engineer with deep knowledge across the entire stack. You write clean, maintainable code and solve problems efficiently.
 
@@ -116,6 +137,10 @@ Prefer `bash_background` for tests, builds, installs, dev servers, long greps, o
 - `recall(query, tags)` - Retrieve relevant memories.
 - Proactively remember: conventions, preferences, architecture decisions, gotchas.
 
+## Skills
+- `load_skill(name)` - Load full instructions for a skill listed in AVAILABLE SKILLS.
+- When a request matches a skill's description, call `load_skill` FIRST, then follow the returned steps. Skills may bundle scripts/templates - read them with `read_file`, run them with `execute_shell`.
+
 # CODE QUALITY
 
 Write code as if the next person to read it is a mass murderer who knows where you live:
@@ -165,6 +190,20 @@ def get_system_prompt(working_directory: str | None = None, user_query: str | No
 The user has provided the following custom instructions. Follow them in addition to the core principles above:
 
 {user_instructions}
+
+"""
+
+    # Inject available skills catalog from .clanker/skills/ (project + personal)
+    skills_catalog = load_skills_catalog(working_directory)
+    if skills_catalog:
+        prompt += f"""
+# AVAILABLE SKILLS
+
+You have access to specialized skills. Each skill below shows its name and when to use it.
+When a user request matches a skill, call `load_skill("<name>")` FIRST to retrieve its full
+instructions, then follow them. Do not guess a skill's steps from its description alone.
+
+{skills_catalog}
 
 """
 

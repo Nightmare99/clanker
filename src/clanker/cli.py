@@ -412,6 +412,40 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
                 if workflows:
                     console.print_info(f"Available: {', '.join(workflows)}")
 
+    elif cmd.startswith("/skill"):
+        from clanker.skills import list_skills, load_skill, MAX_SKILL_BODY_CHARS, SKILL_PREAMBLE
+        parts = command.strip().split(maxsplit=1)
+        skills = list_skills()
+        if len(parts) < 2:
+            # List available skills, grouped by source.
+            if not skills:
+                console.print_info("No skills found.")
+                console.print_info(
+                    "Create .clanker/skills/<name>/SKILL.md (project) or "
+                    "~/.clanker/skills/<name>/SKILL.md (personal) to add skills."
+                )
+            else:
+                console.print_info(f"Available skills ({len(skills)}):\n")
+                for skill in skills.values():
+                    desc = skill.description
+                    if len(desc) > 80:
+                        desc = desc[:80].rstrip() + "..."
+                    console.print(f"  [bold cyan]{skill.name}[/bold cyan] [dim]({skill.source})[/dim] - {desc}")
+                console.print_info("\nThe agent loads skills automatically. Use /skill <name> to load one manually.")
+        else:
+            skill_name = parts[1].strip()
+            skill = load_skill(skill_name)
+            if skill:
+                body = skill.body
+                if len(body) > MAX_SKILL_BODY_CHARS:
+                    body = body[:MAX_SKILL_BODY_CHARS].rstrip() + "\n\n... [skill instructions truncated]"
+                console.print_info(f"Loaded skill '{skill.name}' from {skill.directory}")
+                return f"skill:{SKILL_PREAMBLE}{body}\n\nThis skill's files are in: {skill.directory}"
+            else:
+                console.print_warning(f"Skill '{skill_name}' not found.")
+                if skills:
+                    console.print_info(f"Available: {', '.join(skills.keys())}")
+
     else:
         console.print_warning(f"Unknown command: {command}")
         console.print_info("Type /help for available commands.")
@@ -439,6 +473,7 @@ class CommandCompleter(Completer):
         "/remember",
         "/forget",
         "/workflow",
+        "/skill",
     ]
 
     # Cache for Copilot models (fetched once per session)
@@ -479,6 +514,18 @@ class CommandCompleter(Completer):
                 for name in workflows:
                     if name.lower().startswith(workflow_prefix.lower()):
                         yield Completion(name, start_position=-len(workflow_prefix))
+            except Exception:
+                pass
+            return
+
+        # Check if this is a /skill command with a space (user wants skill name completion)
+        if text.startswith("/skill "):
+            skill_prefix = text[7:]  # Remove "/skill "
+            try:
+                from clanker.skills import list_skills
+                for name in list_skills():
+                    if name.lower().startswith(skill_prefix.lower()):
+                        yield Completion(name, start_position=-len(skill_prefix))
             except Exception:
                 pass
             return
@@ -642,6 +689,9 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
                     continue
                 elif result and result.startswith("workflow:"):
                     # Execute workflow: treat content as user input
+                    user_input = result.split(":", 1)[1]
+                elif result and result.startswith("skill:"):
+                    # Execute skill: treat loaded instructions as user input
                     user_input = result.split(":", 1)[1]
                 else:
                     continue
@@ -935,6 +985,9 @@ def run_copilot_interactive(
                     continue
                 elif result and result.startswith("workflow:"):
                     # Execute workflow: treat content as user input
+                    user_input = result.split(":", 1)[1]
+                elif result and result.startswith("skill:"):
+                    # Execute skill: treat loaded instructions as user input
                     user_input = result.split(":", 1)[1]
                 else:
                     continue

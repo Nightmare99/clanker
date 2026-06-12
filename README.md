@@ -70,6 +70,7 @@ clanker --check-update         # Check for updates
 | [Copilot Mode](docs/copilot.md) | GitHub Copilot integration and usage |
 | [Usage Guide](docs/usage.md) | Commands, interactive mode, examples |
 | [Tools](docs/tools.md) | Available tools and their usage |
+| [Skills](docs/skills.md) | Model-discovered capabilities with bundled scripts |
 | [MCP Servers](docs/mcp.md) | Extending with Model Context Protocol |
 | [Logging](docs/logging.md) | Log configuration and viewing |
 | [Development](docs/development.md) | Setup, testing, architecture |

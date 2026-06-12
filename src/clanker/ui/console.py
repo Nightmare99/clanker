@@ -905,11 +905,15 @@ Commands:
 [bold]Workflows:[/bold]
   /workflow    List or run a stored workflow (usage: /workflow <name>)
 
+[bold]Skills:[/bold]
+  /skill       List or load a skill (usage: /skill <name>); the agent also loads skills automatically
+
 [bold]Operational Capabilities:[/bold]
   • File operations: read, write, edit, append
   • Codebase search: glob patterns, regex content search
   • Command execution: bash shell access
   • Memory: remember context across conversations
+  • Skills: model-discovered capabilities from .clanker/skills/
   • MCP tools: extended capabilities via [server] prefix
 
 [bold]Pro Tips:[/bold]

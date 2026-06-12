@@ -73,6 +73,8 @@ Inside the interactive session:
 | `/model <name>` | Switch to a different model |
 | `/workflow` | List available workflows |
 | `/workflow <name>` | Execute a stored workflow |
+| `/skill` | List available skills |
+| `/skill <name>` | Manually load a skill (the agent also loads skills automatically) |
 | `/config` | Show configuration |
 | `/mcp` | Show MCP server status |
 | `/logs` | Show logging status and log files |

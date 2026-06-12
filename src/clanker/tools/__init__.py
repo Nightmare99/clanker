@@ -19,6 +19,7 @@ from clanker.tools.file_tools import (
 from clanker.tools.memory_tools import forget, list_memories, recall, remember
 from clanker.tools.notify_tools import notify
 from clanker.tools.search_tools import glob_search, grep_search
+from clanker.tools.skill_tools import load_skill
 from clanker.tools.web_tools import web_read, web_search
 
 # All available tools
@@ -39,6 +40,8 @@ ALL_TOOLS = [
     grep_search,
     # Communication tools
     notify,
+    # Skill tools
+    load_skill,
     # Memory tools
     remember,
     recall,
@@ -81,6 +84,7 @@ __all__ = [
     "glob_search",
     "grep_search",
     "notify",
+    "load_skill",
     "remember",
     "recall",
     "forget",
