@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://nightmare99.github.io/clanker/sitemap.xml

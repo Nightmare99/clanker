@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <radialGradient id="g1" cx="12%" cy="0%" r="70%">
+      <stop offset="0%" stop-color="#ff2bd6" stop-opacity="0.20"/>
+      <stop offset="60%" stop-color="#ff2bd6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="g2" cx="100%" cy="0%" r="70%">
+      <stop offset="0%" stop-color="#00f0ff" stop-opacity="0.16"/>
+      <stop offset="55%" stop-color="#00f0ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="term" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0b0d10"/>
+      <stop offset="100%" stop-color="#07090b"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="#060708"/>
+  <rect width="1200" height="630" fill="url(#g1)"/>
+  <rect width="1200" height="630" fill="url(#g2)"/>
+
+  <!-- brand mark -->
+  <g transform="translate(80, 86)">
+    <text x="0" y="0" font-family="'JetBrains Mono', monospace" font-size="34" font-weight="700" fill="#ff2bd6">&#x276F;</text>
+    <rect x="30" y="-26" width="15" height="30" fill="#b6ff1a"/>
+    <text x="62" y="0" font-family="'Space Mono', monospace" font-size="36" font-weight="700" fill="#ffffff">clanker</text>
+    <text x="232" y="-2" font-family="'JetBrains Mono', monospace" font-size="17" letter-spacing="3" fill="#00f0ff">DOCS</text>
+  </g>
+
+  <!-- headline -->
+  <text x="80" y="244" font-family="'Space Mono', monospace" font-size="74" font-weight="700" fill="#ffffff">Your terminal just</text>
+  <text x="80" y="332" font-family="'Space Mono', monospace" font-size="74" font-weight="700" fill="#ff2bd6">learned to code.</text>
+
+  <text x="82" y="392" font-family="'IBM Plex Sans', system-ui, sans-serif" font-size="27" fill="#b6bcc4">A terminal-native AI coding agent — reads, edits, searches, and runs,</text>
+  <text x="82" y="428" font-family="'IBM Plex Sans', system-ui, sans-serif" font-size="27" fill="#b6bcc4">with safety controls and your choice of model.</text>
+
+  <!-- mini terminal -->
+  <g transform="translate(82, 472)">
+    <rect x="0" y="0" width="1036" height="104" rx="12" fill="url(#term)" stroke="#00f0ff" stroke-opacity="0.28"/>
+    <circle cx="26" cy="26" r="6" fill="#ff5f57"/>
+    <circle cx="48" cy="26" r="6" fill="#febc2e"/>
+    <circle cx="70" cy="26" r="6" fill="#28c840"/>
+    <text x="26" y="78" font-family="'JetBrains Mono', monospace" font-size="22" fill="#e9eaee"><tspan fill="#ff2bd6" font-weight="700">&#x276F; </tspan>fix the failing auth test and run the suite</text>
+    <text x="780" y="78" font-family="'JetBrains Mono', monospace" font-size="20" fill="#b6ff1a">&#x2713; 229 passed</text>
+  </g>
+</svg>

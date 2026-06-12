@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Clanker</title>
+    <!--
+      GitHub Pages 404 fallback for a single-page app.
+      GitHub serves this file for any unknown path. We rewrite the URL into a
+      query string and redirect to the app root, where index.html decodes it
+      back into a real route. pathSegmentsToKeep = 1 keeps the "/clanker/"
+      project-page prefix intact. See https://github.com/rafgraph/spa-github-pages
+    -->
+    <script>
+      (function () {
+        var pathSegmentsToKeep = 1
+        var l = window.location
+        l.replace(
+          l.protocol +
+            '//' +
+            l.hostname +
+            (l.port ? ':' + l.port : '') +
+            l.pathname
+              .split('/')
+              .slice(0, 1 + pathSegmentsToKeep)
+              .join('/') +
+            '/?/' +
+            l.pathname
+              .slice(1)
+              .split('/')
+              .slice(pathSegmentsToKeep)
+              .join('/')
+              .replace(/&/g, '~and~') +
+            (l.search ? '&' + l.search.slice(1).replace(/&/g, '~and~') : '') +
+            l.hash
+        )
+      })()
+    </script>
+  </head>
+  <body></body>
+</html>

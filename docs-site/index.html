@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+
+    <!--
+      GitHub Pages SPA redirect. When a deep link (e.g. /clanker/usage) 404s,
+      public/404.html bounces it here with the path encoded in the query string;
+      this restores the real path before the app boots. See:
+      https://github.com/rafgraph/spa-github-pages
+    -->
+    <script>
+      (function (l) {
+        if (l.search[1] === '/') {
+          var decoded = l.search
+            .slice(1)
+            .split('&')
+            .map(function (s) {
+              return s.replace(/~and~/g, '&')
+            })
+            .join('?')
+          window.history.replaceState(null, null, l.pathname.slice(0, -1) + decoded + l.hash)
+        }
+      })(window.location)
+    </script>
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#060708" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+
+    <title>Clanker</title>
+    <meta
+      name="description"
+      content="Clanker is a terminal-native AI coding agent. It reads files, makes surgical edits, searches your codebase, and runs commands — with safety controls and your choice of model."
+    />
+    <meta
+      name="keywords"
+      content="Clanker, AI coding agent, CLI coding assistant, terminal AI, LangChain, LangGraph, Anthropic, OpenAI, Azure OpenAI, Ollama, GitHub Copilot, MCP, developer tools"
+    />
+    <meta name="author" content="Nightmare99" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://nightmare99.github.io/clanker/" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Clanker" />
+    <meta property="og:title" content="Clanker — a terminal-native AI coding agent" />
+    <meta
+      property="og:description"
+      content="Reads files, makes surgical edits, searches your codebase, and runs commands — with safety controls and your choice of model."
+    />
+    <meta property="og:url" content="https://nightmare99.github.io/clanker/" />
+    <meta property="og:image" content="https://nightmare99.github.io/clanker/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Clanker — a terminal-native AI coding agent" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Clanker — a terminal-native AI coding agent" />
+    <meta
+      name="twitter:description"
+      content="Reads files, makes surgical edits, searches your codebase, and runs commands — with safety controls and your choice of model."
+    />
+    <meta name="twitter:image" content="https://nightmare99.github.io/clanker/og-image.png" />
+
+    <!-- Structured data -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Clanker",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Linux, macOS, Windows",
+        "description": "A terminal-native AI coding agent built with LangChain and LangGraph. Reads files, makes surgical edits, searches the codebase, and runs commands with safety controls. Supports Anthropic, OpenAI, Azure OpenAI, Ollama, and GitHub Copilot.",
+        "url": "https://nightmare99.github.io/clanker/",
+        "downloadUrl": "https://github.com/Nightmare99/clanker/releases",
+        "license": "https://github.com/Nightmare99/clanker/blob/main/LICENSE",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "author": { "@type": "Person", "name": "Nightmare99" },
+        "sameAs": ["https://github.com/Nightmare99/clanker"]
+      }
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

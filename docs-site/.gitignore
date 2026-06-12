@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+
+# Generated on every build by scripts/generate-sitemap.mjs
+public/sitemap.xml

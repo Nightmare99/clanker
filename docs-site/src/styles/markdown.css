@@ -1,0 +1,287 @@
+/* ============================================================
+   Markdown prose — styles the rendered v-html doc body.
+   Global (not scoped) because content is injected at runtime.
+   IBM Plex Sans for reading; JetBrains Mono for anything that
+   represents the terminal world (code, commands, file paths).
+   ============================================================ */
+
+.markdown {
+  font-size: 1rem;
+  color: var(--ink-2);
+  max-width: 76ch;
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.markdown > *:first-child {
+  margin-top: 0;
+}
+
+/* Headings ------------------------------------------------- */
+.markdown h1 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(1.9rem, 3.4vw, 2.55rem);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: #fff;
+  margin: 0 0 0.6em;
+}
+.markdown h2 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.45rem;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 2.4em 0 0.8em;
+  padding-top: 0.4em;
+  scroll-margin-top: 92px;
+  position: relative;
+}
+.markdown h2::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 34px;
+  height: 2px;
+  background: var(--pink);
+}
+.markdown h3 {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 1.08rem;
+  color: var(--cyan);
+  margin: 1.9em 0 0.6em;
+  scroll-margin-top: 92px;
+}
+.markdown h4 {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.94rem;
+  color: var(--ink);
+  margin: 1.5em 0 0.5em;
+}
+
+.heading-anchor {
+  color: var(--ink-4);
+  text-decoration: none;
+  margin-right: 0.4em;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.markdown h2:hover .heading-anchor,
+.markdown h3:hover .heading-anchor {
+  opacity: 1;
+}
+.heading-anchor:hover {
+  color: var(--pink);
+  text-decoration: none;
+}
+
+/* Body ----------------------------------------------------- */
+.markdown p {
+  margin: 0 0 1.15em;
+}
+.markdown a {
+  color: var(--cyan);
+  border-bottom: 1px solid rgba(0, 240, 255, 0.3);
+}
+.markdown a:hover {
+  text-decoration: none;
+  border-bottom-color: var(--cyan);
+}
+.markdown strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 0 0 1.2em;
+  padding-left: 1.4em;
+}
+.markdown li {
+  margin: 0.4em 0;
+}
+.markdown li::marker {
+  color: var(--pink);
+}
+.markdown ul li::marker {
+  content: '▹ ';
+}
+
+.markdown hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 2.4em 0;
+}
+
+.markdown blockquote {
+  margin: 1.4em 0;
+  padding: 4px 0 4px 18px;
+  border-left: 2px solid var(--lime);
+  color: var(--ink-2);
+}
+
+/* Inline code ---------------------------------------------- */
+.markdown :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  padding: 0.12em 0.42em;
+  border-radius: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--lime);
+}
+
+/* Code blocks (terminal-styled) ---------------------------- */
+.codeblock {
+  margin: 1.5em 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: #08090b;
+}
+.codeblock__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid var(--line);
+}
+.codeblock__dots {
+  display: inline-flex;
+  gap: 5px;
+}
+.codeblock__dots i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ink-4);
+}
+.codeblock__lang {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.codeblock__copy {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 9px;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.codeblock__copy:hover {
+  color: var(--cyan);
+  border-color: var(--line-strong);
+}
+.codeblock__copy.is-copied {
+  color: #07090b;
+  background: var(--lime);
+  border-color: var(--lime);
+}
+.codeblock__pre {
+  margin: 0;
+  padding: 16px 18px;
+  overflow-x: auto;
+}
+.codeblock__pre code {
+  font-family: var(--font-mono);
+  font-size: 0.84rem;
+  line-height: 1.6;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--ink);
+}
+
+/* Tables --------------------------------------------------- */
+.markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5em 0;
+  font-size: 0.9rem;
+  display: block;
+  overflow-x: auto;
+}
+.markdown thead {
+  border-bottom: 1px solid var(--line-strong);
+}
+.markdown th {
+  text-align: left;
+  padding: 10px 14px;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  white-space: nowrap;
+}
+.markdown td {
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-2);
+  vertical-align: top;
+}
+.markdown tbody tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+.markdown td code {
+  white-space: nowrap;
+}
+
+.markdown img {
+  max-width: 100%;
+  border-radius: var(--radius-sm);
+}
+
+/* ---- highlight.js (tuned to the neon palette) ---- */
+.hljs-comment,
+.hljs-quote {
+  color: var(--ink-4);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-name {
+  color: var(--pink);
+}
+.hljs-string,
+.hljs-attr,
+.hljs-template-tag,
+.hljs-addition {
+  color: var(--lime);
+}
+.hljs-number,
+.hljs-literal,
+.hljs-variable,
+.hljs-symbol {
+  color: var(--amber);
+}
+.hljs-title,
+.hljs-section,
+.hljs-type,
+.hljs-attribute {
+  color: var(--cyan);
+}
+.hljs-meta,
+.hljs-meta .hljs-keyword {
+  color: var(--ink-3);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 700;
+}
