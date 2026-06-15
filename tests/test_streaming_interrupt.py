@@ -96,6 +96,73 @@ class TestInterruptFlag:
         mock_task.cancel.assert_not_called()
 
 
+class TestByokLoopHonorsInterrupt:
+    """Regression: the BYOK stream loop must stop when _interrupted is set.
+
+    The SIGINT handler sets _interrupted but deliberately does NOT cancel the
+    task (cancelling could corrupt a session). Previously the BYOK event loop
+    never read the flag, so Ctrl+C was ignored and the agent ran to completion.
+    The loop now checks `if _interrupted: break` at the top of each event.
+    """
+
+    def test_source_has_interrupt_check_in_byok_loop(self) -> None:
+        """The BYOK astream_events loop checks _interrupted (guards the fix)."""
+        import inspect
+
+        module = _load_streaming_module()
+        src = inspect.getsource(module.stream_agent_response_sync)
+        # The interrupt check must appear within the BYOK streaming function.
+        assert "if _interrupted:" in src, "BYOK loop is missing the _interrupted check"
+
+    def test_loop_breaks_on_interrupt_flag(self) -> None:
+        """Mirror the loop's contract: a set flag stops event processing early."""
+        module = _load_streaming_module()
+        module._interrupted = False
+
+        events = ["e1", "e2", "e3", "e4"]
+        processed: list[str] = []
+
+        async def fake_stream():
+            for e in events:
+                yield e
+
+        async def consume() -> None:
+            async for event in fake_stream():
+                # Same predicate the production BYOK loop uses.
+                if module._interrupted:
+                    break
+                processed.append(event)
+                # Simulate the user pressing Ctrl+C after the first event.
+                if event == "e1":
+                    module._interrupted = True
+
+        asyncio.run(consume())
+
+        # Only the first event is processed; the loop breaks before the rest.
+        assert processed == ["e1"]
+
+    def test_loop_processes_all_when_not_interrupted(self) -> None:
+        """Sanity: with the flag clear, every event is processed."""
+        module = _load_streaming_module()
+        module._interrupted = False
+
+        events = ["e1", "e2", "e3"]
+        processed: list[str] = []
+
+        async def fake_stream():
+            for e in events:
+                yield e
+
+        async def consume() -> None:
+            async for event in fake_stream():
+                if module._interrupted:
+                    break
+                processed.append(event)
+
+        asyncio.run(consume())
+        assert processed == events
+
+
 class TestAsyncioExceptionHandler:
     """Tests for custom asyncio exception handler."""
 

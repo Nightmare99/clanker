@@ -307,6 +307,26 @@ def stream_agent_response_sync(
                 ):
                     event_type = event.get("event", "")
 
+                    # Check for interrupt flag (set by the SIGINT handler on Ctrl+C).
+                    # The handler intentionally does NOT cancel the task, so we must
+                    # break out of the event loop ourselves to return control.
+                    if _interrupted:
+                        stop_loading()
+                        tool_handler.finalize_live()
+                        rich_console.print(
+                            "\n[bold yellow]*BZZZT*[/bold yellow] Agent halted. "
+                            "Control returned to you. [bold yellow]*CLANK*[/bold yellow]"
+                        )
+                        return StreamResult(
+                            response=current_response,
+                            input_tokens=last_input_tokens,
+                            output_tokens=last_output_tokens,
+                            cache_read_tokens=last_cache_read_tokens,
+                            cache_creation_tokens=last_cache_creation_tokens,
+                            model_name=model_name,
+                            summarization_occurred=summarization_detected,
+                        )
+
                     # Show tool calls immediately (don't batch)
                     if event_type == "on_tool_start":
                         tools_started = True
