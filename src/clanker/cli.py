@@ -733,6 +733,22 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
                     conversation_messages.append(AIMessage(content=result.response))
                     # Auto-save after each exchange
                     session_manager.save_conversation_snapshot(conversation_messages)
+                else:
+                    # Dropped turn: the agent produced no response text, so nothing
+                    # is appended to history and the snapshot won't record this turn.
+                    # This is a prime suspect for "lost context" — log it loudly,
+                    # flagging when it coincides with a summarization (worst case:
+                    # history was compacted but the replacement turn was lost).
+                    logger.warning(
+                        "Empty agent response — turn produced no text (dropped turn). "
+                        "summarization_occurred=%s input_tokens=%d output_tokens=%d "
+                        "thread_id=%s history_len=%d",
+                        getattr(result, "summarization_occurred", "?"),
+                        result.input_tokens,
+                        result.output_tokens,
+                        session_manager.session_id,
+                        len(conversation_messages),
+                    )
 
                 # Show token usage
                 if (result.input_tokens > 0 or result.output_tokens > 0) and settings.output.show_token_usage:

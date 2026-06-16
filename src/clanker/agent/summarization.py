@@ -121,6 +121,9 @@ _DEFAULT_PER_MESSAGE_TOKEN_CAP = 6_000
 _EXTRACTIVE_MAX_CHARS = 12_000
 # Per-message snippet length in the extractive fallback (characters).
 _EXTRACTIVE_SNIPPET_CHARS = 600
+# Header marking an extractive-fallback summary. Used both to build the fallback
+# and to detect it after the fact for diagnostics.
+_EXTRACTIVE_MARKER = "## SUMMARY (extractive fallback)"
 
 # Safety bound on reduce recursion depth.
 _MAX_REDUCE_DEPTH = 5
@@ -180,15 +183,21 @@ class RobustSummarizationMiddleware(SummarizationMiddleware):
 
         if len(chunks) == 1:
             summary = self._summarize_segment(chunks[0], self.summary_prompt)
-            return summary or self._extractive_summary(sanitized)
+            result = summary or self._extractive_summary(sanitized)
+            self._log_summary_outcome(sanitized, chunks, result)
+            return result
 
         notes = [self._summarize_segment(chunk, MAP_PROMPT) for chunk in chunks]
         notes = [n for n in notes if n.strip()]
         if not notes:
-            return self._extractive_summary(sanitized)
+            result = self._extractive_summary(sanitized)
+            self._log_summary_outcome(sanitized, chunks, result)
+            return result
 
         reduced = self._reduce_notes(notes)
-        return reduced or self._extractive_summary(sanitized)
+        result = reduced or self._extractive_summary(sanitized)
+        self._log_summary_outcome(sanitized, chunks, result)
+        return result
 
     async def _acreate_summary(self, messages_to_summarize: list[AnyMessage]) -> str:
         """Generate a summary asynchronously (overrides parent)."""
@@ -201,7 +210,9 @@ class RobustSummarizationMiddleware(SummarizationMiddleware):
 
         if len(chunks) == 1:
             summary = await self._asummarize_segment(chunks[0], self.summary_prompt)
-            return summary or self._extractive_summary(sanitized)
+            result = summary or self._extractive_summary(sanitized)
+            self._log_summary_outcome(sanitized, chunks, result)
+            return result
 
         notes: list[str] = []
         for chunk in chunks:
@@ -209,10 +220,64 @@ class RobustSummarizationMiddleware(SummarizationMiddleware):
             if note.strip():
                 notes.append(note)
         if not notes:
-            return self._extractive_summary(sanitized)
+            result = self._extractive_summary(sanitized)
+            self._log_summary_outcome(sanitized, chunks, result)
+            return result
 
         reduced = await self._areduce_notes(notes)
-        return reduced or self._extractive_summary(sanitized)
+        result = reduced or self._extractive_summary(sanitized)
+        self._log_summary_outcome(sanitized, chunks, result)
+        return result
+
+    def _log_summary_outcome(
+        self,
+        sanitized: list[AnyMessage],
+        chunks: list[list[AnyMessage]],
+        summary: str,
+    ) -> None:
+        """Emit diagnostics about a summarization so context loss is traceable.
+
+        Helps distinguish healthy compaction from degradation. The fields:
+        - in_msgs:    how many messages were summarized away
+        - in_tokens:  approx tokens of that input (what we compressed)
+        - out_chars:  length of the produced summary (what replaced them)
+        - out_tokens: approx tokens of the summary
+        - chunks:     1 = single-pass; >1 = map-reduce (more aggressive)
+        - path:       "model" (LLM summary) or "extractive_fallback"
+
+        A WARNING is logged when the extractive fallback fires (the model
+        summary failed -> real risk of context loss) or when a multi-message
+        input collapsed into a tiny summary (possible erosion). Fallback is
+        detected from the summary content so it is caught no matter which
+        internal layer produced it.
+        """
+        used_fallback = summary.lstrip().startswith(_EXTRACTIVE_MARKER)
+        try:
+            in_tokens = self.token_counter(sanitized)
+        except Exception:
+            in_tokens = -1
+        out_chars = len(summary)
+        out_tokens = max(1, out_chars // _CHARS_PER_TOKEN)
+        path = "extractive_fallback" if used_fallback else "model"
+
+        logger.info(
+            "Summarization outcome: in_msgs=%d in_tokens=%d -> out_chars=%d "
+            "out_tokens=%d chunks=%d path=%s",
+            len(sanitized), in_tokens, out_chars, out_tokens, len(chunks), path,
+        )
+
+        if used_fallback:
+            logger.warning(
+                "Summarization used EXTRACTIVE FALLBACK (model summary failed) for "
+                "%d messages -> context may be degraded. Summary chars=%d",
+                len(sanitized), out_chars,
+            )
+        elif len(sanitized) >= 10 and out_chars < 200:
+            logger.warning(
+                "Summarization produced a suspiciously short summary: %d messages "
+                "collapsed to %d chars -> possible context erosion",
+                len(sanitized), out_chars,
+            )
 
     # ------------------------------------------------------------------
     # Map step: summarize a single segment (recovers from overflow)
@@ -461,7 +526,7 @@ class RobustSummarizationMiddleware(SummarizationMiddleware):
         discarding it, which is the whole point of the fix.
         """
         header = (
-            "## SUMMARY (extractive fallback)\n"
+            f"{_EXTRACTIVE_MARKER}\n"
             "Automatic model summarization was unavailable; the conversation was "
             "condensed by extracting message content directly:\n"
         )
