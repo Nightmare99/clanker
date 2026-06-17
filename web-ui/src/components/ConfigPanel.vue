@@ -98,6 +98,8 @@ interface ModelConfig {
   thinking_budget_tokens: number
   // Reasoning effort (Azure OpenAI o1/o3 models)
   reasoning_effort: string | null
+  // Streaming reliability (OpenAI/Azure): seconds to wait for next chunk
+  stream_chunk_timeout: number | null
 }
 
 // State
@@ -130,6 +132,7 @@ const modelForm = ref<ModelConfig>({
   thinking_enabled: false,
   thinking_budget_tokens: 10000,
   reasoning_effort: null,
+  stream_chunk_timeout: null,
 })
 
 // MCP Server editing
@@ -239,6 +242,7 @@ function openAddModel() {
     thinking_enabled: false,
     thinking_budget_tokens: 10000,
     reasoning_effort: null,
+    stream_chunk_timeout: null,
   }
   showModelModal.value = true
 }
@@ -824,6 +828,26 @@ onMounted(() => {
                     Reasoning effort controls how much the model "thinks" before responding.
                     Works with o1, o3, GPT-5, and newer reasoning-capable models.
                     "xhigh" is only supported for models after GPT-5.1.
+                  </small>
+                </NAlert>
+
+                <NDivider style="margin: 16px 0">Streaming</NDivider>
+
+                <NFormItem label="Stream Chunk Timeout (s)">
+                  <NInputNumber
+                    v-model:value="modelForm.stream_chunk_timeout"
+                    :min="0"
+                    placeholder="Default 600s (0 disables)"
+                    clearable
+                    style="width: 100%"
+                  />
+                </NFormItem>
+
+                <NAlert type="info" style="margin-top: 8px">
+                  <small>
+                    Max seconds to wait for the next streamed chunk before erroring. Raise this
+                    for high-reasoning models that pause silently while thinking. Leave empty for
+                    the default ({{ 600 }}s); set to <strong>0</strong> to disable entirely.
                   </small>
                 </NAlert>
               </template>

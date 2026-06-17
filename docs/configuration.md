@@ -76,6 +76,7 @@ The recommended way to configure LLM providers is using the JSON-based models co
 | `thinking_enabled` | No | Enable extended thinking (Anthropic only) |
 | `thinking_budget_tokens` | No | Token budget for thinking (default: 10000) |
 | `reasoning_effort` | No | Reasoning effort: `low`, `medium`, `high` (AzureOpenAI o1/o3 only) |
+| `stream_chunk_timeout` | No | Seconds to wait for the next stream chunk before erroring (OpenAI/Azure). Default 600; `0` disables. Raise for high-reasoning models that pause silently. |
 
 ### Switching Models
 

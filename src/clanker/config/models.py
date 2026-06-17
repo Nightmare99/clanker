@@ -14,7 +14,27 @@ logger = get_logger("config.models")
 # Models config file path
 MODELS_CONFIG_PATH = Path.home() / ".clanker" / "models.json"
 
+# Default seconds to wait for the next streamed chunk before erroring. Higher
+# than langchain_openai's stock 120s so high-reasoning models (which can pause
+# silently for minutes mid-stream) don't trip a false "connection dead" timeout,
+# while still catching genuinely stalled TCP connections.
+DEFAULT_STREAM_CHUNK_TIMEOUT = 600
+
 ProviderType = Literal["AzureOpenAI", "OpenAI", "Anthropic", "Ollama", "GitHubCopilot"]
+
+
+def _resolve_stream_chunk_timeout(model_config: "ModelConfig") -> int | None:
+    """Resolve the stream-chunk timeout for an OpenAI/Azure model.
+
+    Returns the per-model override when set, clanker's default when unset, and
+    ``None`` (disabled) when explicitly set to 0.
+    """
+    configured = model_config.stream_chunk_timeout
+    if configured is None:
+        return DEFAULT_STREAM_CHUNK_TIMEOUT
+    if configured <= 0:
+        return None
+    return configured
 
 
 class ModelConfig(BaseModel):
@@ -40,6 +60,15 @@ class ModelConfig(BaseModel):
 
     # Reasoning effort (Azure OpenAI o1/o3 models)
     reasoning_effort: str | None = Field(default=None, description="Reasoning effort: low, medium, high")
+
+    # Streaming reliability: max seconds to wait for the next streamed chunk
+    # before erroring. langchain_openai defaults to 120s, which is too low for
+    # high-reasoning models that pause silently while thinking. None uses
+    # clanker's default; 0 disables the timeout entirely. (OpenAI/Azure only.)
+    stream_chunk_timeout: int | None = Field(
+        default=None,
+        description="Seconds to wait for the next stream chunk (None=default, 0=disabled)",
+    )
 
     class Config:
         extra = "allow"  # Allow additional provider-specific fields
@@ -180,6 +209,9 @@ def create_llm_from_config(model_config: ModelConfig):
         if model_config.max_input_tokens:
             kwargs["profile"] = {"max_input_tokens": model_config.max_input_tokens}
 
+        # Tolerate long silent reasoning pauses without tripping the stream timeout
+        kwargs["stream_chunk_timeout"] = _resolve_stream_chunk_timeout(model_config)
+
         # stream_usage enables token counts in streaming responses
         return ChatOpenAI(
             api_key=api_key,
@@ -227,6 +259,9 @@ def create_llm_from_config(model_config: ModelConfig):
         # Max tokens if specified
         if model_config.max_tokens:
             kwargs["max_tokens"] = model_config.max_tokens
+
+        # Tolerate long silent reasoning pauses without tripping the stream timeout
+        kwargs["stream_chunk_timeout"] = _resolve_stream_chunk_timeout(model_config)
 
         return AzureChatOpenAI(**kwargs)
 
