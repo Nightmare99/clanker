@@ -580,10 +580,12 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
     session_manager = SessionManager()
 
     # Resume session if specified
+    resumed_messages: list | None = None
     if resume_session:
         messages = session_manager.get_session_messages(resume_session)
         if messages:
             session_manager.resume_session(resume_session)
+            resumed_messages = messages
             console.print_info(f"Resuming session {resume_session} with {len(messages)} messages")
         else:
             console.print_warning(f"Session {resume_session} not found, starting new session")
@@ -635,6 +637,16 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
     # Track messages for saving
     conversation_messages = []
 
+    # History that must be injected into the next turn's graph state so the
+    # checkpointer (in-RAM, keyed by thread_id) actually holds it. Set on
+    # --resume / /restore; consumed once when building the next state. Without
+    # this, a restored session changes the thread_id but the graph has no prior
+    # messages, so the agent starts with no memory of the conversation.
+    pending_restore_messages: list = []
+    if resumed_messages:
+        conversation_messages = list(resumed_messages)
+        pending_restore_messages = list(resumed_messages)
+
     # Token tracking
     current_model = get_default_model()
     tracker_model_name = current_model.name if current_model else "unknown"
@@ -677,6 +689,10 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
                         # Switch to restored session
                         session_manager.resume_session(session_id)
                         conversation_messages = list(messages)
+                        # Inject restored history into the next turn's graph state
+                        # so the agent actually remembers the conversation (the
+                        # new thread_id has no checkpoint until we seed it).
+                        pending_restore_messages = list(messages)
                         console.print_info(f"Restored session {session_id} with {len(messages)} messages")
                         # Show last few messages as context
                         console.print_info("Recent messages:")
@@ -700,9 +716,17 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
             user_msg = HumanMessage(content=user_input)
             conversation_messages.append(user_msg)
 
-            # Prepare state - the graph handles summarization automatically via SummarizationNode
+            # Prepare state - the graph handles summarization automatically via SummarizationNode.
+            # On the first turn after a restore, prepend the restored history so it gets
+            # written into the checkpointer under the (new) thread_id; subsequent turns
+            # then resume normally from the checkpointer.
+            if pending_restore_messages:
+                turn_messages = [*pending_restore_messages, user_msg]
+                pending_restore_messages = []
+            else:
+                turn_messages = [user_msg]
             state = {
-                "messages": [user_msg],
+                "messages": turn_messages,
                 "working_directory": working_dir,
             }
 
