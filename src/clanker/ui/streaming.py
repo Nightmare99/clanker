@@ -141,6 +141,42 @@ def _teardown_live_displays(rich_console, stop_loading, tool_handler) -> None:
         pass
 
 
+async def _heal_orphaned_tool_calls(graph, config) -> None:
+    """Repair orphaned tool_use blocks left in the checkpoint by an interrupt.
+
+    When a turn is interrupted after the model emits an ``AIMessage`` with
+    ``tool_calls`` but before the tool node writes the matching ``ToolMessage``,
+    the persisted state holds tool_use ids with no tool_result. Anthropic-family
+    APIs then reject every subsequent turn with a 400. This reads the committed
+    state, detects such orphans, and appends stub ToolMessage results so history
+    is valid again.
+
+    Self-healing and idempotent: runs each turn, no-ops when already valid.
+    Never raises -- a repair failure must not break the turn.
+    """
+    heal_logger = get_logger("streaming")
+    try:
+        from clanker.context import find_orphaned_tool_call_ids, make_tool_result_stubs
+
+        snapshot = await graph.aget_state(config)
+        messages = snapshot.values.get("messages", []) if snapshot and snapshot.values else []
+        if not messages:
+            return
+
+        orphan_ids = find_orphaned_tool_call_ids(messages)
+        if not orphan_ids:
+            return
+
+        heal_logger.warning(
+            "Healing %d orphaned tool_use id(s) from an interrupted turn: %s",
+            len(orphan_ids), orphan_ids,
+        )
+        stubs = make_tool_result_stubs(orphan_ids)
+        await graph.aupdate_state(config, {"messages": stubs})
+    except Exception as exc:  # noqa: BLE001 - repair must never break the turn
+        heal_logger.warning("Failed to heal orphaned tool calls: %s", exc)
+
+
 @dataclass
 class StreamResult:
     """Result from streaming an agent response."""
@@ -300,6 +336,12 @@ def stream_agent_response_sync(
 
             # Add recursion limit to config (default 100 is too low for complex tasks)
             stream_config = {**config, "recursion_limit": 500}
+
+            # Heal any orphaned tool_use left in the checkpoint by a prior
+            # interrupted turn, otherwise the API rejects this turn with a 400
+            # ("tool_use ids without tool_result"). Self-healing: runs every turn,
+            # no-ops when the history is already valid.
+            await _heal_orphaned_tool_calls(graph, config)
 
             with _suppress_subprocess_stderr():
                 async for event in graph.astream_events(
