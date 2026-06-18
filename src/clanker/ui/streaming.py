@@ -247,6 +247,8 @@ def stream_agent_response_sync(
     """
     async def _stream_async() -> StreamResult:
 
+        from langgraph.errors import GraphRecursionError
+
         from clanker.agent import create_agent_graph_async
 
         # Create graph inside async context so MCP client is in same event loop
@@ -334,8 +336,9 @@ def stream_agent_response_sync(
             # Start loading spinner
             start_loading()
 
-            # Add recursion limit to config (default 100 is too low for complex tasks)
-            stream_config = {**config, "recursion_limit": 500}
+            # Add recursion limit to config (default 100 is too low for complex tasks).
+            # Configurable so large multi-file lint/test loops don't hit it prematurely.
+            stream_config = {**config, "recursion_limit": settings.context.max_agent_steps}
 
             # Heal any orphaned tool_use left in the checkpoint by a prior
             # interrupted turn, otherwise the API rejects this turn with a 400
@@ -560,6 +563,31 @@ def stream_agent_response_sync(
             rich_console.print(f"\n[bold yellow]Operation cancelled:[/bold yellow] {e}")
             return StreamResult(
                 response="",
+                input_tokens=last_input_tokens,
+                output_tokens=last_output_tokens,
+                cache_read_tokens=last_cache_read_tokens,
+                cache_creation_tokens=last_cache_creation_tokens,
+                model_name=model_name,
+                summarization_occurred=summarization_detected,
+            )
+
+        except GraphRecursionError:
+            # The agent looped past the per-turn step budget without finishing.
+            # End the turn gracefully (preserving any partial text) instead of
+            # crashing; the user can nudge it to continue or raise
+            # context.max_agent_steps. Any tool_use left dangling by the aborted
+            # turn is repaired by _heal_orphaned_tool_calls on the next turn.
+            stop_loading()
+            tool_handler.finalize_live()
+            limit = settings.context.max_agent_steps
+            rich_console.print(
+                f"\n[bold yellow]*WHIRR*[/bold yellow] Hit the step limit "
+                f"({limit} steps) without finishing. Stopping here so you can "
+                f"steer. Say 'continue' to resume, or raise "
+                f"[cyan]context.max_agent_steps[/cyan] in config for longer runs."
+            )
+            return StreamResult(
+                response=current_response,
                 input_tokens=last_input_tokens,
                 output_tokens=last_output_tokens,
                 cache_read_tokens=last_cache_read_tokens,

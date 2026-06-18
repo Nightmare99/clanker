@@ -51,6 +51,16 @@ class TestSettings:
         with pytest.raises(ValueError):
             ContextSettings(summarization_threshold=100.0)
 
+    def test_max_agent_steps(self) -> None:
+        """max_agent_steps defaults sensibly and validates bounds."""
+        assert ContextSettings().max_agent_steps == 1000
+        assert ContextSettings(max_agent_steps=2500).max_agent_steps == 2500
+        # Below floor / above ceiling are rejected.
+        with pytest.raises(ValueError):
+            ContextSettings(max_agent_steps=5)
+        with pytest.raises(ValueError):
+            ContextSettings(max_agent_steps=20_000)
+
     def test_settings_from_yaml(self, tmp_path: Path) -> None:
         """Test loading settings from YAML."""
         config_file = tmp_path / "config.yaml"

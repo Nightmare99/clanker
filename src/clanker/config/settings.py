@@ -42,6 +42,11 @@ class ContextSettings(BaseModel):
     # Oversized results are head/tail truncated at the tool boundary so one
     # large output cannot overflow the context window. 0 disables truncation.
     max_tool_result_tokens: int = Field(default=20_000, ge=0)
+    # Maximum agent loop steps (LangGraph super-steps) per turn before the
+    # turn is stopped. Each model call + tool round-trip is one step; large
+    # multi-file lint/test loops can legitimately use many. Hitting the limit
+    # ends the turn gracefully rather than crashing.
+    max_agent_steps: int = Field(default=1000, ge=10, le=10_000)
 
 
 class MemorySettings(BaseModel):
@@ -195,6 +200,7 @@ context:
   keep_recent_turns: 4  # Keep last N conversation turns after summarization
   summarization_threshold: 80.0  # Trigger at this % of context window (50-99)
   max_tool_result_tokens: 20000  # Cap any single tool result to this many tokens (0 disables)
+  max_agent_steps: 1000  # Max agent loop steps per turn before stopping gracefully
 
 memory:
   persist_sessions: true

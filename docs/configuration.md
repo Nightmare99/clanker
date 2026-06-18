@@ -145,6 +145,7 @@ context:
   keep_recent_turns: 4
   summarization_threshold: 80.0  # % of context window
   max_tool_result_tokens: 20000  # Cap any single tool result (0 disables)
+  max_agent_steps: 1000  # Max agent loop steps per turn before stopping gracefully
 
 memory:
   persist_sessions: true
