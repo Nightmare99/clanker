@@ -31,6 +31,23 @@ _BROWSER_HEADERS = {
 }
 
 
+def _get_ssl_context():
+    """Build an SSL context backed by certifi's CA bundle.
+
+    PyInstaller-frozen binaries have no system CA store, so the default context
+    can't verify certificates ("unable to get local issuer certificate"). Using
+    certifi's bundle explicitly fixes verification regardless of environment.
+    """
+    import ssl
+
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
 def _fetch_with_browser_headers(url: str, timeout: int = 15) -> str | None:
     """Fetch a URL using browser-like headers to avoid bot detection."""
     import urllib.request
@@ -39,8 +56,9 @@ def _fetch_with_browser_headers(url: str, timeout: int = 15) -> str | None:
     import zlib
 
     req = urllib.request.Request(url, headers=_BROWSER_HEADERS)
+    context = _get_ssl_context()
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=context) as resp:
             data = resp.read()
             encoding = resp.headers.get("Content-Encoding", "")
             if encoding == "gzip":
@@ -196,10 +214,30 @@ def web_read(url: str, max_length: int = MAX_PAGE_LENGTH) -> str:
         return f"Error: Failed to extract content: {e}"
 
     if not content:
-        return f"Error: No meaningful content could be extracted from {url}"
+        # trafilatura targets HTML articles and returns nothing for raw text
+        # files (e.g. a .py/.md/.json fetched from raw.githubusercontent.com).
+        # If the download looks like plain text/code rather than an HTML page,
+        # return it directly instead of reporting "no content".
+        if _looks_like_plain_text(downloaded):
+            content = downloaded
+        else:
+            return f"Error: No meaningful content could be extracted from {url}"
 
     # Truncate if needed
     if len(content) > max_length:
         content = content[:max_length] + "\n\n... (content truncated)"
 
     return f"Content from {url}:\n\n{content}"
+
+
+def _looks_like_plain_text(text: str) -> bool:
+    """Heuristic: is this raw text/code rather than an HTML document?
+
+    True when there's no obvious HTML document structure in the leading content,
+    so we can safely return it verbatim when the HTML extractor finds nothing.
+    """
+    if not text:
+        return False
+    head = text[:1000].lower()
+    html_markers = ("<!doctype html", "<html", "<head", "<body", "<div", "<p>", "<span")
+    return not any(marker in head for marker in html_markers)

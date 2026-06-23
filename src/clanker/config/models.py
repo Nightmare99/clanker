@@ -37,6 +37,30 @@ def _resolve_stream_chunk_timeout(model_config: "ModelConfig") -> int | None:
     return configured
 
 
+def _apply_stream_chunk_timeout(chat_cls, kwargs: dict, model_config: "ModelConfig") -> None:
+    """Apply the stream-chunk timeout in a version-safe way.
+
+    The stream-chunk-timeout feature only exists in newer ``langchain-openai``
+    releases. On versions that expose ``stream_chunk_timeout`` as a real model
+    field we pass it as a constructor kwarg. On older versions it is NOT a field
+    -- passing it would silently fall into ``model_kwargs`` and then be forwarded
+    to the API call, which rejects it ("unexpected keyword argument") and breaks
+    every request. For those, we set the ``LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S``
+    env var instead, which newer versions read and older ones harmlessly ignore.
+
+    A value of ``None`` (disabled) is applied as ``0`` to the env var path.
+    """
+    timeout = _resolve_stream_chunk_timeout(model_config)
+
+    supports_field = "stream_chunk_timeout" in getattr(chat_cls, "model_fields", {})
+    if supports_field:
+        kwargs["stream_chunk_timeout"] = timeout
+        return
+
+    # Older version: never let it reach model_kwargs. Use the documented env var.
+    os.environ["LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S"] = str(timeout if timeout else 0)
+
+
 class ModelConfig(BaseModel):
     """Configuration for a single model."""
 
@@ -210,7 +234,8 @@ def create_llm_from_config(model_config: ModelConfig):
             kwargs["profile"] = {"max_input_tokens": model_config.max_input_tokens}
 
         # Tolerate long silent reasoning pauses without tripping the stream timeout
-        kwargs["stream_chunk_timeout"] = _resolve_stream_chunk_timeout(model_config)
+        # (version-safe: kwarg on newer langchain-openai, env var on older).
+        _apply_stream_chunk_timeout(ChatOpenAI, kwargs, model_config)
 
         # stream_usage enables token counts in streaming responses
         return ChatOpenAI(
@@ -261,7 +286,8 @@ def create_llm_from_config(model_config: ModelConfig):
             kwargs["max_tokens"] = model_config.max_tokens
 
         # Tolerate long silent reasoning pauses without tripping the stream timeout
-        kwargs["stream_chunk_timeout"] = _resolve_stream_chunk_timeout(model_config)
+        # (version-safe: kwarg on newer langchain-openai, env var on older).
+        _apply_stream_chunk_timeout(AzureChatOpenAI, kwargs, model_config)
 
         return AzureChatOpenAI(**kwargs)
 

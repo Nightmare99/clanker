@@ -47,6 +47,30 @@ from clanker.runtime import (
 # Load environment variables
 load_dotenv()
 
+
+def _configure_certificates() -> None:
+    """Point TLS verification at certifi's CA bundle.
+
+    In a PyInstaller-frozen binary the bundled Python has no system CA store,
+    so HTTPS fails with ``CERTIFICATE_VERIFY_FAILED: unable to get local issuer
+    certificate``. Setting these env vars to certifi's bundle fixes every HTTPS
+    client at once (urllib for web_read, trafilatura's fallback fetcher, ddgs
+    web search, and the GitHub update check). We only set vars that are unset so
+    a user's explicit override is respected.
+    """
+    try:
+        import certifi
+
+        ca_bundle = certifi.where()
+    except Exception:
+        return
+
+    for var in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"):
+        os.environ.setdefault(var, ca_bundle)
+
+
+_configure_certificates()
+
 # Module logger (initialized after setup_logging is called)
 logger = get_logger("cli")
 

@@ -73,7 +73,7 @@ class TestConstruction:
             reasoning_effort="xhigh",
             max_input_tokens=200000,
         )
-        # Must construct without error; the kwarg is accepted by ChatOpenAI.
+        # Must construct without error and without leaking a bad kwarg.
         model = create_llm_from_config(cfg)
         assert model is not None
 
@@ -84,3 +84,56 @@ class TestConstruction:
         cfg = ModelConfig(name="m", provider="OpenAI", model="gpt-4o", stream_chunk_timeout=0)
         model = create_llm_from_config(cfg)
         assert model is not None
+
+    def test_timeout_never_leaks_into_model_kwargs(self, monkeypatch):
+        """Regression: stream_chunk_timeout must NOT reach model_kwargs.
+
+        On langchain-openai versions without the field, a leaked kwarg gets
+        forwarded to the API call and breaks every request ("unexpected keyword
+        argument"). It must go via the field (newer) or the env var (older),
+        never model_kwargs.
+        """
+        from langchain_openai import ChatOpenAI
+
+        from clanker.config.models import create_llm_from_config
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        cfg = ModelConfig(name="m", provider="OpenAI", model="gpt-4o", stream_chunk_timeout=600)
+        model = create_llm_from_config(cfg)
+
+        leaked = "stream_chunk_timeout" in (getattr(model, "model_kwargs", None) or {})
+        assert not leaked, "stream_chunk_timeout leaked into model_kwargs (breaks API calls)"
+
+        # On a version without the field, the env var carries the value instead.
+        if "stream_chunk_timeout" not in ChatOpenAI.model_fields:
+            import os
+
+            assert os.environ.get("LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S") == "600"
+
+    def test_apply_uses_field_when_supported(self, monkeypatch):
+        """When the class exposes the field, the kwarg path is used (not env)."""
+        from clanker.config.models import _apply_stream_chunk_timeout
+
+        class FakeChat:
+            model_fields = {"stream_chunk_timeout": object()}
+
+        kwargs: dict = {}
+        cfg = ModelConfig(name="m", provider="OpenAI", stream_chunk_timeout=300)
+        _apply_stream_chunk_timeout(FakeChat, kwargs, cfg)
+        assert kwargs["stream_chunk_timeout"] == 300
+
+    def test_apply_uses_env_when_field_absent(self, monkeypatch):
+        """When the class lacks the field, the env var is set and kwargs stays clean."""
+        import os
+
+        from clanker.config.models import _apply_stream_chunk_timeout
+
+        class FakeChat:
+            model_fields: dict = {}
+
+        monkeypatch.delenv("LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S", raising=False)
+        kwargs: dict = {}
+        cfg = ModelConfig(name="m", provider="OpenAI", stream_chunk_timeout=300)
+        _apply_stream_chunk_timeout(FakeChat, kwargs, cfg)
+        assert "stream_chunk_timeout" not in kwargs
+        assert os.environ["LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S"] == "300"

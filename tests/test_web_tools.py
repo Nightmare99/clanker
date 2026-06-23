@@ -234,3 +234,121 @@ class TestWebToolsIntegration:
 
             assert "web_search" not in tool_names
             assert "web_read" not in tool_names
+
+
+class TestSSLCertificates:
+    """Regression for CERTIFICATE_VERIFY_FAILED in the frozen binary.
+
+    The fetcher must verify HTTPS using certifi's CA bundle (not a disabled
+    context), so packaged binaries without a system CA store still work.
+    """
+
+    def test_ssl_context_verifies_and_uses_certifi(self) -> None:
+        import ssl
+
+        import certifi
+
+        from clanker.tools.web_tools import _get_ssl_context
+
+        ctx = _get_ssl_context()
+        # Verification stays ON — we fix the CA path, we don't disable checking.
+        assert ctx.verify_mode == ssl.CERT_REQUIRED
+        assert ctx.check_hostname is True
+        # Built from certifi's bundle (best-effort: at least one cert loaded).
+        assert certifi.where()  # bundle exists
+        assert ctx.cert_store_stats()["x509"] > 0
+
+    def test_fetch_passes_ssl_context_to_urlopen(self) -> None:
+        from clanker.tools import web_tools
+
+        captured = {}
+
+        class FakeResp:
+            headers = MagicMock()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b"<html>ok</html>"
+
+        def fake_urlopen(req, timeout=None, context=None):
+            captured["context"] = context
+            resp = FakeResp()
+            resp.headers.get.return_value = ""
+            resp.headers.get_content_charset.return_value = "utf-8"
+            return resp
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            web_tools._fetch_with_browser_headers("https://example.com")
+
+        # A verifying SSL context must be passed (not None = system default).
+        import ssl
+
+        assert isinstance(captured["context"], ssl.SSLContext)
+        assert captured["context"].verify_mode == ssl.CERT_REQUIRED
+
+    def test_configure_certificates_sets_and_respects_overrides(self, monkeypatch) -> None:
+        import certifi
+
+        from clanker.cli import _configure_certificates
+
+        for var in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"):
+            monkeypatch.delenv(var, raising=False)
+
+        _configure_certificates()
+        import os
+
+        assert os.environ["SSL_CERT_FILE"] == certifi.where()
+        assert os.environ["REQUESTS_CA_BUNDLE"] == certifi.where()
+
+        # An explicit user override is preserved (setdefault, not overwrite).
+        monkeypatch.setenv("SSL_CERT_FILE", "/custom/ca.pem")
+        _configure_certificates()
+        assert os.environ["SSL_CERT_FILE"] == "/custom/ca.pem"
+
+
+class TestRawTextFallback:
+    """web_read must return raw text/code when trafilatura extracts nothing.
+
+    Fetching a .py/.md/.json from raw.githubusercontent.com yields plain text;
+    trafilatura targets HTML articles and returns nothing, which used to surface
+    as 'No meaningful content could be extracted'.
+    """
+
+    def test_looks_like_plain_text(self) -> None:
+        from clanker.tools.web_tools import _looks_like_plain_text
+
+        assert _looks_like_plain_text("# Copyright\nimport os\ndef f(): ...")
+        assert _looks_like_plain_text('{"key": "value"}')
+        assert not _looks_like_plain_text("<!DOCTYPE html><html><body>x</body></html>")
+        assert not _looks_like_plain_text("<div class='a'>hello</div>")
+        assert not _looks_like_plain_text("")
+
+    def test_raw_code_returned_when_extract_empty(self) -> None:
+        from clanker.tools import web_tools
+
+        raw_code = "# Copyright 2023\nimport os\n\ndef run():\n    return 1\n"
+
+        with patch.object(web_tools, "_fetch_with_browser_headers", return_value=raw_code), \
+             patch("trafilatura.extract", return_value=None):
+            result = web_tools.web_read.invoke({"url": "https://raw.example.com/x.py"})
+
+        assert "import os" in result
+        assert "def run" in result
+        assert "No meaningful content" not in result
+
+    def test_html_with_no_extract_still_errors(self) -> None:
+        from clanker.tools import web_tools
+
+        html = "<!DOCTYPE html><html><body><div>nav only</div></body></html>"
+
+        with patch.object(web_tools, "_fetch_with_browser_headers", return_value=html), \
+             patch("trafilatura.extract", return_value=None):
+            result = web_tools.web_read.invoke({"url": "https://example.com/page"})
+
+        # Real HTML that yields nothing is still reported as no-content (not dumped).
+        assert "No meaningful content" in result
