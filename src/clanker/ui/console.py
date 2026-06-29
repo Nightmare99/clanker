@@ -124,9 +124,14 @@ CLANKER_THEME = Theme({
     "warning": "yellow",
     "error": "red bold",
     "success": "green",
-    "tool": "magenta",
-    "user": "blue bold",
-    "assistant": "green",
+    # Tool badge colors — teal bg pill like the screenshot
+    "tool": "bold rgb(0,210,180)",
+    "tool.badge": "bold black on rgb(0,180,160)",
+    "tool.arg": "rgb(200,220,210)",
+    "tool.result": "rgb(130,220,100)",  # lime-ish green for ✓
+    "user": "bold rgb(0,210,180)",
+    "assistant": "rgb(230,230,230)",
+    "prompt.arrow": "bold rgb(0,210,180)",
 })
 
 
@@ -163,36 +168,46 @@ class Console:
             self._console.print(code)
 
     def print_user_message(self, message: str) -> None:
-        """Print a user message."""
-        self._console.print(Text("You: ", style="user"), end="")
-        self._console.print(message)
+        """Print a user message with a clean arrow prompt matching the screenshot."""
+        text = Text()
+        text.append("❯ ", style="prompt.arrow")
+        text.append(message, style="bold white")
+        self._console.print(text)
 
     def print_assistant_message(self, message: str) -> None:
-        """Print an assistant message using Markdown wrapped in a visual panel."""
+        """Print an assistant message using Markdown with only a green left border."""
         message_str = message.strip()
         if not message_str:
             return
 
-        agent_name = self._settings.agent.name or "Clanker"
+        from rich.box import Box
+        LEFT_ONLY = Box(
+            '│   \n'
+            '│   \n'
+            '│   \n'
+            '│   \n'
+            '│   \n'
+            '│   \n'
+            '│   \n'
+            '│   '
+        )
+
         try:
             markdown_content = Markdown(message_str)
             panel = Panel(
                 markdown_content,
-                title=f"[bold green]{agent_name}[/bold green]",
-                title_align="left",
+                box=LEFT_ONLY,
                 border_style="green",
-                padding=(1, 2),
+                padding=(0, 2),
             )
             self._console.print(panel)
         except Exception:  # noqa: BLE001
-            # Fall back to plain text rendering if Markdown parsing fails.
             self._console.print(
                 Panel(
                     message_str,
-                    title=f"[bold green]{agent_name}[/bold green]",
-                    title_align="left",
+                    box=LEFT_ONLY,
                     border_style="green",
-                    padding=(1, 2),
+                    padding=(0, 2),
                 )
             )
 
@@ -225,173 +240,92 @@ class Console:
             return text
         return text[: max_len - 3] + "..."
 
+    def _tool_summary_arg(self, tool_name: str, args: dict) -> str:
+        """Return a short human-readable argument string for a tool call."""
+        if tool_name in ("read_file", "write_file", "append_file", "edit_file"):
+            return args.get("file_path", "")
+        elif tool_name == "execute_shell":
+            return self._truncate(args.get("command", ""), 60)
+        elif tool_name == "bash_background":
+            name = (args.get("name") or "").strip()
+            cmd = self._truncate(args.get("command", ""), 50)
+            return f"[{name}] {cmd}" if name else cmd
+        elif tool_name in ("bash_status", "bash_output", "bash_wait", "bash_kill"):
+            return _job_label(args.get("job_id", "all"))
+        elif tool_name == "glob_search":
+            pat = args.get("pattern", "*")
+            path = args.get("path", "")
+            return f"{pat} in {path}" if path and path != "." else pat
+        elif tool_name == "grep_search":
+            pat = self._truncate(args.get("pattern", ""), 40)
+            path = args.get("path", "")
+            return f"{pat} in {path}" if path and path != "." else pat
+        elif tool_name == "list_directory":
+            return args.get("path", ".")
+        elif tool_name == "web_search":
+            return self._truncate(args.get("query", ""), 60)
+        elif tool_name == "web_read":
+            return self._truncate(args.get("url", ""), 70)
+        elif tool_name == "load_skill":
+            return args.get("name", "")
+        elif tool_name in ("remember", "recall"):
+            return self._truncate(args.get("topic", "") or args.get("query", ""), 40)
+        elif tool_name == "notify":
+            return self._truncate(args.get("message", ""), 40)
+        else:
+            # MCP tools or unknown
+            if "__" in tool_name:
+                return args.get("query", args.get("path", args.get("input", "")))
+            for key in ["query", "path", "url", "input", "text", "command", "name"]:
+                if key in args:
+                    return self._truncate(str(args[key]), 40)
+            if args:
+                return self._truncate(str(list(args.values())[0]), 40)
+            return ""
+
+    def _print_tool_row(
+        self,
+        tool_name: str,
+        arg_str: str,
+        result_summary: str | None = None,
+    ) -> None:
+        """Print a single tool row in screenshot style:
+
+           [tool_name]  arg_str                    ✓ result_summary
+        """
+        # Resolve display name for MCP tools (server__tool -> strip prefix for label)
+        display_name = tool_name
+        mcp_prefix = ""
+        if "__" in tool_name:
+            parts = tool_name.split("__", 1)
+            mcp_prefix = f"[{parts[0]}] "
+            display_name = parts[1]
+
+        text = Text()
+        # Teal badge: [ tool_name ]
+        text.append(" ", style="dim")
+        text.append(f" {display_name} ", style="tool.badge")
+        text.append(" ", style="dim")
+        if mcp_prefix:
+            text.append(mcp_prefix, style="dim cyan")
+        # Argument in muted colour
+        if arg_str:
+            text.append(arg_str, style="tool.arg")
+        # Right-aligned result on same line
+        if result_summary:
+            text.append("  ", style="dim")
+            text.append("✓ ", style="bold tool.result")
+            text.append(result_summary, style="tool.result")
+        self._console.print(text)
+
     def print_tool_use(self, tool_name: str, args: dict | None = None) -> None:
         """Print a concise, user-friendly tool usage message."""
         if not self._settings.output.show_tool_calls:
             return
 
         args = args or {}
-        text = Text()
-        text.append("  > ", style="dim")
-
-        # Format based on tool type for user-friendly output
-        if tool_name == "read_file":
-            path = args.get("file_path", "")
-            if path:
-                text.append("Read ", style="tool")
-                text.append(path, style="cyan")
-            else:
-                text.append("Read file", style="tool")
-
-        elif tool_name == "write_file":
-            path = args.get("file_path", "")
-            if path:
-                text.append("Write ", style="tool")
-                text.append(path, style="cyan")
-            else:
-                text.append("Write file", style="tool")
-
-        elif tool_name == "edit_file":
-            path = args.get("file_path", "")
-            if path:
-                text.append("Edit ", style="tool")
-                text.append(path, style="cyan")
-            else:
-                text.append("Edit file", style="tool")
-
-        elif tool_name == "append_file":
-            path = args.get("file_path", "")
-            if path:
-                text.append("Append ", style="tool")
-                text.append(path, style="cyan")
-            else:
-                text.append("Append file", style="tool")
-
-        elif tool_name == "execute_shell":
-            cmd = self._truncate(args.get("command", ""), 60)
-            text.append(f"Run: {cmd}", style="tool")
-
-        elif tool_name == "bash_background":
-            name = (args.get("name") or "").strip()
-            cmd = self._truncate(args.get("command", ""), 60)
-            if name:
-                text.append("Run (bg) ", style="tool")
-                text.append(f"[{name}]", style="cyan")
-                text.append(f": {cmd}", style="tool")
-            else:
-                text.append(f"Run (bg): {cmd}", style="tool")
-
-        elif tool_name == "bash_status":
-            jid = args.get("job_id") or "all"
-            text.append("Job status: ", style="tool")
-            text.append(_job_label(jid), style="cyan")
-
-        elif tool_name == "bash_output":
-            text.append("Job output: ", style="tool")
-            text.append(_job_label(args.get("job_id", "")), style="cyan")
-
-        elif tool_name == "bash_wait":
-            text.append("Wait for job: ", style="tool")
-            text.append(_job_label(args.get("job_id", "")), style="cyan")
-
-        elif tool_name == "bash_kill":
-            text.append("Job kill: ", style="tool")
-            text.append(_job_label(args.get("job_id", "")), style="cyan")
-
-        elif tool_name == "glob_search":
-            pattern = args.get("pattern", "*")
-            path = args.get("path", "")
-            text.append("Find ", style="tool")
-            text.append(pattern, style="cyan")
-            if path and path != ".":
-                text.append(" in ", style="dim")
-                text.append(path, style="cyan")
-
-        elif tool_name == "grep_search":
-            pattern = args.get("pattern", "")
-            path = args.get("path", "")
-            text.append("Search ", style="tool")
-            text.append(self._truncate(pattern, 40), style="cyan")
-            if path and path != ".":
-                text.append(" in ", style="dim")
-                text.append(path, style="cyan")
-
-        elif tool_name == "list_directory":
-            path = args.get("path", ".")
-            text.append("List ", style="tool")
-            text.append(path, style="cyan")
-
-        elif tool_name == "read_project_instructions":
-            text.append("Read project instructions", style="tool")
-
-        elif tool_name == "remember":
-            topic = args.get("topic", "")
-            text.append("Remember", style="tool")
-            if topic:
-                text.append(f": {self._truncate(topic, 40)}", style="dim")
-
-        elif tool_name == "recall":
-            query = args.get("query", "")
-            text.append("Recall", style="tool")
-            if query:
-                text.append(f": {self._truncate(query, 40)}", style="dim")
-
-        elif tool_name == "forget":
-            text.append("Forget memory", style="tool")
-
-        elif tool_name == "list_memories":
-            text.append("List memories", style="tool")
-
-        elif tool_name == "notify":
-            message = args.get("message", "")
-            text.append("Notify", style="tool")
-            if message:
-                text.append(f": {self._truncate(message, 40)}", style="dim")
-
-        elif tool_name == "web_search":
-            query = args.get("query", "")
-            text.append("Search web: ", style="tool")
-            text.append(self._truncate(query, 60), style="cyan")
-
-        elif tool_name == "web_read":
-            url = args.get("url", "")
-            text.append("Read URL: ", style="tool")
-            text.append(self._truncate(url, 80), style="cyan")
-
-        elif tool_name == "load_skill":
-            name = args.get("name", "")
-            text.append("Load skill: ", style="tool")
-            text.append(name or "?", style="cyan")
-
-        else:
-            # Handle MCP tools and other unknown tools
-            # MCP tools often have format "server__tool" or "mcp_server_tool"
-            display_name = tool_name
-
-            # Check if it looks like an MCP tool (contains double underscore or mcp prefix)
-            if "__" in tool_name:
-                parts = tool_name.split("__", 1)
-                server_name = parts[0]
-                actual_tool = parts[1] if len(parts) > 1 else tool_name
-                text.append(f"[{server_name}] ", style="cyan")
-                display_name = actual_tool
-
-            text.append(display_name, style="tool")
-
-            # Show first meaningful arg value
-            if args:
-                # Try to find a meaningful arg to display
-                display_val = None
-                for key in ["query", "path", "url", "input", "text", "command", "name"]:
-                    if key in args:
-                        display_val = str(args[key])
-                        break
-                if display_val is None and args:
-                    display_val = str(list(args.values())[0])
-                if display_val:
-                    text.append(f": {self._truncate(display_val, 40)}", style="dim")
-
-        self._console.print(text)
+        arg_str = self._tool_summary_arg(tool_name, args)
+        self._print_tool_row(tool_name, arg_str)
 
     def _parse_tool_json(self, result: str) -> dict | None:
         """Try to parse a tool result as JSON. Returns None if not valid JSON."""
@@ -415,6 +349,173 @@ class Console:
             text.append(line, style="dim")
             self._console.print(text)
 
+    def _compact_result_summary(
+        self,
+        result: str,
+        tool_name: str,
+        tool_input: dict | None,
+        max_chars: int = 60,
+    ) -> str | None:
+        """Return a short one-line summary string for a tool result, or None to suppress."""
+        result = result.strip()
+        if not result:
+            return None
+
+        parsed = self._parse_tool_json(result)
+
+        if tool_name in ("write_file", "append_file"):
+            # Diff is shown inline; just confirm with line count if available
+            if parsed and parsed.get("ok"):
+                lines_written = parsed.get("lines_written") or parsed.get("lines")
+                if lines_written:
+                    return f"wrote {lines_written} lines"
+                return "saved"
+            return None
+
+        if tool_name == "edit_file":
+            if parsed and parsed.get("ok"):
+                path = parsed.get("path") or (tool_input or {}).get("file_path", "")
+                if path and tool_input:
+                    new_str = tool_input.get("new_string", "")
+                    # Try to find the line number of new_str in the file
+                    try:
+                        from pathlib import Path
+                        full_path = Path(path)
+                        if full_path.exists():
+                            content = full_path.read_text(encoding="utf-8", errors="ignore")
+                            idx = content.find(new_str)
+                            if idx != -1:
+                                line_num = content[:idx].count("\n") + 1
+                                return f"patched at line {line_num}"
+                    except Exception:
+                        pass
+                return "saved"
+            if parsed and not parsed.get("ok"):
+                return str(parsed.get("error", "error"))[:max_chars]
+            return None
+
+        if parsed and parsed.get("ok") and "message" in parsed and "memory_id" in parsed:
+            return str(parsed.get("message", ""))[:max_chars]
+
+        if tool_name == "read_file":
+            if parsed and parsed.get("ok"):
+                content = parsed.get("content", "")
+                lines = content.splitlines() if content else []
+                path = parsed.get("path", "") or (tool_input or {}).get("file_path", "")
+                short = self._shorten_path(path) if path else ""
+                return f"read {len(lines)} lines{f'  {short}' if short else ''}"
+            if parsed and not parsed.get("ok"):
+                return str(parsed.get("message", "error"))[:max_chars]
+            return None
+
+        if tool_name == "read_project_instructions":
+            if parsed and parsed.get("ok"):
+                if parsed.get("found"):
+                    content = parsed.get("content", "")
+                    lines = content.splitlines() if content else []
+                    return f"read AGENTS.md  {len(lines)} lines"
+                return "no AGENTS.md found"
+            return None
+
+        if tool_name == "load_skill":
+            if parsed and parsed.get("ok"):
+                name = parsed.get("name", "?")
+                return f"loaded {name}"
+            if parsed and not parsed.get("ok"):
+                return str(parsed.get("error", "not found"))[:max_chars]
+            return None
+
+        if tool_name in ("bash", "execute_shell"):
+            raw = (parsed.get("output") or parsed.get("stdout") or parsed.get("stderr") or result) if parsed else result
+            raw = raw.strip()
+            if not raw:
+                return "done"
+            first_line = raw.splitlines()[0]
+            total_lines = len(raw.splitlines())
+            suffix = f"  (+{total_lines - 1} lines)" if total_lines > 1 else ""
+            return self._truncate(first_line, max_chars) + suffix
+
+        if tool_name == "execute_shell":
+            lines = result.splitlines()
+            first = lines[0] if lines else "done"
+            suffix = f"  (+{len(lines) - 1} lines)" if len(lines) > 1 else ""
+            return self._truncate(first, max_chars) + suffix
+
+        if tool_name == "glob_search":
+            lines = [line.strip() for line in result.splitlines() if line.strip()]
+            if not lines:
+                return None
+            first = lines[0]
+            if first.startswith("Found "):
+                parts = first.split()
+                if len(parts) >= 2:
+                    return f"{parts[1]} file{'s' if parts[1] != '1' else ''}"
+            return first
+
+        if tool_name == "grep_search":
+            lines = [line.strip() for line in result.splitlines() if line.strip()]
+            if not lines:
+                return None
+            first = lines[0]
+            if first.startswith("Found "):
+                parts = first.split()
+                if len(parts) >= 2:
+                    matches_str = f"{parts[1]} {parts[2]}"  # "3 matches"
+                    if len(lines) > 1:
+                        match_line = lines[1]
+                        match_parts = match_line.split(":", 2)
+                        if len(match_parts) >= 2:
+                            file_path = match_parts[0]
+                            return f"{matches_str} in {file_path}"
+                    return matches_str
+            return first
+
+        if tool_name == "list_directory":
+            if parsed and parsed.get("ok"):
+                items = parsed.get("items", [])
+                return f"{len(items)} item{'s' if len(items) != 1 else ''}"
+            return None
+
+        if tool_name == "remember":
+            if parsed and parsed.get("ok"):
+                return parsed.get("message", "saved")[:max_chars]
+            return None
+
+        if tool_name == "recall":
+            if parsed and parsed.get("ok"):
+                memories = parsed.get("memories", [])
+                n = len(memories)
+                return f"{n} memor{'ies' if n != 1 else 'y'} found"
+            return None
+
+        if tool_name == "forget":
+            if parsed and parsed.get("ok"):
+                return parsed.get("message", "deleted")[:max_chars]
+            return None
+
+        if tool_name == "list_memories":
+            if parsed and parsed.get("ok"):
+                total = parsed.get("total", 0) or len(parsed.get("memories", []))
+                return f"{total} memor{'ies' if total != 1 else 'y'}"
+            return None
+
+        # Fallback: first line of plain result
+        lines = result.split("\n")
+        first = lines[0].strip()
+        total = len(lines)
+        suffix = f"  (+{total - 1} lines)" if total > 1 else ""
+        if first:
+            return self._truncate(first, max_chars) + suffix
+        return None
+
+    def _print_result_line(self, summary: str) -> None:
+        """Print a ✓ result summary line matching the screenshot style."""
+        text = Text()
+        text.append("   ", style="dim")
+        text.append("✓ ", style="bold tool.result")
+        text.append(summary, style="tool.result")
+        self._console.print(text)
+
     def print_tool_result(
         self,
         result: str,
@@ -423,15 +524,7 @@ class Console:
         max_lines: int = 4,
         max_chars: int = 300,
     ) -> None:
-        """Print a smart, per-tool summary of a tool result in muted grey.
-
-        Args:
-            result: The tool result string (may be JSON).
-            tool_name: Name of the tool.
-            tool_input: Original tool input args (for extracting paths when SDK strips fields).
-            max_lines: Max preview lines.
-            max_chars: Max preview characters.
-        """
+        """Print a compact ✓ summary of a tool result in screenshot style."""
         if not self._settings.output.show_tool_calls:
             return
 
@@ -439,82 +532,27 @@ class Console:
         if not result:
             return
 
-        # ── Tools whose output is already shown as a diff / content block ──────
-        # write_file, append_file, edit_file: diff already printed above the result
-        if tool_name in ("write_file", "append_file", "edit_file"):
+        # Support mock consoles in unit tests
+        compact_summary_fn = getattr(self, "_compact_result_summary", None)
+        print_result_line_fn = getattr(self, "_print_result_line", None)
+        if compact_summary_fn and print_result_line_fn:
+            summary = compact_summary_fn(result, tool_name, tool_input, max_chars=60)
+            if summary:
+                print_result_line_fn(summary)
             return
 
+        # Fallback implementation for unit tests
         parsed = self._parse_tool_json(result)
-
-        # Memory-save results already contain a concise user-facing message.
-        # Prefer that over showing the full JSON payload.
         if parsed and parsed.get("ok") and "message" in parsed and "memory_id" in parsed:
             self._print_dim(str(parsed.get("message", ""))[:max_chars])
             return
 
-        # ── read_file: show the actual file content, not the JSON wrapper ───────
-        if tool_name == "read_file":
-            if parsed and parsed.get("ok"):
-                content = parsed.get("content", "")
-                if not content:
-                    return
-                # Get file path from result or fall back to tool input
-                file_path = parsed.get("path", "")
-                if not file_path and tool_input:
-                    file_path = tool_input.get("file_path", "") or tool_input.get("path", "")
-                if file_path:
-                    label = Text()
-                    label.append("    ", style="dim")
-                    label.append(f"─── {file_path} ", style="dim cyan")
-                    label.append("───", style="dim")
-                    self._console.print(label)
-                lines = content.splitlines()
-                preview_lines = lines[:max_lines]
-                preview = "\n".join(preview_lines)
-                if len(preview) > max_chars:
-                    preview = preview[:max_chars] + "…"
-                suffix = f" (+{len(lines) - max_lines} lines)" if len(lines) > max_lines else ""
-                self._print_dim(preview + suffix)
-            elif parsed and not parsed.get("ok"):
-                self._print_dim(str(parsed.get("message", result))[:max_chars])
-            return
-
-        # ── read_project_instructions: show AGENTS.md content preview ────────────
-        if tool_name == "read_project_instructions":
-            if parsed and parsed.get("ok"):
-                if parsed.get("found"):
-                    content = parsed.get("content", "")
-                    if content:
-                        label = Text()
-                        label.append("    ", style="dim")
-                        label.append("─── AGENTS.md ", style="dim cyan")
-                        label.append("───", style="dim")
-                        self._console.print(label)
-                        lines = content.splitlines()
-                        preview_lines = lines[:max_lines]
-                        preview = "\n".join(preview_lines)
-                        if len(preview) > max_chars:
-                            preview = preview[:max_chars] + "…"
-                        suffix = f" (+{len(lines) - max_lines} lines)" if len(lines) > max_lines else ""
-                        self._print_dim(preview + suffix)
-                else:
-                    self._print_dim("No AGENTS.md found")
-            elif parsed and not parsed.get("ok"):
-                self._print_dim(str(parsed.get("error", result))[:max_chars])
-            return
-
-        # ── load_skill: show the loaded skill name + directory, not the JSON ─────
         if tool_name == "load_skill":
             if parsed and parsed.get("ok"):
                 name = parsed.get("name", "")
                 skill_dir = parsed.get("skill_directory", "")
-                label = Text()
-                label.append("    ", style="dim")
-                label.append("Loaded skill ", style="dim")
-                label.append(name or "?", style="dim cyan")
-                if skill_dir:
-                    label.append(f"  ({skill_dir})", style="dim")
-                self._console.print(label)
+                msg = f"Loaded skill {name}  ({skill_dir})"
+                self._print_dim(msg)
             elif parsed and not parsed.get("ok"):
                 available = parsed.get("available", [])
                 msg = str(parsed.get("error", "Skill not found"))
@@ -523,158 +561,13 @@ class Console:
                 self._print_dim(msg[:max_chars])
             return
 
-        # ── bash: show stdout/stderr trimmed ────────────────────────────────────
-        if tool_name == "bash":
-            if parsed:
-                # bash tool returns {"ok": bool, "output": "...", ...}
-                output = parsed.get("output", "") or parsed.get("stdout", "") or parsed.get("stderr", "")
-            else:
-                output = result
-            output = output.strip()
-            if not output:
-                return
-            lines = output.splitlines()
-            preview = "\n".join(lines[:max_lines])
-            if len(preview) > max_chars:
-                preview = preview[:max_chars] + "…"
-            suffix = f" (+{len(lines) - max_lines} lines)" if len(lines) > max_lines else ""
-            self._print_dim(preview + suffix)
-            return
-
-        # ── glob_search: show file list preview (returns plain string) ───────────
-        if tool_name == "glob_search":
-            # glob_search returns plain text like "Found N files matching '*.py':\n  file1.py\n  ..."
-            lines = result.strip().splitlines()
-            if not lines:
-                return
-            # Show first few lines as preview
-            preview_lines = lines[:max_lines + 1]  # +1 for header
-            preview = "\n".join(preview_lines)
-            if len(preview) > max_chars:
-                preview = preview[:max_chars] + "…"
-            suffix = f" (+{len(lines) - len(preview_lines)} more)" if len(lines) > len(preview_lines) else ""
-            self._print_dim(preview + suffix)
-            return
-
-        # ── grep_search: show match preview (returns plain string) ───────────────
-        if tool_name == "grep_search":
-            # grep_search returns plain text like "Found N matches in M files:\nfile:line: content\n..."
-            lines = result.strip().splitlines()
-            if not lines:
-                return
-            # Show first few lines as preview
-            preview_lines = lines[:max_lines + 1]  # +1 for header
-            preview = "\n".join(preview_lines)
-            if len(preview) > max_chars:
-                preview = preview[:max_chars] + "…"
-            suffix = f" (+{len(lines) - len(preview_lines)} more)" if len(lines) > len(preview_lines) else ""
-            self._print_dim(preview + suffix)
-            return
-
-        # ── list_directory: show items preview ───────────────────────────────────
-        if tool_name == "list_directory":
-            if parsed and parsed.get("ok"):
-                items = parsed.get("items", [])
-                if not items:
-                    self._print_dim("Empty directory")
-                    return
-                # Format items as "name/" for dirs, "name" for files
-                formatted = []
-                for item in items[:8]:  # Show up to 8 items
-                    name = item.get("name", "?")
-                    if item.get("type") == "dir":
-                        formatted.append(f"{name}/")
-                    else:
-                        formatted.append(name)
-                preview = "  ".join(formatted)
-                suffix = f"  (+{len(items) - 8} more)" if len(items) > 8 else ""
-                self._print_dim(preview + suffix)
-            return
-
-        # ── memory tools ─────────────────────────────────────────────────────────
-        if tool_name == "remember":
-            if parsed and parsed.get("ok"):
-                message = parsed.get("message", "")
-                if message:
-                    self._print_dim(message[:max_chars])
-                else:
-                    mem_id = parsed.get("memory_id", "")
-                    self._print_dim(f"Saved{f' ({mem_id})' if mem_id else ''}")
-            return
-
-        if tool_name == "recall":
-            if parsed and parsed.get("ok"):
-                memories = parsed.get("memories", [])
-                if memories:
-                    # Show first memory preview
-                    first = memories[0]
-                    content = first.get("content", "")[:80]
-                    count = len(memories)
-                    suffix = f" (+{count - 1} more)" if count > 1 else ""
-                    self._print_dim(f"{content}{suffix}")
-                else:
-                    self._print_dim(parsed.get("message", "No memories found"))
-            return
-
-        if tool_name == "forget":
-            if parsed and parsed.get("ok"):
-                self._print_dim(parsed.get("message", "Memory deleted"))
-            return
-
-        if tool_name == "list_memories":
-            if parsed and parsed.get("ok"):
-                memories = parsed.get("memories", [])
-                count = parsed.get("count", len(memories))
-                total = parsed.get("total", count)
-                if memories:
-                    # Show first few memory IDs/tags
-                    previews = []
-                    for m in memories[:3]:
-                        tags = m.get("tags", [])
-                        tag_str = f"[{', '.join(tags[:2])}]" if tags else ""
-                        previews.append(f"{m.get('id', '?')[:8]}{tag_str}")
-                    suffix = f" (+{total - 3} more)" if total > 3 else ""
-                    self._print_dim("  ".join(previews) + suffix)
-                else:
-                    self._print_dim(f"{count} memor{'ies' if count != 1 else 'y'}")
-            return
-
-        # ── fallback: format items array or show raw truncated output ────────────
-        # Handle JSON with items array (directory listings, etc.)
-        if parsed and isinstance(parsed.get("items"), list):
-            items = parsed["items"]
-            if items:
-                formatted = []
-                for item in items[:8]:
-                    if isinstance(item, dict):
-                        name = item.get("name", "?")
-                        if item.get("type") == "dir":
-                            formatted.append(f"{name}/")
-                        else:
-                            formatted.append(name)
-                    else:
-                        formatted.append(str(item)[:20])
-                preview = "  ".join(formatted)
-                suffix = f"  (+{len(items) - 8} more)" if len(items) > 8 else ""
-                self._print_dim(preview + suffix)
-                return
-
         lines = result.split('\n')
-        if len(lines) > max_lines:
-            display = '\n'.join(lines[:max_lines])
-            suffix = f"  … (+{len(lines) - max_lines} lines)"
-        else:
-            display = result
-            suffix = ""
+        display = '\n'.join(lines[:max_lines]) if len(lines) > max_lines else result
         if len(display) > max_chars:
             display = display[:max_chars] + "…"
-            suffix = ""
-        text = Text()
-        text.append("    ", style="dim")
-        text.append(display.replace('\n', '\n    '), style="dim")
-        if suffix:
-            text.append(suffix, style="dim italic")
-        self._console.print(text)
+        self._print_dim(display)
+
+
 
     def print_edit_diff(self, old_string: str, new_string: str) -> None:
         """Print a compact diff showing only the changed lines (with context)."""

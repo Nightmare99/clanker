@@ -8,6 +8,11 @@ The easiest way to install Clanker:
 curl -fsSL https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.sh | bash
 ```
 
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.ps1 | iex
+```
+
 This script:
 - Detects your OS (Linux, macOS, Windows/WSL) and architecture (amd64, arm64)
 - Downloads the latest release from GitHub

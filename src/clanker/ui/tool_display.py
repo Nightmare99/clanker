@@ -152,14 +152,13 @@ class ToolDisplayHandler:
         if self._is_display_only_tool(tool_name):
             return False
 
-        # Try to get tool name from pending inputs if SDK sent "unknown"
+        # Try to get tool name and input from pending inputs
         matched_name = tool_name
+        matched_input = None
         if (tool_name == "unknown" or tool_name == "") and self._pending_inputs:
-            matched_name = self._pending_inputs[0][0]  # Use name from first pending
-            self._pending_inputs.pop(0)
+            matched_name, matched_input = self._pending_inputs.pop(0)
         elif self._pending_inputs:
-            # Pop one entry to keep queue in sync (even if we don't use it)
-            self._pending_inputs.pop(0)
+            _, matched_input = self._pending_inputs.pop(0)
 
         # Use result hash for duplicate detection (handles multiple same-name tools)
         result_key = f"{matched_name}:{hash(result)}"
@@ -167,9 +166,9 @@ class ToolDisplayHandler:
             return False
         self._shown_results.add(result_key)
 
-        # Let print_tool_result extract path from result JSON (more reliable than input matching)
+        # Let print_tool_result extract path from result JSON or tool_input
         if result and result.strip():
-            self._console.print_tool_result(result, tool_name=matched_name, tool_input=None)
+            self._console.print_tool_result(result, tool_name=matched_name, tool_input=matched_input)
 
         return True
 
@@ -220,66 +219,55 @@ class ToolDisplayHandler:
         return len(self._pending_tools) > 0
 
     def _format_tool_header_text(self, tool_name: str, tool_input: dict) -> Text:
-        """Format a tool header as Rich Text for Live display."""
-        text = Text()
-        text.append("  > ", style="dim")
+        """Format a tool header as Rich Text for Live display (spinner mode)."""
         args = tool_input or {}
 
-        if tool_name == "read_file":
-            text.append("Read ", style="magenta")
-            text.append(args.get("file_path", "file"), style="cyan")
-        elif tool_name == "write_file":
-            text.append("Write ", style="magenta")
-            text.append(args.get("file_path", "file"), style="cyan")
-        elif tool_name == "edit_file":
-            text.append("Edit ", style="magenta")
-            text.append(args.get("file_path", "file"), style="cyan")
+        # Resolve MCP tool names
+        display_name = tool_name
+        mcp_prefix = ""
+        if "__" in tool_name:
+            parts = tool_name.split("__", 1)
+            mcp_prefix = f"[{parts[0]}] "
+            display_name = parts[1]
+
+        # Build arg summary inline
+        if tool_name in ("read_file", "write_file", "edit_file", "append_file"):
+            arg = args.get("file_path", "file")
         elif tool_name == "execute_shell":
-            cmd = (args.get("command", "") or "")[:60]
-            text.append(f"Run: {cmd}", style="magenta")
+            arg = (args.get("command", "") or "")[:60]
         elif tool_name == "bash_background":
             name = (args.get("name") or "").strip()
-            cmd = (args.get("command", "") or "")[:60]
-            if name:
-                text.append("Run (bg) ", style="magenta")
-                text.append(f"[{name}]", style="cyan")
-                text.append(f": {cmd}", style="magenta")
-            else:
-                text.append(f"Run (bg): {cmd}", style="magenta")
-        elif tool_name == "bash_status":
-            jid = args.get("job_id") or "all"
-            text.append("Job status: ", style="magenta")
-            text.append(_job_label(jid), style="cyan")
-        elif tool_name == "bash_output":
-            text.append("Job output: ", style="magenta")
-            text.append(_job_label(args.get("job_id", "")), style="cyan")
-        elif tool_name == "bash_wait":
-            text.append("Wait for job: ", style="magenta")
-            text.append(_job_label(args.get("job_id", "")), style="cyan")
-        elif tool_name == "bash_kill":
-            text.append("Job kill: ", style="magenta")
-            text.append(_job_label(args.get("job_id", "")), style="cyan")
+            cmd = (args.get("command", "") or "")[:50]
+            arg = f"[{name}] {cmd}" if name else cmd
+        elif tool_name in ("bash_status", "bash_output", "bash_wait", "bash_kill"):
+            arg = _job_label(args.get("job_id", "all"))
         elif tool_name == "glob_search":
-            text.append("Find ", style="magenta")
-            text.append(args.get("pattern", "*"), style="cyan")
+            arg = args.get("pattern", "*")
         elif tool_name == "grep_search":
-            text.append("Search ", style="magenta")
-            text.append((args.get("pattern", "") or "")[:40], style="cyan")
+            arg = (args.get("pattern", "") or "")[:40]
         elif tool_name == "list_directory":
-            text.append("List ", style="magenta")
-            text.append(args.get("path", "."), style="cyan")
+            arg = args.get("path", ".")
         elif tool_name == "web_search":
-            text.append("Search web: ", style="magenta")
-            text.append((args.get("query", "") or "")[:60], style="cyan")
+            arg = (args.get("query", "") or "")[:60]
         elif tool_name == "web_read":
-            text.append("Read URL: ", style="magenta")
-            text.append((args.get("url", "") or "")[:80], style="cyan")
+            arg = (args.get("url", "") or "")[:80]
         elif tool_name == "load_skill":
-            text.append("Load skill: ", style="magenta")
-            text.append(args.get("name", "") or "?", style="cyan")
+            arg = args.get("name", "") or "?"
         else:
-            text.append(tool_name, style="magenta")
+            arg = ""
+            for key in ["query", "path", "url", "input", "text", "command", "name"]:
+                if key in args:
+                    arg = str(args[key])[:40]
+                    break
 
+        text = Text()
+        text.append(" ", style="dim")
+        text.append(f" {display_name} ", style="tool.badge")
+        text.append(" ", style="dim")
+        if mcp_prefix:
+            text.append(mcp_prefix, style="dim cyan")
+        if arg:
+            text.append(arg, style="tool.arg")
         return text
 
     def _render_pending_live(self) -> Group:
