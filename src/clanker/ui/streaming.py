@@ -14,7 +14,7 @@ from rich.text import Text
 
 from clanker.config import Settings
 from clanker.logging import get_logger
-from clanker.tools.bash_tools import CommandRejectedError
+from clanker.tools.bash_tools import CommandRejectedError, set_approval_callback
 from clanker.tools.notify_tools import set_notify_callback
 from clanker.tools.ask_tools import set_ask_callback
 from clanker.runtime import is_yolo_mode
@@ -134,14 +134,15 @@ def _teardown_live_displays(rich_console, stop_loading, tool_handler) -> None:
 
 
 async def _heal_orphaned_tool_calls(graph, config) -> None:
-    """Repair orphaned tool_use blocks left in the checkpoint by an interrupt.
+    """Repair orphaned tool_use blocks left in the checkpoint.
 
-    When a turn is interrupted after the model emits an ``AIMessage`` with
-    ``tool_calls`` but before the tool node writes the matching ``ToolMessage``,
-    the persisted state holds tool_use ids with no tool_result. Anthropic-family
-    APIs then reject every subsequent turn with a 400. This reads the committed
-    state, detects such orphans, and appends stub ToolMessage results so history
-    is valid again.
+    When a turn ends after the model emits an ``AIMessage`` with ``tool_calls``
+    but before the tool node writes the matching ``ToolMessage`` -- e.g. the user
+    interrupted (Ctrl+C) or rejected a command approval, which raises out of the
+    tool node -- the persisted state holds tool_use ids with no tool_result.
+    Anthropic-family APIs then reject every subsequent turn with a 400. This reads
+    the committed state, detects such orphans, and appends stub ToolMessage
+    results so history is valid again.
 
     Self-healing and idempotent: runs each turn, no-ops when already valid.
     Never raises -- a repair failure must not break the turn.
@@ -160,11 +161,14 @@ async def _heal_orphaned_tool_calls(graph, config) -> None:
             return
 
         heal_logger.warning(
-            "Healing %d orphaned tool_use id(s) from an interrupted turn: %s",
+            "Healing %d orphaned tool_use id(s) from an incomplete turn: %s",
             len(orphan_ids), orphan_ids,
         )
         stubs = make_tool_result_stubs(orphan_ids)
-        await graph.aupdate_state(config, {"messages": stubs})
+        # as_node="tools" attributes the stub ToolMessages to the tool node so the
+        # graph resumes at the model node. Without it, aupdate_state raises
+        # KeyError('model') on the create_agent graph and the orphan is never fixed.
+        await graph.aupdate_state(config, {"messages": stubs}, as_node="tools")
     except Exception as exc:  # noqa: BLE001 - repair must never break the turn
         heal_logger.warning("Failed to heal orphaned tool calls: %s", exc)
 
@@ -339,6 +343,29 @@ def stream_agent_response_sync(
                 start_loading()
 
         set_ask_callback(_ask_callback)
+
+        # Register the interactive bash-approval prompter. Same spinner/Live
+        # coordination as the asker so the arrow-key menu owns the terminal.
+        def _approval_callback(question, options, *, preface=None):
+            from clanker.ui.prompts import select_options
+
+            stop_loading()
+            try:
+                tool_handler.finalize_live()
+            except Exception:
+                pass
+            try:
+                return select_options(
+                    question,
+                    options,
+                    allow_other=False,
+                    allow_cancel=False,
+                    preface=preface,
+                )
+            finally:
+                start_loading()
+
+        set_approval_callback(_approval_callback)
 
         try:
             # Start loading spinner
@@ -622,6 +649,7 @@ def stream_agent_response_sync(
             _teardown_live_displays(rich_console, stop_loading, tool_handler)
             set_notify_callback(None)
             set_ask_callback(None)
+            set_approval_callback(None)
 
         # If we buffered thinking but never saw </think>, treat it as response
         if current_thinking and not think_tag_closed and not current_response:

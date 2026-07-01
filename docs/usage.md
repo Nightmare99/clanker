@@ -116,33 +116,37 @@ Models are configured in `~/.clanker/models.json` or via `clanker config`.
 
 ## Command Approval
 
-By default, all bash commands require approval before execution. When the AI wants to run a command, you'll see an approval prompt:
+By default, all bash commands require approval before execution. When the AI wants to run a command, you'll see an arrow-key menu showing the command and three choices:
 
 ```
-╭─────────────────────────────────────────────────────────────╮
-│  Bash Command                                               │
-├─────────────────────────────────────────────────────────────┤
-│  $ npm test
-├─────────────────────────────────────────────────────────────┤
-│  [y]es  execute     [N]o  reject and stop                   │
-╰─────────────────────────────────────────────────────────────╯
-Approve?
+  Bash Command
+  $ npm test
+
+  Run this command?
+  ↑/↓ to move · enter to select · esc cancels
+
+  ❯ Yes, execute
+    Yes, and don't ask again (this session)
+    No, reject and stop
 ```
 
-- Type `y` or `yes` to approve and execute the command
-- Press Enter or type anything else to reject and stop
+- **Yes, execute** — run this command.
+- **Yes, and don't ask again (this session)** — run it and stop prompting for the rest of the session (equivalent to enabling yolo mode until you exit).
+- **No, reject and stop** — reject the command. Use ↑/↓ to move, Enter to select, and Esc to cancel.
+
+When stdin isn't an interactive terminal (piped input, one-shot `clanker "prompt"`, CI), the prompt falls back to a numbered list — type `1`, `2`, or `3`.
 
 **Note:** Rejecting a command terminates the current AI response. This prevents the AI from trying alternative approaches after you've declined.
 
 ### Yolo Mode
 
-If you trust the AI's commands and want to skip approval prompts, start Clanker with the `--yolo` flag:
+If you trust the AI's commands and want to skip approval prompts entirely from the start, launch Clanker with the `--yolo` flag:
 
 ```bash
 clanker --yolo
 ```
 
-In yolo mode, all bash commands execute automatically without asking for approval. A warning indicator will appear in the welcome message to remind you that this mode is active.
+In yolo mode, all bash commands execute automatically without asking for approval. A warning indicator will appear in the welcome message to remind you that this mode is active. (Choosing "Yes, and don't ask again" at an approval prompt turns this on mid-session.)
 
 ## Checking for Updates
 

@@ -49,54 +49,114 @@ class CommandRejectedError(Exception):
     pass
 
 
-def prompt_for_approval(command: str) -> bool:
-    """Display approval prompt for a bash command.
+# Approval menu option labels.
+_APPROVE_YES = "Yes, execute"
+_APPROVE_ALWAYS = "Yes, and don't ask again (this session)"
+_APPROVE_NO = "No, reject and stop"
 
-    Returns:
-        True if approved, False if rejected.
+# Module-level approval prompter set by the streaming layer, mirroring the
+# notify/ask callbacks. Signature: (question, options, preface) -> dict with
+# {"selected": [...], "cancelled": bool}. When None, a plain stdin prompt is used.
+_approval_callback = None
 
-    Raises:
-        CommandRejectedError: If user rejects or cancels.
+
+def set_approval_callback(callback) -> None:
+    """Register the interactive approval prompter.
+
+    Called by the streaming layer before graph execution so the bash approval
+    gate can use the same arrow-key menu as ask_user (with spinner coordination).
+    Pass None to clear it (falls back to a plain numbered stdin prompt).
     """
-    import sys
+    global _approval_callback
+    _approval_callback = callback
 
-    # Clear any spinner/loading artifacts and move to new line
-    sys.stdout.write("\r\033[K")  # Clear current line
-    sys.stdout.flush()
 
-    # Format the prompt nicely
-    print()
-    print("\033[33m╭─────────────────────────────────────────────────────────────╮\033[0m")
-    print("\033[33m│\033[0m  \033[1;33mBash Command\033[0m                                               \033[33m│\033[0m")
-    print("\033[33m├─────────────────────────────────────────────────────────────┤\033[0m")
+def get_approval_callback():
+    """Return the currently registered approval callback."""
+    return _approval_callback
 
-    # Display command with wrapping
-    cmd_width = 57
-    if len(command) <= cmd_width:
-        print(f"\033[33m│\033[0m  \033[36m$\033[0m {command}")
+
+def _format_command_box(command: str) -> str:
+    """Build a plain-text framed box showing the command (menu preface)."""
+    width = 61
+    lines = ["  Bash Command"]
+    cmd_width = width - 4
+    display = command if len(command) <= cmd_width else None
+    if display is not None:
+        lines.append(f"  $ {command}")
     else:
-        # First line
-        print(f"\033[33m│\033[0m  \033[36m$\033[0m {command[:cmd_width]}")
-        # Wrap remaining
+        # Wrap long commands across lines.
+        lines.append(f"  $ {command[:cmd_width]}")
         remaining = command[cmd_width:]
         while remaining:
-            chunk = remaining[:cmd_width]
+            lines.append(f"    {remaining[:cmd_width]}")
             remaining = remaining[cmd_width:]
-            print(f"\033[33m│\033[0m    {chunk}")
+    return "\n".join(lines)
 
-    print("\033[33m├─────────────────────────────────────────────────────────────┤\033[0m")
-    print("\033[33m│\033[0m  [\033[32my\033[0m]es  execute     [\033[31mN\033[0m]o  reject and stop                   \033[33m│\033[0m")
-    print("\033[33m╰─────────────────────────────────────────────────────────────╯\033[0m")
 
+def prompt_for_approval(command: str) -> bool:
+    """Prompt the user to approve a bash command via an arrow-key menu.
+
+    Presents three choices: execute, execute + stop asking this session
+    (enables yolo mode), or reject. Uses the registered approval callback (the
+    themed arrow-key menu with spinner coordination) when available, else a
+    plain numbered stdin prompt.
+
+    Returns:
+        True if approved.
+
+    Raises:
+        CommandRejectedError: If the user rejects or cancels.
+    """
+    preface = _format_command_box(command)
+    options = [_APPROVE_YES, _APPROVE_ALWAYS, _APPROVE_NO]
+
+    callback = _approval_callback
     try:
-        response = input("\033[33mApprove?\033[0m ").strip().lower()
-        if response in ("y", "yes"):
-            return True
+        if callback is not None:
+            result = callback("Run this command?", options, preface=preface)
         else:
-            raise CommandRejectedError("User rejected the command")
+            result = _approval_fallback(preface, options)
     except (EOFError, KeyboardInterrupt):
-        print()
-        raise CommandRejectedError("Command cancelled")
+        raise CommandRejectedError("Command cancelled") from None
+    except Exception as exc:  # noqa: BLE001 - a UI failure must reject, not crash
+        logger.warning("Approval prompt failed: %s", exc)
+        raise CommandRejectedError("Approval prompt failed") from None
+
+    selected = result.get("selected") or []
+    cancelled = bool(result.get("cancelled", False)) or not selected
+    choice = selected[0] if selected else None
+
+    if cancelled or choice == _APPROVE_NO:
+        raise CommandRejectedError("User rejected the command")
+
+    if choice == _APPROVE_ALWAYS:
+        # Stop prompting for the rest of this session.
+        from clanker.runtime import set_yolo_mode
+
+        set_yolo_mode(True)
+        logger.info("User enabled auto-approve (yolo) for this session")
+        return True
+
+    # Default / _APPROVE_YES
+    return True
+
+
+def _approval_fallback(preface: str, options: list[str]) -> dict:
+    """Numbered-list approval prompt for non-interactive / piped stdin."""
+    print()
+    print(preface)
+    for i, label in enumerate(options, 1):
+        print(f"    {i}) {label}")
+    try:
+        raw = input("  Enter choice [1-3]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return {"selected": [], "cancelled": True}
+    if raw.isdigit() and 1 <= int(raw) <= len(options):
+        return {"selected": [options[int(raw) - 1]], "cancelled": False}
+    # Anything else (blank, 0, out of range) counts as reject.
+    return {"selected": [], "cancelled": True}
+
 
 # Maximum output size to prevent memory issues
 MAX_OUTPUT_SIZE = 100_000  # 100KB

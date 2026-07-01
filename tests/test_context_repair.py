@@ -80,3 +80,104 @@ class TestMakeStubs:
         orphans = find_orphaned_tool_call_ids(msgs)
         healed = msgs + make_tool_result_stubs(orphans)
         assert find_orphaned_tool_call_ids(healed) == []
+
+
+def _langchain_available() -> bool:
+    try:
+        import langchain  # noqa: F401
+        import langgraph  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.skipif(not _langchain_available(), reason="langchain/langgraph not installed")
+class TestHealOnRealGraph:
+    """Integration: _heal_orphaned_tool_calls must repair a real create_agent graph.
+
+    Regression for the reject/interrupt orphan: a tool that raises (command
+    rejected) leaves an AIMessage(tool_calls) with no ToolMessage. The heal must
+    clear it so the NEXT turn does not 400 with 'tool_use ids without
+    tool_result'. This requires aupdate_state(..., as_node="tools"); without it
+    the update raises KeyError('model') and the orphan silently persists.
+    """
+
+    def _build_agent(self):
+        import asyncio
+
+        from langchain.agents import create_agent
+        from langchain_core.messages import AIMessage
+        from langchain_core.tools import tool
+        from langgraph.checkpoint.memory import MemorySaver
+
+        from clanker.tools.bash_tools import CommandRejectedError
+
+        @tool
+        def execute_shell(command: str) -> str:
+            "run a shell command"
+            raise CommandRejectedError("User rejected the command")
+
+        class FakeModel:
+            def __init__(self):
+                self.n = 0
+
+            def bind_tools(self, *a, **k):
+                return self
+
+            async def ainvoke(self, messages, **k):
+                self.n += 1
+                if self.n == 1:
+                    return AIMessage(
+                        content="",
+                        tool_calls=[{"name": "execute_shell", "args": {"command": "rm x"}, "id": "toolu_x"}],
+                    )
+                return AIMessage(content="ok")
+
+            profile = {"max_input_tokens": 200000}
+            _llm_type = "fake"
+
+        agent = create_agent(model=FakeModel(), tools=[execute_shell], checkpointer=MemorySaver())
+        return agent, asyncio
+
+    def test_reject_orphan_is_healed_and_next_turn_ok(self):
+        from langchain_core.messages import HumanMessage
+
+        from clanker.context import find_orphaned_tool_call_ids
+        from clanker.ui.streaming import _heal_orphaned_tool_calls
+
+        agent, asyncio = self._build_agent()
+        cfg = {"configurable": {"thread_id": "t1"}}
+
+        async def run():
+            from clanker.tools.bash_tools import CommandRejectedError
+
+            # Turn 1: the tool rejects -> orphan committed.
+            try:
+                async for _ in agent.astream_events(
+                    {"messages": [HumanMessage(content="delete x")]}, config=cfg, version="v2"
+                ):
+                    pass
+            except CommandRejectedError:
+                pass
+
+            before = find_orphaned_tool_call_ids((await agent.aget_state(cfg)).values["messages"])
+            assert before == ["toolu_x"], "precondition: orphan should exist after reject"
+
+            # Heal (as streaming does before the next turn).
+            await _heal_orphaned_tool_calls(agent, cfg)
+            after = find_orphaned_tool_call_ids((await agent.aget_state(cfg)).values["messages"])
+            assert after == [], "heal must clear the orphan"
+
+            # Turn 2 must not raise the 400 orphan error.
+            async for _ in agent.astream_events(
+                {"messages": [HumanMessage(content="hello")]}, config=cfg, version="v2"
+            ):
+                pass
+            final = (await agent.aget_state(cfg)).values["messages"]
+            assert final[-1].content == "ok"
+
+        asyncio.run(run())

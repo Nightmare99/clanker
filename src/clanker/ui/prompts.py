@@ -28,6 +28,7 @@ def select_options(
     multi_select: bool = False,
     allow_other: bool = True,
     allow_cancel: bool = True,
+    preface: str | None = None,
 ) -> dict:
     """Ask the user to choose from ``options``.
 
@@ -37,6 +38,9 @@ def select_options(
         multi_select: Allow choosing more than one option.
         allow_other: Offer a free-text "Other" choice.
         allow_cancel: Offer a cancel choice / allow Esc.
+        preface: Optional pre-formatted text block shown above the question and
+            menu (e.g. a boxed command for an approval prompt). Rendered in both
+            the interactive and fallback paths.
 
     Returns:
         ``{"selected": list[str], "cancelled": bool}``.
@@ -49,6 +53,7 @@ def select_options(
                 multi_select=multi_select,
                 allow_other=allow_other,
                 allow_cancel=allow_cancel,
+                preface=preface,
             )
         except Exception:
             # Never let a UI failure strand the tool -- degrade to the
@@ -60,6 +65,7 @@ def select_options(
         multi_select=multi_select,
         allow_other=allow_other,
         allow_cancel=allow_cancel,
+        preface=preface,
     )
 
 
@@ -81,6 +87,7 @@ def _select_interactive(
     multi_select: bool,
     allow_other: bool,
     allow_cancel: bool,
+    preface: str | None = None,
 ) -> dict:
     """Arrow-key menu using prompt_toolkit's Application."""
     from prompt_toolkit.application import Application
@@ -105,7 +112,10 @@ def _select_interactive(
     state = {"cursor": 0, "checked": set(), "result": None}
 
     def render():
-        lines = [("class:question", f"  {question}\n")]
+        lines = []
+        if preface:
+            lines.append(("class:preface", f"{preface}\n"))
+        lines.append(("class:question", f"  {question}\n"))
         if multi_select:
             lines.append(("class:hint", "  space toggles · enter confirms · esc cancels\n\n"))
         else:
@@ -154,6 +164,7 @@ def _select_interactive(
         event.app.exit()
 
     style = Style.from_dict({
+        "preface": "",
         "question": "bold #00d2b4",
         "hint": "#7f8c8d italic",
         "option": "",
@@ -216,9 +227,12 @@ def _select_fallback(
     multi_select: bool,
     allow_other: bool,
     allow_cancel: bool,
+    preface: str | None = None,
 ) -> dict:
     """Numbered-list prompt for non-interactive / piped stdin."""
     print()
+    if preface:
+        print(preface)
     print(f"  {question}")
     for i, label in enumerate(options, 1):
         print(f"    {i}) {label}")
