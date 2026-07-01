@@ -171,6 +171,6 @@ def test_tool_name_badge_is_black_not_bold() -> None:
     out = _render_to_ansi(
         lambda c: c.print_tool_use("execute_shell", {"command": "ls"})
     )
-    # Black foreground on teal background: '30;48;2;0;180;160'. No leading '1;'
+    # Black foreground on cyan background: '30;48;2;0;190;220'. No leading '1;'
     # (bold) on the badge segment.
-    assert "30;48;2;0;180;160" in out
+    assert "30;48;2;0;190;220" in out

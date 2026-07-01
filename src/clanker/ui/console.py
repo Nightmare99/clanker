@@ -126,7 +126,7 @@ CLANKER_THEME = Theme({
     "success": "green",
     # Tool badge colors — teal bg pill like the screenshot
     "tool": "bold rgb(0,210,180)",
-    "tool.badge": "black on rgb(0,180,160)",
+    "tool.badge": "black on rgb(0,190,220)",
     "tool.arg": "rgb(200,220,210)",
     "tool.result": "rgb(130,220,100)",  # lime-ish green for ✓
     "tool.error": "bold red",  # red ✗ for failed commands
@@ -198,7 +198,7 @@ class Console:
             panel = Panel(
                 markdown_content,
                 box=LEFT_ONLY,
-                border_style="green",
+                border_style="rgb(255,105,180)",
                 padding=(0, 2),
             )
             self._console.print(panel)
@@ -207,7 +207,7 @@ class Console:
                 Panel(
                     message_str,
                     box=LEFT_ONLY,
-                    border_style="green",
+                    border_style="rgb(255,105,180)",
                     padding=(0, 2),
                 )
             )

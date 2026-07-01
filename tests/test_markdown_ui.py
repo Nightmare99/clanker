@@ -9,7 +9,7 @@ from clanker.ui.console import Console
 
 
 def test_print_assistant_message_basic() -> None:
-    """print_assistant_message renders a green-bordered Markdown panel."""
+    """print_assistant_message renders a pink-bordered Markdown panel."""
     console = Console()
 
     # Mock self._console.print to verify it is called with a Panel
@@ -23,9 +23,9 @@ def test_print_assistant_message_basic() -> None:
     panel = args[0]
 
     assert isinstance(panel, Panel)
-    # The assistant panel uses a green left-border style (no title in the
-    # current design — the panel is borderless apart from the green edge).
-    assert panel.border_style == "green"
+    # The assistant panel uses a hot-pink left-border style (no title in the
+    # current design — the panel is borderless apart from the pink edge).
+    assert panel.border_style == "rgb(255,105,180)"
     # The message is rendered as Markdown inside the panel.
     assert isinstance(panel.renderable, Markdown)
     assert panel.renderable.markup == test_message
