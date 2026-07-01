@@ -1,5 +1,6 @@
 """Tool definitions for Clanker agent."""
 
+from clanker.tools.ask_tools import ask_user
 from clanker.tools.background import (
     bash_background,
     bash_kill,
@@ -40,6 +41,7 @@ ALL_TOOLS = [
     grep_search,
     # Communication tools
     notify,
+    ask_user,
     # Skill tools
     load_skill,
     # Memory tools
@@ -84,6 +86,7 @@ __all__ = [
     "glob_search",
     "grep_search",
     "notify",
+    "ask_user",
     "load_skill",
     "remember",
     "recall",

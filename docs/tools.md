@@ -14,6 +14,7 @@ The agent has access to these built-in tools:
 | `grep_search` | Search file contents with regex |
 | `web_search` | Search the web via DuckDuckGo |
 | `web_read` | Extract clean content from a web page |
+| `ask_user` | Ask the user a multiple-choice question mid-task |
 
 ## Tool Details
 
@@ -95,6 +96,31 @@ web_search:
 ```
 
 When disabled, `web_search` and `web_read` are removed from the agent entirely (no wasted prompt tokens).
+
+## Asking the User (`ask_user`)
+
+When the agent hits a genuine fork it can't resolve on its own, it can pause and
+ask you a multiple-choice question, then continue in the same turn with your
+answer.
+
+**Parameters:**
+- `question` — the question to ask.
+- `options` — 2–10 short option labels.
+- `multi_select` — allow picking more than one option (default `false`).
+- `allow_other` — offer a free-text "Other" answer (default `true`).
+- `allow_cancel` — allow cancelling without choosing (default `true`).
+
+**How you answer:**
+- On a real terminal you get an **arrow-key menu** — ↑/↓ to move, space to toggle
+  (multi-select), Enter to confirm, Esc to cancel.
+- When input isn't a terminal (piped input, one-shot `clanker "prompt"`, CI) it
+  falls back to a **numbered list** — type the number(s), `0` or blank to cancel,
+  `o` for a custom answer.
+
+**When the agent uses it:** only at real decision points — which environment to
+deploy to, which of several ambiguous scopes to take, or a choice between
+materially different approaches. It won't use it for decisions it can make itself
+or for routine bash confirmations (those have their own approval prompt).
 
 ## MCP Tools
 

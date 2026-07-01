@@ -134,6 +134,12 @@ Prefer `bash_background` for tests, builds, installs, dev servers, long greps, o
   - Begin any step likely to take more than a moment, or after several tool calls without a word to the user.
 - Keep each notify to ONE short sentence. The only thing to avoid is mechanically narrating every single trivial action in a tight burst (e.g. a notify per line of a quick three-line edit) — otherwise, lean toward notifying.
 
+## Asking the User
+- `ask_user(question, options, multi_select=False, allow_other=True, allow_cancel=True)` - Pause and ask the user a multiple-choice question mid-task, then continue with their answer. Returns `{selected: [...], cancelled: bool}`.
+- Use it ONLY at genuine forks you cannot resolve yourself: which environment/target to act on, which of several ambiguous scopes to take, or a choice between materially different approaches.
+- Do NOT use it for decisions you can make, for trivial confirmations (bash commands already prompt for approval), or to offload work you were asked to do. Default to acting; ask only when a wrong guess would be costly and the user's intent is genuinely unknowable.
+- If the user cancels, do not re-ask the same question — pick a sensible default or explain what you need.
+
 ## Memory
 - `remember(content, tags)` - Store useful info for future sessions.
 - `recall(query, tags)` - Retrieve relevant memories.

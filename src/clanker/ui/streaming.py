@@ -21,6 +21,7 @@ from clanker.copilot.errors import (
 from clanker.logging import get_logger
 from clanker.tools.bash_tools import CommandRejectedError
 from clanker.tools.notify_tools import set_notify_callback
+from clanker.tools.ask_tools import set_ask_callback
 from clanker.providers import set_tool_call_callback, get_tool_call_callback
 from clanker.runtime import is_yolo_mode
 from clanker.ui.tool_display import ToolDisplayHandler, normalize_tool_output
@@ -329,6 +330,29 @@ def stream_agent_response_sync(
 
         set_notify_callback(_notify_callback)
 
+        # Register the interactive asker (ask_user tool). Pause the spinner and
+        # any tool Live while the selection prompt owns the terminal, then resume.
+        def _ask_callback(question, options, *, multi_select, allow_other, allow_cancel):
+            from clanker.ui.prompts import select_options
+
+            stop_loading()
+            try:
+                tool_handler.finalize_live()
+            except Exception:
+                pass
+            try:
+                return select_options(
+                    question,
+                    options,
+                    multi_select=multi_select,
+                    allow_other=allow_other,
+                    allow_cancel=allow_cancel,
+                )
+            finally:
+                start_loading()
+
+        set_ask_callback(_ask_callback)
+
         # Register unified tool callback for Copilot SDK
         set_tool_call_callback(tool_handler.create_callback())
 
@@ -384,8 +408,9 @@ def stream_agent_response_sync(
                                 # Skip run display when approval is needed
                                 if tool_name == "run" and not is_yolo_mode():
                                     continue
-                                # Skip notify - the tool itself handles display
-                                if tool_name.lower() == "notify":
+                                # Skip display-only tools (notify, ask_user) -
+                                # they render their own output.
+                                if tool_name.lower() in ("notify", "ask_user"):
                                     continue
                                 # Queue tool with spinner - result will be
                                 # printed together with header when tool ends
@@ -396,7 +421,7 @@ def stream_agent_response_sync(
                     # Show tool result
                     elif event_type == "on_tool_end":
                         tool_name_end = event.get("name", "")
-                        if tool_name_end.lower() == "notify":
+                        if tool_name_end.lower() in ("notify", "ask_user"):
                             start_loading()
                             continue
                         # Show tool header + output together
@@ -612,6 +637,7 @@ def stream_agent_response_sync(
         finally:
             _teardown_live_displays(rich_console, stop_loading, tool_handler)
             set_notify_callback(None)
+            set_ask_callback(None)
             set_tool_call_callback(None)
 
         # If we buffered thinking but never saw </think>, treat it as response
@@ -742,6 +768,29 @@ def stream_copilot_response_sync(
             console.print_notify(message, level)
 
         set_notify_callback(_notify_callback)
+
+        # Register the interactive asker (ask_user tool). Pause the spinner and
+        # any tool Live while the selection prompt owns the terminal, then resume.
+        def _ask_callback(question, options, *, multi_select, allow_other, allow_cancel):
+            from clanker.ui.prompts import select_options
+
+            stop_loading()
+            try:
+                tool_handler.finalize_live()
+            except Exception:
+                pass
+            try:
+                return select_options(
+                    question,
+                    options,
+                    multi_select=multi_select,
+                    allow_other=allow_other,
+                    allow_cancel=allow_cancel,
+                )
+            finally:
+                start_loading()
+
+        set_ask_callback(_ask_callback)
 
         # Register tool callback for Copilot SDK
         set_tool_call_callback(tool_handler.create_callback())
@@ -1112,6 +1161,7 @@ def stream_copilot_response_sync(
                 session_subscription()
             _teardown_live_displays(rich_console, stop_loading, tool_handler)
             set_notify_callback(None)
+            set_ask_callback(None)
             set_tool_call_callback(None)
 
         # Print final response

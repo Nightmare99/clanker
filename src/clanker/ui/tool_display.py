@@ -41,8 +41,10 @@ class ToolDisplayHandler:
     and results are always displayed together, even with parallel execution.
     """
 
-    # Tools that handle their own display - check case-insensitively
-    _DISPLAY_ONLY_TOOLS = {"notify"}
+    # Tools that handle their own display - check case-insensitively.
+    # ask_user renders its own interactive menu, so its header/result must not
+    # also be echoed as a generic tool row.
+    _DISPLAY_ONLY_TOOLS = {"notify", "ask_user"}
 
     def __init__(
         self,
