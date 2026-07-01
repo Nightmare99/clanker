@@ -112,3 +112,65 @@ def test_load_skill_error_shows_available() -> None:
     blob = "\n".join(rendered)
     assert "ghost" in blob
     assert "Available: a, b" in blob
+
+
+def _render_to_ansi(callback) -> str:
+    """Render Console output with forced color to inspect marks and ANSI codes."""
+    from rich.console import Console as RichConsole
+
+    from clanker.ui.console import CLANKER_THEME, Console
+
+    console = Console()
+    # Swap in a color-forcing Rich console so styles emit ANSI codes.
+    console._console = RichConsole(
+        theme=CLANKER_THEME, force_terminal=True, color_system="truecolor", width=120
+    )
+    with console._console.capture() as cap:
+        callback(console)
+    return cap.get()
+
+
+def test_failed_shell_command_shows_red_cross_not_green_tick() -> None:
+    out = _render_to_ansi(
+        lambda c: c.print_tool_result(
+            "Command exited with code 1\nError: not found",
+            tool_name="execute_shell",
+            tool_input={"command": "kubectl get secret x"},
+        )
+    )
+    assert "✗" in out
+    assert "✓" not in out
+    # Red ANSI code present (31 = red).
+    assert "31m" in out
+
+
+def test_successful_shell_command_shows_green_tick() -> None:
+    out = _render_to_ansi(
+        lambda c: c.print_tool_result(
+            "total 48\nfile.txt\nother.txt",
+            tool_name="execute_shell",
+            tool_input={"command": "ls -la"},
+        )
+    )
+    assert "✓" in out
+    assert "✗" not in out
+
+
+def test_is_failed_tool_result_detection() -> None:
+    from clanker.ui.console import Console
+
+    c = Console()
+    assert c._is_failed_tool_result("Command exited with code 1\nboom", "execute_shell", None)
+    assert c._is_failed_tool_result('{"ok": false, "error": "x"}', "edit_file", None)
+    assert not c._is_failed_tool_result("total 48\nfile.txt", "execute_shell", None)
+    assert not c._is_failed_tool_result('{"ok": true}', "edit_file", None)
+
+
+def test_tool_name_badge_is_black_not_bold() -> None:
+    """The tool-name badge renders black text (ANSI 30) with no bold (no '1;')."""
+    out = _render_to_ansi(
+        lambda c: c.print_tool_use("execute_shell", {"command": "ls"})
+    )
+    # Black foreground on teal background: '30;48;2;0;180;160'. No leading '1;'
+    # (bold) on the badge segment.
+    assert "30;48;2;0;180;160" in out

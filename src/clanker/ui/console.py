@@ -126,9 +126,10 @@ CLANKER_THEME = Theme({
     "success": "green",
     # Tool badge colors — teal bg pill like the screenshot
     "tool": "bold rgb(0,210,180)",
-    "tool.badge": "bold black on rgb(0,180,160)",
+    "tool.badge": "black on rgb(0,180,160)",
     "tool.arg": "rgb(200,220,210)",
     "tool.result": "rgb(130,220,100)",  # lime-ish green for ✓
+    "tool.error": "bold red",  # red ✗ for failed commands
     "user": "bold rgb(0,210,180)",
     "assistant": "rgb(230,230,230)",
     "prompt.arrow": "bold rgb(0,210,180)",
@@ -426,6 +427,13 @@ class Console:
             return None
 
         if tool_name in ("bash", "execute_shell"):
+            # Failure: result starts with "Command exited with code N\n{output}".
+            # Summarize as the exit-code line so the red ✗ has a clear message.
+            if result.startswith("Command exited with code"):
+                first_line = result.splitlines()[0] if result.splitlines() else result
+                extra = len(result.splitlines()) - 1
+                suffix = f"  (+{extra} lines)" if extra > 0 else ""
+                return self._truncate(first_line, max_chars) + suffix
             raw = (parsed.get("output") or parsed.get("stdout") or parsed.get("stderr") or result) if parsed else result
             raw = raw.strip()
             if not raw:
@@ -508,12 +516,33 @@ class Console:
             return self._truncate(first, max_chars) + suffix
         return None
 
-    def _print_result_line(self, summary: str) -> None:
-        """Print a ✓ result summary line matching the screenshot style."""
+    def _is_failed_tool_result(self, result: str, tool_name: str, tool_input: dict | None) -> bool:
+        """Return True if a tool result represents a failure (render ✗ not ✓).
+
+        Shell tools return a plain string that starts with "Command exited with
+        code N" on nonzero exit. JSON-returning tools signal failure via
+        ``ok: false``.
+        """
+        result = result.strip()
+        if not result:
+            return False
+        if tool_name in ("bash", "execute_shell") and result.startswith("Command exited with code"):
+            return True
+        parsed = self._parse_tool_json(result)
+        if parsed is not None and parsed.get("ok") is False:
+            return True
+        return False
+
+    def _print_result_line(self, summary: str, failed: bool = False) -> None:
+        """Print a ✓/✗ result summary line matching the screenshot style."""
         text = Text()
         text.append("   ", style="dim")
-        text.append("✓ ", style="bold tool.result")
-        text.append(summary, style="tool.result")
+        if failed:
+            text.append("✗ ", style="bold tool.error")
+            text.append(summary, style="tool.error")
+        else:
+            text.append("✓ ", style="bold tool.result")
+            text.append(summary, style="tool.result")
         self._console.print(text)
 
     def print_tool_result(
@@ -538,7 +567,8 @@ class Console:
         if compact_summary_fn and print_result_line_fn:
             summary = compact_summary_fn(result, tool_name, tool_input, max_chars=60)
             if summary:
-                print_result_line_fn(summary)
+                failed = self._is_failed_tool_result(result, tool_name, tool_input)
+                print_result_line_fn(summary, failed=failed)
             return
 
         # Fallback implementation for unit tests
