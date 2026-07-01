@@ -91,6 +91,8 @@ function onKeydown(e: KeyboardEvent) {
   } else if (e.key === '/' && !paletteOpen.value && !isTyping(e)) {
     e.preventDefault()
     paletteOpen.value = true
+  } else if (e.key === 'Escape' && mobileNavOpen.value) {
+    mobileNavOpen.value = false
   }
 }
 
@@ -146,11 +148,30 @@ onBeforeUnmount(() => {
           class="topbar__burger"
           type="button"
           aria-label="Toggle navigation"
+          :aria-expanded="mobileNavOpen"
+          aria-controls="mobile-nav"
           @click="mobileNavOpen = !mobileNavOpen"
         >
-          ☰
+          {{ mobileNavOpen ? '✕' : '☰' }}
         </button>
       </div>
+
+      <!-- Mobile nav dropdown (shown when the burger is toggled) -->
+      <nav v-if="mobileNavOpen" id="mobile-nav" class="mobile-nav" aria-label="Mobile navigation">
+        <a class="mobile-nav__link" :href="hrefFor('installation')">Install</a>
+        <a class="mobile-nav__link" :href="hrefFor('usage')">Usage</a>
+        <a
+          class="mobile-nav__link"
+          href="https://github.com/Nightmare99/clanker"
+          target="_blank"
+          rel="noopener"
+          @click="mobileNavOpen = false"
+          >GitHub ↗</a
+        >
+        <div v-if="!isHome" class="mobile-nav__docs">
+          <DocSidebar :current="route" />
+        </div>
+      </nav>
     </header>
 
     <!-- Home --------------------------------------------------- -->
@@ -214,7 +235,7 @@ onBeforeUnmount(() => {
     <!-- Docs --------------------------------------------------- -->
     <div v-else class="docs">
       <div class="docs__inner">
-        <aside class="docs__sidebar" :class="{ 'is-open': mobileNavOpen }">
+        <aside class="docs__sidebar">
           <DocSidebar :current="route" />
         </aside>
 
@@ -396,6 +417,11 @@ onBeforeUnmount(() => {
   font-size: 1.1rem;
   padding: 6px 11px;
   cursor: pointer;
+}
+
+/* Mobile nav dropdown is hidden on desktop; shown within the ≤860px media query. */
+.mobile-nav {
+  display: none;
 }
 
 /* Home ----------------------------------------------------- */
@@ -681,22 +707,38 @@ onBeforeUnmount(() => {
     grid-template-columns: minmax(0, 1fr);
     gap: 0;
   }
+  /* On mobile the desktop sidebar is replaced by the burger dropdown. */
   .docs__sidebar {
+    display: none;
+  }
+  .mobile-nav {
+    display: flex;
+    flex-direction: column;
     position: fixed;
     top: 60px;
+    right: 0;
     left: 0;
     z-index: 40;
-    width: 282px;
-    max-width: 84vw;
-    height: calc(100vh - 60px);
-    padding: 28px 22px;
+    max-height: calc(100vh - 60px);
+    overflow-y: auto;
+    padding: 12px 18px 20px;
     background: var(--surface);
-    border-right: 1px solid var(--line-strong);
-    transform: translateX(-105%);
-    transition: transform 0.22s ease;
+    border-bottom: 1px solid var(--line-strong);
+    box-shadow: 0 12px 28px rgba(3, 4, 5, 0.4);
   }
-  .docs__sidebar.is-open {
-    transform: none;
+  .mobile-nav__link {
+    display: block;
+    padding: 12px 8px;
+    color: var(--ink);
+    font-size: 0.98rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .mobile-nav__link:hover {
+    color: var(--cyan);
+    text-decoration: none;
+  }
+  .mobile-nav__docs {
+    margin-top: 14px;
   }
   .scrim {
     display: block;
