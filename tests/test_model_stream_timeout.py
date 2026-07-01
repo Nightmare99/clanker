@@ -67,7 +67,7 @@ class TestConstruction:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         # High-reasoning config like the one that tripped the 120s timeout.
         cfg = ModelConfig(
-            name="copilot-opus",
+            name="opus-reasoning",
             provider="OpenAI",
             model="claude-opus-4.8",
             reasoning_effort="xhigh",

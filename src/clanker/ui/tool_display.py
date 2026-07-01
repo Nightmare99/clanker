@@ -66,15 +66,15 @@ class ToolDisplayHandler:
         self._on_tool_start = on_tool_start
         self._on_tool_end = on_tool_end
         self._pending_tools: list[tuple[str, dict]] = []
-        # Track displayed tools to prevent duplicates (Copilot callback + LangGraph events)
+        # Track displayed tools to prevent duplicates across event sources
         self._active_tools: set[str] = set()  # Tool names currently being executed
         self._shown_results: set[str] = set()  # Tool names whose results were shown
         # Track tool inputs for result display (needed when SDK strips fields like 'path')
         self._pending_inputs: list[tuple[str, dict]] = []  # Queue of (tool_name, input) for matching results
-        # Flag to indicate Copilot callback is handling tools (skip LangGraph events)
-        self._copilot_callback_active: bool = False
+        # Flag to indicate an external callback is handling tools (skip LangGraph events)
+        self._external_callback_active: bool = False
 
-        # Live display for pending tools (Copilot SDK mode)
+        # Live display for pending tools (callback-driven mode)
         self._live: Live | None = None
         self._pending_calls: dict[str, PendingToolCall] = {}  # tool_id -> PendingToolCall
         self._pending_order: list[str] = []  # Insertion order
@@ -101,8 +101,8 @@ class ToolDisplayHandler:
         if not self._show_tool_calls:
             return False
 
-        # Skip if Copilot callback is handling tools (unless forced by callback itself)
-        if self._copilot_callback_active and not force:
+        # Skip if an external callback is handling tools (unless forced by callback itself)
+        if self._external_callback_active and not force:
             return False
 
         # Some tools render their own user-facing output and should not also
@@ -146,8 +146,8 @@ class ToolDisplayHandler:
         if not self._show_tool_calls:
             return False
 
-        # Skip if Copilot callback is handling tools (unless forced by callback itself)
-        if self._copilot_callback_active and not force:
+        # Skip if an external callback is handling tools (unless forced by callback itself)
+        if self._external_callback_active and not force:
             return False
 
         # Some tools already printed their user-facing result directly.
@@ -190,7 +190,7 @@ class ToolDisplayHandler:
     def queue_tool(self, tool_name: str, tool_input: dict) -> None:
         """Queue a tool call for batch display (parallel tools).
 
-        Skips if tool was already shown (e.g., by Copilot callback).
+        Skips if tool was already shown (e.g., by an external callback).
         """
         tool_key = self._make_tool_key(tool_name, tool_input)
         if tool_key in self._active_tools:
@@ -306,12 +306,12 @@ class ToolDisplayHandler:
             self._live.update(self._render_pending_live())
 
     def handle_tool_start(self, tool_name: str, tool_input: dict) -> None:
-        """Handle tool start event from Copilot callback.
+        """Handle tool start event from an external tool-call callback.
 
         Adds tool to pending display with a spinner. The actual header + result
         will be printed together when handle_tool_end is called.
         """
-        self._copilot_callback_active = True
+        self._external_callback_active = True
         if self._on_tool_start:
             self._on_tool_start()
         if self._is_display_only_tool(tool_name):
@@ -418,9 +418,9 @@ class ToolDisplayHandler:
         self._pending_inputs.clear()
 
     def create_callback(self) -> Callable[[str, dict, str | None], None]:
-        """Create a callback function for Copilot SDK tool events.
+        """Create a callback function for external tool-call events.
 
-        Returns a function that can be registered with set_tool_call_callback.
+        Returns a function that maps (name, args, result) events to display calls.
         """
         def callback(tool_name: str, args: dict, result: str | None) -> None:
             if result is None:
@@ -437,7 +437,7 @@ def normalize_tool_output(output) -> str:
     """Normalize tool output to a string for display.
 
     Single source of truth for tool output normalization across all providers.
-    Handles: Copilot SDK Result objects, LangChain messages, dicts, strings, lists.
+    Handles: SDK Result-like objects, LangChain messages, dicts, strings, lists.
     """
     import ast
     import json
@@ -445,7 +445,7 @@ def normalize_tool_output(output) -> str:
     if output is None:
         return ""
 
-    # Handle Copilot SDK Result-like objects with special attributes
+    # Handle SDK Result-like objects with special attributes
     if hasattr(output, 'text_result_for_llm'):
         return normalize_tool_output(output.text_result_for_llm)
     if hasattr(output, 'textResultForLlm'):

@@ -26,10 +26,9 @@ router = APIRouter(tags=["config"])
 class ModeInfo(BaseModel):
     """Information about the current operational mode."""
 
-    mode: str  # "byok" or "copilot"
+    mode: str
     mode_label: str
     notice: str
-    copilot_available: bool
 
 
 class ConfigResponse(BaseModel):
@@ -76,24 +75,14 @@ def mask_key(key: str | None) -> str | None:
 
 
 def get_mode_info() -> ModeInfo:
-    """Get information about operational modes."""
-    # Check if Copilot SDK is available
-    copilot_available = False
-    try:
-        from clanker.providers.github_copilot import is_copilot_available
-        copilot_available = is_copilot_available()
-    except ImportError:
-        pass
-
+    """Get information about the operational mode."""
     return ModeInfo(
         mode="byok",
         mode_label="BYOK Mode (Bring Your Own Key)",
         notice=(
-            "This configuration UI manages settings for BYOK mode only. "
-            "For GitHub Copilot mode, use 'clanker --copilot' from the command line. "
-            "Copilot mode uses GitHub's infrastructure and does not require API keys or model configuration here."
+            "This configuration UI manages your model providers and settings. "
+            "Add API keys via environment variables or per-model in the models list."
         ),
-        copilot_available=copilot_available,
     )
 
 
@@ -120,10 +109,7 @@ async def get_config() -> ConfigResponse:
 
 @router.get("/mode-info", response_model=ModeInfo)
 async def get_mode_info_endpoint() -> ModeInfo:
-    """Get information about operational modes.
-
-    Returns details about BYOK vs Copilot mode and whether Copilot is available.
-    """
+    """Get information about the operational mode."""
     return get_mode_info()
 
 

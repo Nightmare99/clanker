@@ -278,8 +278,8 @@ class TestClearToolTracking:
         assert result2 is False
 
 
-class TestCopilotCallback:
-    """Tests for Copilot SDK callback integration."""
+class TestToolCallCallback:
+    """Tests for the external tool-call callback adapter."""
 
     def test_create_callback_returns_callable(self) -> None:
         """create_callback returns a function."""

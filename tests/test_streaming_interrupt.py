@@ -62,8 +62,8 @@ class TestInterruptFlag:
         """_cancel_streaming_task sets flag but does NOT cancel task.
 
         We intentionally don't cancel the task because that would interrupt
-        session.abort() and corrupt the Copilot session. Instead, the streaming
-        code checks the _interrupted flag and aborts gracefully.
+        graceful shutdown. Instead, the streaming code checks the _interrupted
+        flag and aborts gracefully.
         """
         module = _load_streaming_module()
 
@@ -286,7 +286,6 @@ class TestStreamResultDataclass:
         assert result.input_tokens == 0
         assert result.output_tokens == 0
         assert result.model_name == ""
-        assert result.quota_remaining is None
 
 
 class TestSignalHandling:

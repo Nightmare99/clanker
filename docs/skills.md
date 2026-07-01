@@ -148,5 +148,5 @@ on its own.
 
 ## Mode support
 
-Skills work in both **BYOK** and **GitHub Copilot** modes — the `load_skill`
-tool is available to the model in both.
+Skills are available to the model across all configured providers — the
+`load_skill` tool is always registered.

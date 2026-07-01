@@ -759,33 +759,24 @@ class Console:
         panel = Panel(content, title=title, border_style=style)
         self._console.print(panel)
 
-    def print_welcome(self, copilot_model: str | None = None, copilot_reasoning_effort: str | None = None, user_instructions_loaded: bool = False) -> None:
+    def print_welcome(self, user_instructions_loaded: bool = False) -> None:
         """Print welcome message.
 
         Args:
-            copilot_model: Optional Copilot model name (for Copilot mode).
-            copilot_reasoning_effort: Optional reasoning effort level (for Copilot mode).
             user_instructions_loaded: Whether user instructions were loaded from .clanker/instructions.md.
         """
         from clanker.config import get_default_model
-        from clanker.runtime import is_yolo_mode, is_copilot_mode
+        from clanker.runtime import is_yolo_mode
 
         agent_name = self._settings.agent.name
 
-        # Get current model info based on mode
-        if is_copilot_mode():
-            model_name = copilot_model or "gpt-4.1"
-            if copilot_reasoning_effort:
-                model_name = f"{model_name} ({copilot_reasoning_effort})"
-            model_info = f"{model_name} [dim](GitHub Copilot)[/dim]"
-            mode_line = "\n  [bold green]COPILOT MODE[/bold green] [dim]- using GitHub Copilot SDK[/dim]"
+        # Get current model info
+        current_model = get_default_model()
+        if current_model:
+            model_info = f"{current_model.name} [dim]({current_model.provider})[/dim]"
         else:
-            current_model = get_default_model()
-            if current_model:
-                model_info = f"{current_model.name} [dim]({current_model.provider})[/dim]"
-            else:
-                model_info = "[dim]No model configured[/dim]"
-            mode_line = ""
+            model_info = "[dim]No model configured[/dim]"
+        mode_line = ""
 
         # Yolo mode indicator
         yolo_line = ""
@@ -826,12 +817,8 @@ Commands:
 
     def print_help(self) -> None:
         """Print help information."""
-        from clanker.runtime import is_copilot_mode
-
-        mode_indicator = "[bold green]COPILOT MODE[/bold green]" if is_copilot_mode() else "[bold blue]BYOK MODE[/bold blue]"
-
-        help_text = f"""
-[bold cyan]*WHIRR*[/bold cyan] [bold]CLANKER HELP SUBSYSTEM[/bold] - {mode_indicator}
+        help_text = """
+[bold cyan]*WHIRR*[/bold cyan] [bold]CLANKER HELP SUBSYSTEM[/bold]
 
 [bold]System Commands:[/bold]
   /help       Display this help matrix
@@ -840,7 +827,6 @@ Commands:
   /config     Display configuration parameters
   /mcp        Show MCP server connections
   /logs       Access diagnostic log files
-  /gh-login   Authenticate with GitHub for Copilot
   /exit       Initiate shutdown sequence
 
 [bold]History & Memory:[/bold]
@@ -869,19 +855,6 @@ Commands:
   • I act first, explain after. No hesitation.
   • Ask me to remember project preferences.
   • Use /restore to continue past conversations.
-"""
-        if is_copilot_mode():
-            help_text += """
-[bold green]Copilot Mode Notes:[/bold green]
-  • Session history managed by Copilot SDK
-  • Infinite sessions with auto-compaction
-  • /model shows only Copilot models
-"""
-        else:
-            help_text += """
-[bold blue]BYOK Mode Notes:[/bold blue]
-  • Use 'clanker --copilot' for Copilot mode
-  • /model shows only configured BYOK models
 """
 
         help_text += "\n[dim]*CLANK* Systems ready for input. *BZZZT*[/dim]\n"
@@ -959,44 +932,6 @@ Commands:
 
         text.append(f"{remaining:.0f}%", style=ctx_style)
         text.append(" ctx remaining", style="dim")
-        text.append("]", style="dim")
-
-        self._console.print(text)
-
-    def print_copilot_usage(
-        self,
-        quota_remaining: float | None = None,
-        quota_used: int | None = None,
-        quota_limit: int | None = None,
-    ) -> None:
-        """Print Copilot usage with premium requests remaining.
-
-        Args:
-            quota_remaining: Percentage of premium requests remaining (0-100).
-            quota_used: Number of premium requests used.
-            quota_limit: Total premium requests limit.
-        """
-        text = Text()
-        text.append("  [", style="dim")
-
-        if quota_remaining is not None:
-            # Color based on remaining quota
-            if quota_remaining > 50:
-                quota_style = "green"
-            elif quota_remaining > 20:
-                quota_style = "yellow"
-            else:
-                quota_style = "red"
-
-            text.append(f"{quota_remaining:.0f}%", style=quota_style)
-            text.append(" premium remaining", style="dim")
-
-            # Show used/limit if available
-            if quota_used is not None and quota_limit is not None:
-                text.append(f" ({quota_used}/{quota_limit})", style="dim")
-        else:
-            text.append("quota: n/a", style="dim")
-
         text.append("]", style="dim")
 
         self._console.print(text)

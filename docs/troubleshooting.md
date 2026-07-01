@@ -45,84 +45,17 @@
 - MCP tools require async execution - ensure you're using the latest version
 - Test the server connection via `clanker config` web UI
 
-## GitHub Copilot Issues
-
-### "github-copilot-sdk not installed"
-
-Install the Copilot SDK:
-```bash
-pip install github-copilot-sdk
-```
-
-### "Copilot not authenticated" / "No Copilot token found"
-
-Authenticate with GitHub:
-```bash
-# Option 1: Start with --copilot (will prompt automatically)
-clanker --copilot
-
-# Option 2: Run /gh-login from any session
-❯ /gh-login
-```
-
-### Token expired
-
-Copilot tokens expire after ~8 hours. Re-authenticate:
-```bash
-❯ /gh-login
-```
-
-### Model not available
-
-Your GitHub Copilot subscription may not include all models. Check available models:
-```
-❯ /model
-```
-
-### Session not found on restore
-
-Copilot sessions may expire or be cleaned up by the SDK. Start a new session with `/clear`.
-
-### Can't switch between BYOK and Copilot
-
-Modes are mutually exclusive. You must exit and restart with the appropriate flag:
-```bash
-clanker           # BYOK mode
-clanker --copilot # Copilot mode
-```
-
-### Web config UI doesn't show Copilot settings
-
-The web configuration UI (`clanker config`) only manages BYOK mode settings. Copilot mode uses GitHub's infrastructure and doesn't require local configuration.
-
-### MCP tools not working in Copilot mode
-
-MCP servers are discovered at startup in Copilot mode. If tools aren't working:
-
-1. Ensure `mcp.enabled: true` in `~/.clanker/config.yaml`
-2. Check server configuration is correct (transport, command/url)
-3. Restart clanker to trigger MCP tool discovery
-4. Check logs with `/logs` for discovery errors
-
-**Note**: Copilot mode blocks Copilot's built-in tools (like `rg`, `docs-scan`, `web_fetch`) and only allows clanker's tools plus your configured MCP tools.
-
-### Seeing Copilot built-in tools instead of clanker's
-
-If you see tools like `rg`, `docs-scan`, or `report_intent` being invoked, this indicates tool isolation isn't working correctly. This is typically a configuration issue - ensure MCP servers are properly configured so the tool whitelist can be built correctly.
-
 ## General Issues
 
 ### Conversation not persisting
 
-- **BYOK mode**: Conversations are stored in `.clanker/conversations/` in your working directory
-- **Copilot mode**: Sessions are stored in `~/.copilot/session-state/` by the SDK
+- Conversations are stored in `.clanker/conversations/` in your working directory
 - Check that the directories exist and are writable
 
 ### High memory usage
 
 - Long conversations accumulate context; use `/clear` to reset
-- **BYOK mode**: Summarization kicks in at the configured threshold (default 80%)
-- **Copilot mode**: SDK handles infinite sessions with automatic compaction
+- Summarization kicks in at the configured threshold (default 80%)
 
 ### Logs not appearing
 

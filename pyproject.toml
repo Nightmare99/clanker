@@ -40,7 +40,6 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0.0",
-    "github-copilot-sdk>=0.2.0,<0.2.1",
     "certifi>=2024.0.0",
     "pypdf>=4.0.0",
     "pymupdf>=1.24.0",  # For PDF visual analysis (no external deps)

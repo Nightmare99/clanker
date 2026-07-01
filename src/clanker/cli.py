@@ -9,7 +9,7 @@ warnings.filterwarnings("ignore", message="Core Pydantic V1 functionality")
 
 import click
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.completion import Completer, Completion
@@ -35,13 +35,6 @@ from clanker.ui.streaming import StreamResult, stream_agent_response_sync, clean
 from clanker.ui.token_tracking import SessionTokenTracker
 from clanker.runtime import (
     set_yolo_mode,
-    set_copilot_mode,
-    is_copilot_mode,
-    set_copilot_model,
-    get_copilot_reasoning_effort,
-    parse_model_selection,
-    format_model_display,
-    get_copilot_model,
 )
 
 # Load environment variables
@@ -100,124 +93,47 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
 
     elif cmd == "/clear":
         console.clear()
-        if is_copilot_mode():
-            # Copilot mode: create new SDK session
-            return "copilot_clear"
-        else:
-            session_manager.new_session()
-            logger.info("Conversation cleared, new session started")
-            console.print("[bold cyan]*WHIRR*[/bold cyan] Memory banks wiped. Fresh slate initialized. [bold cyan]*CLANK*[/bold cyan]")
+        session_manager.new_session()
+        logger.info("Conversation cleared, new session started")
+        console.print("[bold cyan]*WHIRR*[/bold cyan] Memory banks wiped. Fresh slate initialized. [bold cyan]*CLANK*[/bold cyan]")
 
     elif cmd.startswith("/model"):
         parts = command.strip().split(maxsplit=1)
 
-        if is_copilot_mode():
-            # Copilot mode: show models with reasoning effort variants
-            copilot_models = []
-            try:
-                from clanker.copilot.client import list_models as list_copilot_models_async
-                import asyncio
-                from clanker.ui.streaming import _get_or_create_loop
-                loop = _get_or_create_loop()
-                # Expand reasoning efforts to show all variants
-                copilot_models = loop.run_until_complete(list_copilot_models_async(expand_reasoning_efforts=True))
-            except Exception as e:
-                logger.debug("Failed to list Copilot models: %s", e)
+        # BYOK mode: show configured models
+        model_names = list_model_names()
 
-            if len(parts) == 1:
-                # Show available Copilot models with reasoning effort variants
-                current_copilot_model = get_copilot_model()
-                current_effort = get_copilot_reasoning_effort()
-                current_display = format_model_display(current_copilot_model, current_effort)
-                console.print_info(f"Current model: {current_display}")
-
-                if copilot_models:
-                    console.print_info("\nAvailable Copilot models:")
-                    for m in copilot_models:
-                        display_id = m.get('display_id', m['id'])
-                        is_current = (m['id'] == current_copilot_model and
-                                     m.get('reasoning_effort') == current_effort)
-                        marker = " *" if is_current else ""
-                        # Show reasoning indicator for models with reasoning effort
-                        if m.get('reasoning_effort'):
-                            console.print(f"  [green]{display_id}[/green]{marker}")
-                        else:
-                            # Show capabilities for base models
-                            caps = []
-                            if m.get('capabilities', {}).get('reasoning'):
-                                caps.append("reasoning")
-                            if m.get('capabilities', {}).get('vision'):
-                                caps.append("vision")
-                            cap_str = f" ({', '.join(caps)})" if caps else ""
-                            console.print(f"  [green]{display_id}[/green]{cap_str}{marker}")
-                    console.print_info("\nUse /model <model-id> to switch models.")
-                    console.print_info("For reasoning models, use: /model <model-id> (<effort>)")
-                    console.print_info("  e.g., /model claude-sonnet-4 (high)")
-                else:
-                    console.print_warning("No Copilot models available.")
+        if len(parts) == 1:
+            # Show current model and list available models
+            current = get_default_model()
+            if current:
+                console.print_info(f"Current model: {current.name} ({current.provider})")
             else:
-                # Switch Copilot model (with optional reasoning effort)
-                target_selection = parts[1].strip()
-                target_model, target_effort = parse_model_selection(target_selection)
+                console.print_warning("No model configured.")
 
-                # Validate model exists
-                valid_ids = [m['id'] for m in copilot_models]
-                unique_model_ids = list(set(valid_ids))
-
-                if target_model in unique_model_ids or not copilot_models:
-                    # Check if reasoning effort is valid for this model
-                    model_info = next((m for m in copilot_models if m['id'] == target_model), None)
-                    supports_reasoning = model_info.get('capabilities', {}).get('reasoning', False) if model_info else False
-
-                    if target_effort and not supports_reasoning:
-                        console.print_warning(f"Model '{target_model}' does not support reasoning effort.")
-                        console.print_info("Switching without reasoning effort.")
-                        target_effort = None
-
-                    # Use Copilot-specific model tracking
-                    set_copilot_model(target_model, target_effort)
-                    display = format_model_display(target_model, target_effort)
-                    console.print_success(f"Switched to Copilot model: {display}")
-                    console.print_info("Note: Model switch takes effect on next message.")
-                else:
-                    console.print_warning(f"Model '{target_model}' not found.")
-                    console.print_info(f"Available: {', '.join(unique_model_ids)}")
+            if model_names:
+                console.print_info("\nConfigured models:")
+                for name in model_names:
+                    model = get_model_by_name(name)
+                    if model:
+                        marker = " *" if current and current.name == name else ""
+                        console.print(f"  [cyan]{name}[/cyan] ({model.provider}){marker}")
+                console.print_info("\nUse /model <name> to switch models.")
+            else:
+                console.print_info("\nNo models configured in ~/.clanker/models.json")
+                console.print_info("Add models via 'clanker config'.")
         else:
-            # BYOK mode: only show configured models (no Copilot)
-            model_names = list_model_names()
-
-            if len(parts) == 1:
-                # Show current model and list available models
-                current = get_default_model()
-                if current:
-                    console.print_info(f"Current model: {current.name} ({current.provider})")
-                else:
-                    console.print_warning("No model configured.")
-
-                if model_names:
-                    console.print_info("\nConfigured models:")
-                    for name in model_names:
-                        model = get_model_by_name(name)
-                        if model:
-                            marker = " *" if current and current.name == name else ""
-                            console.print(f"  [cyan]{name}[/cyan] ({model.provider}){marker}")
-                    console.print_info("\nUse /model <name> to switch models.")
-                else:
-                    console.print_info("\nNo models configured in ~/.clanker/models.json")
-                    console.print_info("Add models via 'clanker config'.")
-                    console.print_info("For GitHub Copilot, use 'clanker --copilot' mode.")
+            # Switch to specified model
+            target_name = parts[1].strip()
+            model = get_model_by_name(target_name)
+            if model:
+                set_default_model(target_name)
+                console.print_success(f"Switched to model: {model.name} ({model.provider})")
+                console.print_info("Note: Changes take effect on next message.")
             else:
-                # Switch to specified model
-                target_name = parts[1].strip()
-                model = get_model_by_name(target_name)
-                if model:
-                    set_default_model(target_name)
-                    console.print_success(f"Switched to model: {model.name} ({model.provider})")
-                    console.print_info("Note: Changes take effect on next message.")
-                else:
-                    console.print_warning(f"Model '{target_name}' not found.")
-                    if model_names:
-                        console.print_info(f"Available: {', '.join(model_names)}")
+                console.print_warning(f"Model '{target_name}' not found.")
+                if model_names:
+                    console.print_info(f"Available: {', '.join(model_names)}")
 
     elif cmd == "/config":
         settings = get_settings()
@@ -280,83 +196,20 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
                 console.print_info(f"Log directory: {settings.logging.log_dir}")
                 console.print_info("No log file created yet")
 
-    elif cmd == "/gh-login":
-        # GitHub Copilot OAuth device flow authentication
-        console.print_info("Starting GitHub Copilot authentication...")
-        console.print_info("This will use OAuth device flow to authenticate.")
-        try:
-            from clanker.providers.github_copilot import authenticate_copilot_sync, _load_copilot_token
-
-            # Check if already authenticated
-            existing_token = _load_copilot_token()
-            if existing_token:
-                console.print_info("Found existing Copilot token.")
-                console.print_info("Re-authenticating will replace it.")
-
-            # Run device flow authentication
-            token = authenticate_copilot_sync()
-            if token:
-                console.print_success("GitHub Copilot authentication successful!")
-                console.print_info("Token saved to ~/.clanker/copilot_token")
-
-                if is_copilot_mode():
-                    console.print_info("Use /model <model-id> to switch Copilot models.")
-                else:
-                    console.print_info("Run 'clanker --copilot' to use Copilot mode.")
-
-                # List available models
-                try:
-                    from clanker.providers.github_copilot import list_copilot_models
-                    from clanker.ui.streaming import _get_or_create_loop
-                    loop = _get_or_create_loop()
-                    models = loop.run_until_complete(list_copilot_models())
-                    if models:
-                        console.print_info("\nAvailable Copilot models:")
-                        for m in models:
-                            console.print(f"  [green]{m['id']}[/green] ({m['name']})")
-                except Exception as e:
-                    logger.debug("Failed to list Copilot models after login: %s", e)
-        except KeyboardInterrupt:
-            console.print_info("\nAuthentication cancelled.")
-        except Exception as e:
-            console.print_error(f"Authentication failed: {e}")
-
     elif cmd == "/history":
-        if is_copilot_mode():
-            # Copilot mode: list sessions from SDK
-            try:
-                from clanker.copilot.session import get_copilot_session_manager
-                from clanker.ui.streaming import _get_or_create_loop
-                loop = _get_or_create_loop()
-                manager = get_copilot_session_manager()
-                sessions = loop.run_until_complete(manager.list_sessions())
-                if not sessions:
-                    console.print_info("No Copilot session history found.")
-                    console.print_info("Start a conversation to create a session.")
-                else:
-                    console.print_info(f"Copilot session history ({len(sessions)} sessions):\n")
-                    for s in sessions[:20]:
-                        created = s.get("created_at", "")[:10] if s.get("created_at") else "unknown"
-                        model = s.get("model", "unknown")
-                        console.print(f"  [bold green]{s['id']}[/bold green]  ({model}, {created})")
-                    console.print_info("\nUse /restore <id> to resume a session.")
-            except Exception as e:
-                logger.debug("Failed to list Copilot sessions: %s", e)
-                console.print_warning(f"Failed to list sessions: {e}")
+        # List JSON snapshot sessions
+        sessions = session_manager.list_sessions()
+        if not sessions:
+            console.print_info("No conversation history found in this workspace.")
+            console.print_info("Conversations are saved to .clanker/conversations/")
         else:
-            # BYOK mode: list JSON snapshot sessions
-            sessions = session_manager.list_sessions()
-            if not sessions:
-                console.print_info("No conversation history found in this workspace.")
-                console.print_info("Conversations are saved to .clanker/conversations/")
-            else:
-                console.print_info(f"Conversation history ({len(sessions)} sessions):\n")
-                for s in sessions[:20]:  # Show last 20
-                    title = s["title"][:40] + "..." if len(s["title"]) > 40 else s["title"]
-                    created = s["created_at"][:10] if s["created_at"] else "unknown"
-                    console.print(f"  [bold cyan]{s['id']}[/bold cyan]  {title}")
-                    console.print(f"           {created}  ({s['message_count']} messages)")
-                console.print_info("\nUse /restore <id> to resume a conversation.")
+            console.print_info(f"Conversation history ({len(sessions)} sessions):\n")
+            for s in sessions[:20]:  # Show last 20
+                title = s["title"][:40] + "..." if len(s["title"]) > 40 else s["title"]
+                created = s["created_at"][:10] if s["created_at"] else "unknown"
+                console.print(f"  [bold cyan]{s['id']}[/bold cyan]  {title}")
+                console.print(f"           {created}  ({s['message_count']} messages)")
+            console.print_info("\nUse /restore <id> to resume a conversation.")
 
     elif cmd.startswith("/restore"):
         parts = command.strip().split(maxsplit=1)
@@ -365,11 +218,7 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
             console.print_info("Use /history to see available sessions.")
         else:
             session_id = parts[1].strip()
-            if is_copilot_mode():
-                # Copilot mode: return restore command for Copilot session
-                return f"copilot_restore:{session_id}"
-            else:
-                return f"restore:{session_id}"
+            return f"restore:{session_id}"
 
     elif cmd == "/memories":
         store = get_memory_store()
@@ -490,7 +339,6 @@ class CommandCompleter(Completer):
         "/config",
         "/mcp",
         "/logs",
-        "/gh-login",
         "/history",
         "/restore",
         "/memories",
@@ -499,9 +347,6 @@ class CommandCompleter(Completer):
         "/workflow",
         "/skill",
     ]
-
-    # Cache for Copilot models (fetched once per session)
-    _copilot_models_cache: list | None = None
 
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor
@@ -512,19 +357,10 @@ class CommandCompleter(Completer):
         if text.startswith("/model "):
             model_prefix = text[7:]  # Remove "/model "
             try:
-                if is_copilot_mode():
-                    # Copilot mode: show Copilot models with reasoning effort variants
-                    copilot_models = self._get_copilot_models()
-                    for m in copilot_models:
-                        display_id = m.get('display_id', m['id'])
-                        if display_id.lower().startswith(model_prefix.lower()):
-                            yield Completion(display_id, start_position=-len(model_prefix))
-                else:
-                    # BYOK mode: show configured models
-                    model_names = list_model_names()
-                    for name in model_names:
-                        if name.lower().startswith(model_prefix.lower()):
-                            yield Completion(name, start_position=-len(model_prefix))
+                model_names = list_model_names()
+                for name in model_names:
+                    if name.lower().startswith(model_prefix.lower()):
+                        yield Completion(name, start_position=-len(model_prefix))
             except Exception:
                 pass  # Silently fail if model loading fails
             return
@@ -558,36 +394,6 @@ class CommandCompleter(Completer):
         for cmd in self.COMMANDS:
             if cmd.startswith(text):
                 yield Completion(cmd, start_position=-len(text))
-
-    def _get_copilot_models(self) -> list:
-        """Get Copilot models with reasoning effort variants (cached)."""
-        if self._copilot_models_cache is not None:
-            return self._copilot_models_cache
-
-        try:
-            from clanker.copilot.client import is_available as is_copilot_available
-            from clanker.copilot.client import list_models as list_copilot_models_async
-            if is_copilot_available():
-                import asyncio
-                from clanker.ui.streaming import _get_or_create_loop
-                loop = _get_or_create_loop()
-                # Expand reasoning efforts to show all variants
-                coro = list_copilot_models_async(expand_reasoning_efforts=True)
-                try:
-                    if loop.is_running():
-                        # Can't use run_until_complete on running loop
-                        # Return empty and let the cache populate later
-                        coro.close()
-                        return []
-                    self._copilot_models_cache = loop.run_until_complete(coro)
-                    return self._copilot_models_cache
-                except RuntimeError:
-                    # Loop already running or other issue
-                    coro.close()
-                    return []
-        except Exception:
-            pass
-        return []
 
 
 def run_interactive(console: Console, settings: Settings, resume_session: str | None = None) -> None:
@@ -691,14 +497,6 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
                     # Save conversation before exiting
                     if conversation_messages:
                         session_manager.save_conversation_snapshot(conversation_messages)
-                    # Cleanup Copilot if used
-                    try:
-                        from clanker.providers.github_copilot import cleanup_copilot
-                        from clanker.ui.streaming import _get_or_create_loop
-                        loop = _get_or_create_loop()
-                        loop.run_until_complete(cleanup_copilot())
-                    except Exception:
-                        pass
                     # Cleanup the persistent event loop
                     cleanup_event_loop()
                     break
@@ -823,18 +621,6 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
             # Save conversation before exiting
             if conversation_messages:
                 session_manager.save_conversation_snapshot(conversation_messages)
-            # Cleanup Copilot if used
-            try:
-                from clanker.providers.github_copilot import cleanup_copilot
-                import asyncio
-                try:
-                    asyncio.run(cleanup_copilot())
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    loop.run_until_complete(cleanup_copilot())
-                    loop.close()
-            except Exception:
-                pass
             console.print("\n[bold cyan]*BZZZT*[/bold cyan] Signal lost. Powering down. [bold cyan]*click*[/bold cyan]")
             break
 
@@ -894,290 +680,6 @@ def run_single_prompt(prompt: str, console: Console, settings: Settings) -> None
     except Exception as e:
         console.print_error(f"Agent error: {e}")
         sys.exit(1)
-
-
-def run_copilot_interactive(
-    console: Console,
-    settings: Settings,
-    resume_session: str | None = None,
-    model_override: str | None = None,
-) -> None:
-    """Run the interactive REPL loop in Copilot mode.
-
-    Uses GitHub Copilot SDK for session management with native persistence.
-
-    Args:
-        console: Console instance for output.
-        settings: Application settings.
-        resume_session: Optional session ID to resume.
-        model_override: Optional model override from CLI.
-    """
-    from clanker.copilot.session import get_copilot_session_manager
-    from clanker.copilot.client import list_models as list_copilot_models_async
-    from clanker.ui.streaming import stream_copilot_response_sync, _get_or_create_loop, cleanup_event_loop
-
-    logger.info("Starting Copilot interactive mode")
-
-    # Set Copilot model from override or keep default
-    if model_override:
-        set_copilot_model(model_override)
-
-    # Get event loop (reused throughout)
-    loop = _get_or_create_loop()
-
-    # Pre-fetch Copilot models for autocomplete (before REPL loop starts)
-    # Use expand_reasoning_efforts=True to show model variants with reasoning levels
-    completer = CommandCompleter()
-    try:
-        completer._copilot_models_cache = loop.run_until_complete(
-            list_copilot_models_async(expand_reasoning_efforts=True)
-        )
-    except Exception as e:
-        logger.debug("Failed to pre-fetch Copilot models for autocomplete: %s", e)
-
-    # Pre-discover MCP tools to avoid delay on first message
-    copilot_manager = get_copilot_session_manager()
-    if settings.mcp.enabled and settings.mcp.servers:
-        from copilot.types import MCPLocalServerConfig, MCPRemoteServerConfig
-        mcp_servers = {}
-        for name, server in settings.mcp.servers.items():
-            if not server.enabled:
-                continue
-            if server.transport == "stdio" and server.command:
-                config_kwargs = {
-                    "command": server.command,
-                    "args": server.args or [],
-                    "tools": ["*"],
-                }
-                if server.env:
-                    config_kwargs["env"] = server.env
-                mcp_servers[name] = MCPLocalServerConfig(**config_kwargs)
-            elif server.transport == "sse" and server.url:
-                mcp_servers[name] = MCPRemoteServerConfig(
-                    type="sse",
-                    url=server.url,
-                    tools=["*"],
-                )
-        if mcp_servers:
-            try:
-                loop.run_until_complete(copilot_manager.discover_mcp_tools(mcp_servers))
-            except Exception as e:
-                logger.debug("Failed to pre-discover MCP tools: %s", e)
-
-    # Setup prompt history
-    history_path = settings.memory.storage_path / "history_copilot"
-    history_path.parent.mkdir(parents=True, exist_ok=True)
-    prompt_session: PromptSession = PromptSession(
-        history=FileHistory(str(history_path)),
-        completer=completer,
-        complete_while_typing=True,
-    )
-
-    from clanker.agent.prompts import load_user_instructions
-    _has_user_instructions = bool(load_user_instructions())
-
-    console.print_welcome(copilot_model=get_copilot_model(), copilot_reasoning_effort=get_copilot_reasoning_effort(), user_instructions_loaded=_has_user_instructions)
-
-    # Token tracking
-    token_tracker = SessionTokenTracker(model_name=get_copilot_model())
-
-    # Resume session if specified
-    if resume_session:
-        try:
-            from clanker.agent.prompts import get_system_prompt
-            loop.run_until_complete(
-                copilot_manager.resume_session(
-                    resume_session,
-                    model=get_copilot_model(),
-                    reasoning_effort=get_copilot_reasoning_effort(),
-                    system_message=get_system_prompt(),
-                )
-            )
-            console.print_info(f"Resumed Copilot session: {resume_session}")
-        except Exception as e:
-            console.print_warning(f"Could not resume session {resume_session}: {e}")
-            console.print_info("Starting new session instead.")
-
-    working_dir = os.getcwd()
-
-    # Dummy session manager for commands that still need it
-    session_manager = SessionManager()
-
-    while True:
-        try:
-            # Get user input
-            user_input = prompt_session.prompt("❯ ").strip()
-
-            if not user_input:
-                continue
-
-            # Handle commands
-            if user_input.startswith("/"):
-                result = handle_command(user_input, console, session_manager)
-                if result == "exit":
-                    # Cleanup Copilot session
-                    try:
-                        loop.run_until_complete(copilot_manager.cleanup())
-                    except Exception:
-                        pass
-                    cleanup_event_loop()
-                    break
-                elif result == "copilot_clear":
-                    # Create new Copilot session
-                    try:
-                        loop.run_until_complete(copilot_manager.new_session(model=get_copilot_model()))
-                        console.print("[bold cyan]*WHIRR*[/bold cyan] Memory banks wiped. Fresh slate initialized. [bold cyan]*CLANK*[/bold cyan]")
-                    except Exception as e:
-                        console.print_error(f"Failed to create new session: {e}")
-                    continue
-                elif result and result.startswith("copilot_restore:"):
-                    # Restore a Copilot session
-                    session_id = result.split(":", 1)[1]
-                    try:
-                        from clanker.agent.prompts import get_system_prompt
-                        loop.run_until_complete(
-                            copilot_manager.resume_session(
-                                session_id,
-                                model=get_copilot_model(),
-                                reasoning_effort=get_copilot_reasoning_effort(),
-                                system_message=get_system_prompt(),
-                            )
-                        )
-                        console.print_info(f"Restored Copilot session: {session_id}")
-                    except Exception as e:
-                        console.print_warning(f"Could not restore session: {e}")
-                    continue
-                elif result and result.startswith("workflow:"):
-                    # Execute workflow: treat content as user input
-                    user_input = result.split(":", 1)[1]
-                elif result and result.startswith("skill:"):
-                    # Execute skill: treat loaded instructions as user input
-                    user_input = result.split(":", 1)[1]
-                else:
-                    continue
-
-            # Run agent with Copilot (use current Copilot model and reasoning effort)
-            current_model = get_copilot_model()
-            current_effort = get_copilot_reasoning_effort()
-            logger.info("Processing user message (Copilot, model=%s, effort=%s): %s",
-                       current_model, current_effort, user_input[:100] + "..." if len(user_input) > 100 else user_input)
-            console.rule()
-            try:
-                result = stream_copilot_response_sync(
-                    settings,
-                    copilot_manager,
-                    user_input,
-                    current_model,
-                    working_dir,
-                    console,
-                    reasoning_effort=current_effort,
-                )
-
-                # Track tokens
-                if result.input_tokens > 0 or result.output_tokens > 0:
-                    token_tracker.add_turn(
-                        result.input_tokens,
-                        result.output_tokens,
-                        result.cache_read_tokens,
-                        result.cache_creation_tokens,
-                    )
-
-                # Show usage (Copilot mode shows premium requests remaining)
-                if result.quota_remaining is not None and settings.output.show_token_usage:
-                    console.print_copilot_usage(
-                        result.quota_remaining,
-                        result.quota_used,
-                        result.quota_limit,
-                    )
-
-                logger.debug("Copilot response completed successfully")
-            except Exception as e:
-                logger.exception("Copilot error occurred: %s", e)
-                console.print_error(f"Copilot error: {e}")
-                log_path = get_log_path()
-                if log_path:
-                    console.print_info(f"Full Copilot diagnostics were logged to {log_path}")
-
-            console.rule()
-
-        except KeyboardInterrupt:
-            console.print()
-            continue
-
-        except EOFError:
-            # Cleanup Copilot session
-            try:
-                loop.run_until_complete(copilot_manager.cleanup())
-            except Exception:
-                pass
-            cleanup_event_loop()
-            console.print("\n[bold cyan]*BZZZT*[/bold cyan] Signal lost. Powering down. [bold cyan]*click*[/bold cyan]")
-            break
-
-
-def run_copilot_single_prompt(
-    prompt: str,
-    console: Console,
-    settings: Settings,
-    model_override: str | None = None,
-) -> None:
-    """Run a single prompt in Copilot mode and exit.
-
-    Args:
-        prompt: The user's prompt.
-        console: Console instance for output.
-        settings: Application settings.
-        model_override: Optional model override from CLI.
-    """
-    from clanker.copilot.session import get_copilot_session_manager
-    from clanker.ui.streaming import stream_copilot_response_sync, _get_or_create_loop, cleanup_event_loop
-
-    # Set Copilot model from override or keep default
-    if model_override:
-        # Parse model override for potential reasoning effort
-        model_id, effort = parse_model_selection(model_override)
-        set_copilot_model(model_id, effort)
-
-    current_model = get_copilot_model()
-    current_effort = get_copilot_reasoning_effort()
-
-    # Token tracking
-    token_tracker = SessionTokenTracker(model_name=current_model)
-
-    copilot_manager = get_copilot_session_manager()
-    loop = _get_or_create_loop()
-
-    try:
-        result = stream_copilot_response_sync(
-            settings,
-            copilot_manager,
-            prompt,
-            current_model,
-            os.getcwd(),
-            console,
-            reasoning_effort=current_effort,
-        )
-
-        # Display usage (Copilot mode shows premium requests remaining)
-        if result.quota_remaining is not None and settings.output.show_token_usage:
-            console.print_copilot_usage(
-                result.quota_remaining,
-                result.quota_used,
-                result.quota_limit,
-            )
-    except Exception as e:
-        logger.exception("Copilot single-prompt error: %s", e)
-        console.print_error(f"Copilot error: {e}")
-        log_path = get_log_path()
-        if log_path:
-            console.print_info(f"Full Copilot diagnostics were logged to {log_path}")
-        sys.exit(1)
-    finally:
-        try:
-            loop.run_until_complete(copilot_manager.cleanup())
-        except Exception:
-            pass
-        cleanup_event_loop()
 
 
 class ClankerGroup(click.Group):
@@ -1244,11 +746,6 @@ class ClankerGroup(click.Group):
     is_flag=True,
     help="Skip bash command approval (auto-execute all commands)",
 )
-@click.option(
-    "--copilot",
-    is_flag=True,
-    help="Use GitHub Copilot mode with native SDK session management",
-)
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -1261,7 +758,6 @@ def main(
     version: bool,
     check_update: bool,
     yolo: bool,
-    copilot: bool,
 ) -> None:
     """Clanker - AI-Powered Coding Assistant.
 
@@ -1307,27 +803,7 @@ def main(
     # Set yolo mode (skip bash command approval)
     set_yolo_mode(yolo)
 
-    # Set Copilot mode
-    set_copilot_mode(copilot)
-
     console = Console()
-
-    # Validate Copilot mode requirements
-    if copilot:
-        from clanker.providers.github_copilot import is_copilot_available, _load_copilot_token
-        if not is_copilot_available():
-            console.print_error("GitHub Copilot SDK not installed.")
-            console.print_info("Install with: pip install github-copilot-sdk")
-            sys.exit(1)
-        if not _load_copilot_token():
-            console.print_warning("Not authenticated with GitHub Copilot.")
-            console.print_info("Starting authentication flow...")
-            try:
-                from clanker.providers.github_copilot import authenticate_copilot_sync
-                authenticate_copilot_sync()
-            except (KeyboardInterrupt, Exception) as e:
-                console.print_error(f"Authentication failed: {e}")
-                sys.exit(1)
 
     # Handle --history flag
     if history:
@@ -1404,15 +880,9 @@ def main(
         set_default_model("cli-override")
 
     if prompt:
-        if copilot:
-            run_copilot_single_prompt(prompt, console, settings, model)
-        else:
-            run_single_prompt(prompt, console, settings)
+        run_single_prompt(prompt, console, settings)
     else:
-        if copilot:
-            run_copilot_interactive(console, settings, resume_session=resume, model_override=model)
-        else:
-            run_interactive(console, settings, resume_session=resume)
+        run_interactive(console, settings, resume_session=resume)
 
 
 @main.command()

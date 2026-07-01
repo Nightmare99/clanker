@@ -59,25 +59,13 @@ Use the web configuration UI to test MCP server connections before saving. The t
 - `@modelcontextprotocol/server-postgres` - PostgreSQL database
 - `@modelcontextprotocol/server-slack` - Slack integration
 
-## Mode-Specific Behavior
-
-### BYOK Mode
+## How MCP Tools Appear
 
 MCP tools are loaded via `langchain-mcp-adapters` and appear with server name prefixes:
 
 ```
 > [filesystem] read_file: /path/to/file.txt
 ```
-
-### Copilot Mode
-
-MCP servers are integrated natively with the Copilot SDK:
-
-- **Startup Discovery**: Tools are discovered when Copilot mode starts (no delay on first message)
-- **Tool Naming**: Tools are named as `{server}-{tool}` (e.g., `context7-resolve-library-id`)
-- **Tool Isolation**: Only clanker's tools and MCP tools are available - Copilot's built-in tools are blocked
-
-This ensures consistent behavior where only the tools you configure are used.
 
 ## Troubleshooting
 
@@ -86,8 +74,3 @@ This ensures consistent behavior where only the tools you configure are used.
 - Ensure required environment variables are set
 - Use `/mcp` command to see server status
 - Check logs with `/logs` for error details
-
-**MCP tools not working in Copilot mode?**
-- Ensure `mcp.enabled: true` in config
-- Check that the server is correctly configured with `transport` and `command`/`url`
-- Restart clanker to trigger MCP tool discovery
