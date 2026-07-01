@@ -8,7 +8,6 @@
 import installation from '../../docs/installation.md?raw'
 import usage from '../../docs/usage.md?raw'
 import configuration from '../../docs/configuration.md?raw'
-import copilot from '../../docs/copilot.md?raw'
 import tools from '../../docs/tools.md?raw'
 import skills from '../../docs/skills.md?raw'
 import workflows from '../../docs/workflows.md?raw'
@@ -50,7 +49,7 @@ export const docGroups: DocGroup[] = [
       {
         slug: 'usage',
         title: 'Usage',
-        blurb: 'Modes, CLI flags, interactive commands, and command approval.',
+        blurb: 'CLI flags, interactive commands, and command approval.',
         body: usage,
       },
       {
@@ -58,12 +57,6 @@ export const docGroups: DocGroup[] = [
         title: 'Configuration',
         blurb: 'Models, config file, environment variables, and the web UI.',
         body: configuration,
-      },
-      {
-        slug: 'copilot',
-        title: 'Copilot mode',
-        blurb: 'Use GitHub Copilot with native SDK session management.',
-        body: copilot,
       },
     ],
   },
@@ -116,7 +109,7 @@ export const docGroups: DocGroup[] = [
       {
         slug: 'troubleshooting',
         title: 'Troubleshooting',
-        blurb: 'Fixes for provider, MCP, Copilot, and general issues.',
+        blurb: 'Fixes for provider, MCP, and general issues.',
         body: troubleshooting,
       },
     ],

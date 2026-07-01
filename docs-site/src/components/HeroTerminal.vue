@@ -85,7 +85,7 @@ onBeforeUnmount(() => {
 <template>
   <section class="hero">
     <div class="hero__intro">
-      <p class="hero__eyebrow"><span class="hero__dot" /> AI coding agent · BYOK &amp; GitHub Copilot</p>
+      <p class="hero__eyebrow"><span class="hero__dot" /> AI coding agent · bring your own key</p>
       <h1 class="hero__title">
         Your terminal just
         <span class="hero__accent">learned to code</span>

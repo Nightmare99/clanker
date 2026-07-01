@@ -181,7 +181,7 @@ onBeforeUnmount(() => {
             <span class="pillar__glyph" style="--c: var(--lime)">[ +/- ]</span>
             <h3>Bring your own model</h3>
             <p>
-              Anthropic, OpenAI, Azure, Ollama, or GitHub Copilot. Switch models
+              Anthropic, OpenAI, Azure, or Ollama. Switch models
               mid-session with <code>/model</code>. Extend it with MCP servers
               and skills.
             </p>
