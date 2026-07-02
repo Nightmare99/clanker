@@ -20,6 +20,12 @@ class SafetySettings(BaseModel):
     # to a background job (returns immediately with a job id so the agent
     # can keep working). Set to 0 to disable auto-promotion.
     foreground_promote_after_seconds: int = Field(default=30, ge=0)
+    # User-defined command blacklist (system-wide). Any command containing one
+    # of these entries as a case-insensitive substring is blocked at the
+    # sandbox gate, in addition to the built-in blocked commands, and unioned
+    # with the project-specific `.clanker/blacklist` file. Only enforced when
+    # `sandbox_commands` is enabled.
+    command_blacklist: list[str] = Field(default_factory=list)
 
 
 class OutputSettings(BaseModel):
@@ -186,6 +192,14 @@ safety:
   max_file_size: 1000000
   command_timeout: 120000
   foreground_promote_after_seconds: 30  # 0 disables auto-promotion to background
+  # Commands the agent must never run. Case-insensitive substring match, so
+  # "git push" blocks "git push origin main". Applied on top of the built-in
+  # blocks and unioned with a project's .clanker/blacklist file. Only enforced
+  # while sandbox_commands is true.
+  command_blacklist: []
+    # - git push
+    # - npm publish
+    # - terraform apply
 
 output:
   syntax_highlighting: true

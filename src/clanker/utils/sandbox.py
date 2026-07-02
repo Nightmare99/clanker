@@ -54,9 +54,15 @@ PROTECTED_PATHS = frozenset({
 })
 
 
-def is_command_safe(command: str) -> tuple[bool, str]:
+def is_command_safe(command: str, extra_blacklist: list[str] | None = None) -> tuple[bool, str]:
     """
     Check if a command is safe to execute.
+
+    Args:
+        command: The command string to check.
+        extra_blacklist: Optional user-configured substrings (system + project).
+            A command is blocked if any entry is a case-insensitive substring of
+            it. Applied in addition to the built-in blocked commands/patterns.
 
     Returns:
         Tuple of (is_safe, reason). If unsafe, reason explains why.
@@ -72,6 +78,13 @@ def is_command_safe(command: str) -> tuple[bool, str]:
     for pattern in DANGEROUS_PATTERNS:
         if pattern.search(command):
             return False, f"Command matches dangerous pattern: {pattern.pattern}"
+
+    # Check the user-configured blacklist (system-wide + project), substring match
+    if extra_blacklist:
+        for entry in extra_blacklist:
+            needle = entry.lower().strip()
+            if needle and needle in command_lower:
+                return False, f"Command is blacklisted: {entry}"
 
     return True, ""
 

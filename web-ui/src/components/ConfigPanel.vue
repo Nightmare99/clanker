@@ -17,6 +17,7 @@ import {
   NSpace,
   NDivider,
   NTag,
+  NDynamicTags,
   NAlert,
   NIcon,
   NSpin,
@@ -51,6 +52,7 @@ interface Config {
     max_file_size: number
     command_timeout: number
     foreground_promote_after_seconds: number
+    command_blacklist: string[]
   }
   output: {
     syntax_highlighting: boolean
@@ -991,6 +993,21 @@ onMounted(() => {
                 <code>bash_status</code> / <code>bash_output</code>. Set to
                 <strong>0</strong> to disable promotion (legacy blocking
                 behavior).
+              </div>
+
+              <NFormItem label="Command Blacklist" :label-style="{ alignItems: 'flex-start' }">
+                <NDynamicTags
+                  v-model:value="config.safety.command_blacklist"
+                  @update:value="markChanged"
+                />
+              </NFormItem>
+              <div class="form-hint">
+                Commands the agent must never run. Case-insensitive
+                <strong>substring</strong> match, so <code>git push</code> blocks
+                <code>git push origin main</code>. Applied on top of the built-in
+                blocks and only while <strong>Sandbox Commands</strong> is on.
+                A project can add more bans via a <code>.clanker/blacklist</code>
+                file (one entry per line); those are merged with this list.
               </div>
             </NForm>
           </NCard>

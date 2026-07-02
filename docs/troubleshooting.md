@@ -61,3 +61,16 @@
 
 - Ensure logging is enabled in config: `logging.enabled: true`
 - Check the log directory exists: `~/.clanker/logs/`
+
+### "Command blocked - Command is blacklisted"
+
+- The command matched an entry in your command blacklist (a case-insensitive
+  substring match). This is intentional — it is a safety control.
+- System-wide entries live in `safety.command_blacklist` in
+  `~/.clanker/config.yaml` (editable in `clanker config` → Safety).
+- Project entries live in `.clanker/blacklist` in the current repository (one
+  substring per line). The effective list is the union of both.
+- The blacklist is only enforced while `safety.sandbox_commands` is `true`.
+- See [Configuration → Command Blacklist](configuration.md#command-blacklist)
+  for details.
+

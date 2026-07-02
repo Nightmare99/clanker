@@ -10,7 +10,7 @@ from typing import Any
 
 from langchain.tools import tool
 
-from clanker.config import get_settings
+from clanker.config import get_effective_blacklist, get_settings
 from clanker.logging import get_logger
 from clanker.runtime import is_yolo_mode
 from clanker.utils.sandbox import is_command_safe, requires_confirmation
@@ -175,7 +175,11 @@ def run_safety_checks(command: str) -> str | None:
     settings = get_settings()
 
     if settings.safety.sandbox_commands:
-        is_safe, reason = is_command_safe(command)
+        # The effective blacklist is the union of the system-wide setting and
+        # the project's .clanker/blacklist (resolved from the current cwd, which
+        # is the project root for execute_shell).
+        extra_blacklist = get_effective_blacklist()
+        is_safe, reason = is_command_safe(command, extra_blacklist)
         if not is_safe:
             logger.warning("Command blocked: %s - %s", command[:50], reason)
             return f"Error: Command blocked - {reason}"

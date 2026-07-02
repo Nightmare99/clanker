@@ -9,6 +9,11 @@ from clanker.config.settings import (
     get_settings,
     reload_settings,
 )
+from clanker.config.blacklist import (
+    PROJECT_BLACKLIST_FILE,
+    get_effective_blacklist,
+    load_project_blacklist,
+)
 from clanker.config.models import (
     ModelConfig,
     ModelsConfig,
@@ -32,6 +37,10 @@ __all__ = [
     "Settings",
     "get_settings",
     "reload_settings",
+    # Command blacklist
+    "PROJECT_BLACKLIST_FILE",
+    "get_effective_blacklist",
+    "load_project_blacklist",
     # Model configuration
     "ModelConfig",
     "ModelsConfig",

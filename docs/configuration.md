@@ -131,6 +131,8 @@ safety:
   sandbox_commands: true
   max_file_size: 1000000
   command_timeout: 120000
+  foreground_promote_after_seconds: 30
+  command_blacklist: []  # extra commands to always block (see below)
 
 output:
   syntax_highlighting: true
@@ -153,6 +155,48 @@ memory:
 web_search:
   enabled: true
 ```
+
+## Command Blacklist
+
+On top of the built-in sandbox (which blocks `rm -rf /`, fork bombs, and similar),
+you can define your own list of commands the agent must **never** run. Matching is
+a **case-insensitive substring** test, so an entry of `git push` blocks
+`git push origin main`, `GIT PUSH --force`, and anything else containing that text.
+
+There are two scopes, and the effective blacklist is the **union** of both — a
+project can add bans but can never remove system-wide ones:
+
+**System-wide** — `safety.command_blacklist` in `~/.clanker/config.yaml`, applied
+to every project. Also editable in the `clanker config` web UI (Safety tab):
+
+```yaml
+safety:
+  sandbox_commands: true      # blacklist is only enforced while this is on
+  command_blacklist:
+    - git push
+    - npm publish
+    - terraform apply
+```
+
+**Project-specific** — a plain-text `.clanker/blacklist` file inside the project.
+One command substring per line; `#` comments and blank lines are ignored. Because
+it lives in the repo, it can be committed and shared with your team:
+
+```
+# .clanker/blacklist — extra bans for this repository
+npm publish
+kubectl delete
+docker push
+```
+
+Notes:
+
+- The blacklist is enforced **only while `sandbox_commands` is enabled** — it
+  shares the master command-blocking switch with the built-in blocks. Turning
+  sandboxing off disables both.
+- Blocked commands are refused at the sandbox gate, before the approval prompt,
+  with `Error: Command blocked - Command is blacklisted: <entry>`.
+- Matching is substring-based only — there is no regex or glob support.
 
 ## Web Configuration UI
 
