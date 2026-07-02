@@ -130,6 +130,10 @@ CLANKER_THEME = Theme({
     "tool.arg": "rgb(200,220,210)",
     "tool.result": "rgb(130,220,100)",  # lime-ish green for ✓
     "tool.error": "bold red",  # red ✗ for failed commands
+    # Token-usage badge — muted dark mauve-pink pill (a subdued cousin of the
+    # assistant-panel hot pink), tying the per-turn usage summary to the
+    # response it sits beneath without competing with it for attention.
+    "tokens.badge": "rgb(230,195,215) on rgb(80,38,62)",
     "user": "bold rgb(0,210,180)",
     "assistant": "rgb(230,230,230)",
     "prompt.arrow": "bold rgb(0,210,180)",
@@ -893,7 +897,7 @@ Commands:
         self,
         input_tokens: int,
         output_tokens: int,
-        context_used_percent: float,
+        context_used_percent: float | None,
         cache_read: int = 0,
         cache_creation: int = 0,
     ) -> None:
@@ -902,14 +906,18 @@ Commands:
         Args:
             input_tokens: Tokens used for input.
             output_tokens: Tokens generated in response.
-            context_used_percent: Percentage of context window used.
+            context_used_percent: Percentage of context window used, or None when
+                the model config does not specify max_input_tokens. When None,
+                the context segment is omitted entirely (no misleading number).
             cache_read: Tokens read from cache (Anthropic).
             cache_creation: Tokens used for cache creation (Anthropic).
         """
-        remaining = max(0.0, 100.0 - context_used_percent)
-
         text = Text()
-        text.append("  [", style="dim")
+        text.append("  ", style="dim")
+        # Muted pill badge, echoing the tool-name badge but subdued so the usage
+        # summary reads as a quiet footnote to the response above it.
+        text.append(" tokens ", style="tokens.badge")
+        text.append(" ", style="dim")
         text.append(f"in:{input_tokens:,}", style="dim green")
         text.append(" ", style="dim")
         text.append(f"out:{output_tokens:,}", style="dim yellow")
@@ -919,19 +927,35 @@ Commands:
             text.append(" ", style="dim")
             text.append(f"cache:{cache_read:,}", style="dim magenta")
 
-        # Context remaining with color coding
-        text.append(" | ", style="dim")
+        # Context remaining — only when the window is known. Without a configured
+        # max_input_tokens we cannot compute a percentage, so we show nothing
+        # rather than a fabricated value. Rendered as a right-aligned depleting
+        # progress bar (fuel gauge): the filled portion is context REMAINING.
+        if context_used_percent is not None:
+            remaining = max(0.0, 100.0 - context_used_percent)
 
-        # Color based on remaining context
-        if remaining > 50:
-            ctx_style = "green"
-        elif remaining > 20:
-            ctx_style = "yellow"
-        else:
-            ctx_style = "red"
+            # Color based on remaining context
+            if remaining > 50:
+                ctx_style = "green"
+            elif remaining > 20:
+                ctx_style = "yellow"
+            else:
+                ctx_style = "red"
 
-        text.append(f"{remaining:.0f}%", style=ctx_style)
-        text.append(" ctx remaining", style="dim")
-        text.append("]", style="dim")
+            bar_width = 16
+            filled = int(round(remaining / 100.0 * bar_width))
+            filled = max(0, min(bar_width, filled))
+
+            gauge = Text()
+            gauge.append(f"{remaining:.0f}% ", style=ctx_style)
+            gauge.append("█" * filled, style=ctx_style)
+            gauge.append("░" * (bar_width - filled), style="dim")
+
+            # Right-align the gauge: pad between the left summary and the bar so
+            # it sits flush to the console's right edge (min one space).
+            pad = self.width - text.cell_len - gauge.cell_len
+            text.append(" " * max(1, pad))
+            text.append_text(gauge)
 
         self._console.print(text)
+

@@ -1,70 +1,13 @@
-"""Token usage tracking and context window management."""
+"""Token usage tracking and context window management.
+
+The context window is **not** hardcoded or guessed from the model name. It is
+supplied by the caller from the user's model config (`ModelConfig.max_input_tokens`).
+When that value is unknown (`None`), the context-usage percentages are `None`
+and the TUI omits the context portion of the token line rather than showing a
+misleading number.
+"""
 
 from dataclasses import dataclass, field
-
-# Context window sizes for common models (in tokens)
-# These are approximate and may change with model updates
-MODEL_CONTEXT_WINDOWS: dict[str, int] = {
-    # Anthropic models
-    "claude-3-opus": 200_000,
-    "claude-3-sonnet": 200_000,
-    "claude-3-haiku": 200_000,
-    "claude-3-5-sonnet": 200_000,
-    "claude-3-5-haiku": 200_000,
-    "claude-sonnet-4": 200_000,
-    "claude-sonnet-4-5": 200_000,
-    "claude-opus-4": 200_000,
-    # OpenAI models
-    "gpt-4": 8_192,
-    "gpt-4-32k": 32_768,
-    "gpt-4-turbo": 128_000,
-    "gpt-4-turbo-preview": 128_000,
-    "gpt-4o": 128_000,
-    "gpt-4o-mini": 128_000,
-    "gpt-4.1": 1_000_000,
-    "gpt-3.5-turbo": 16_385,
-    "gpt-3.5-turbo-16k": 16_385,
-    # o-series (reasoning models)
-    "o1": 200_000,
-    "o1-preview": 128_000,
-    "o1-mini": 128_000,
-    "o3": 200_000,
-    "o3-mini": 200_000,
-    "o4-mini": 200_000,
-}
-
-# Default context window for unknown models
-DEFAULT_CONTEXT_WINDOW = 128_000
-
-
-def get_context_window(model_name: str) -> int:
-    """Get the context window size for a model.
-
-    Args:
-        model_name: The model name/identifier.
-
-    Returns:
-        Context window size in tokens.
-    """
-    # Exact match first
-    if model_name in MODEL_CONTEXT_WINDOWS:
-        return MODEL_CONTEXT_WINDOWS[model_name]
-
-    # Try prefix matching (for versioned models like claude-3-5-sonnet-20241022)
-    model_lower = model_name.lower()
-    for key, value in MODEL_CONTEXT_WINDOWS.items():
-        if model_lower.startswith(key.lower()):
-            return value
-
-    # Check for common patterns
-    if "claude" in model_lower:
-        return 200_000
-    if "gpt-4" in model_lower:
-        return 128_000
-    if "gpt-3" in model_lower:
-        return 16_385
-
-    return DEFAULT_CONTEXT_WINDOW
 
 
 @dataclass
@@ -82,24 +25,30 @@ class TokenUsage:
     cumulative_output: int = 0
     cumulative_total: int = 0
 
-    # Context window info
-    context_window: int = DEFAULT_CONTEXT_WINDOW
+    # Context window info. None when the model config does not specify
+    # max_input_tokens — in that case usage percentages are unknown.
+    context_window: int | None = None
 
     @property
-    def context_used_percent(self) -> float:
-        """Calculate percentage of context window used."""
-        if self.context_window <= 0:
-            return 0.0
+    def context_used_percent(self) -> float | None:
+        """Percentage of context window used, or None if the window is unknown."""
+        if not self.context_window or self.context_window <= 0:
+            return None
         return (self.cumulative_total / self.context_window) * 100
 
     @property
-    def context_remaining_percent(self) -> float:
-        """Calculate percentage of context window remaining."""
-        return max(0.0, 100.0 - self.context_used_percent)
+    def context_remaining_percent(self) -> float | None:
+        """Percentage of context window remaining, or None if unknown."""
+        used = self.context_used_percent
+        if used is None:
+            return None
+        return max(0.0, 100.0 - used)
 
     @property
-    def context_remaining_tokens(self) -> int:
-        """Calculate tokens remaining in context window."""
+    def context_remaining_tokens(self) -> int | None:
+        """Tokens remaining in the context window, or None if unknown."""
+        if not self.context_window or self.context_window <= 0:
+            return None
         return max(0, self.context_window - self.cumulative_total)
 
 
@@ -108,7 +57,9 @@ class SessionTokenTracker:
     """Track token usage across an entire session."""
 
     model_name: str = ""
-    context_window: int = DEFAULT_CONTEXT_WINDOW
+    # Supplied by the caller from ModelConfig.max_input_tokens. None means the
+    # user has not configured a window, so percentages cannot be computed.
+    context_window: int | None = None
 
     # Per-turn tracking
     turns: list[TokenUsage] = field(default_factory=list)
@@ -119,10 +70,6 @@ class SessionTokenTracker:
 
     # Cumulative output tokens (for cost tracking)
     total_output: int = 0
-
-    def __post_init__(self):
-        if self.model_name:
-            self.context_window = get_context_window(self.model_name)
 
     def add_turn(self, input_tokens: int, output_tokens: int,
                  cache_read: int = 0, cache_creation: int = 0) -> TokenUsage:
@@ -161,17 +108,20 @@ class SessionTokenTracker:
         return usage
 
     @property
-    def context_used_percent(self) -> float:
-        """Calculate percentage of context window used.
+    def context_used_percent(self) -> float | None:
+        """Percentage of context window used, or None if the window is unknown.
 
         Based on current context size (last turn's input + output),
         not cumulative totals which would double-count.
         """
-        if self.context_window <= 0:
-            return 0.0
+        if not self.context_window or self.context_window <= 0:
+            return None
         return (self.current_context_tokens / self.context_window) * 100
 
     @property
-    def context_remaining_percent(self) -> float:
-        """Calculate percentage of context window remaining."""
-        return max(0.0, 100.0 - self.context_used_percent)
+    def context_remaining_percent(self) -> float | None:
+        """Percentage of context window remaining, or None if unknown."""
+        used = self.context_used_percent
+        if used is None:
+            return None
+        return max(0.0, 100.0 - used)

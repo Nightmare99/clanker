@@ -572,8 +572,13 @@ def stream_agent_response_sync(
                                 last_input_tokens = usage.get("input_tokens", 0)
                                 last_output_tokens = usage.get("output_tokens", 0)
                                 cumulative_output_tokens += last_output_tokens
-                                last_cache_read_tokens = usage.get("cache_read_input_tokens", 0)
-                                last_cache_creation_tokens = usage.get("cache_creation_input_tokens", 0)
+                                # Cache counts live under input_token_details in
+                                # LangChain's usage_metadata (the flat
+                                # cache_*_input_tokens keys are raw-Anthropic and
+                                # never appear here, so reading them yields 0).
+                                details = usage.get("input_token_details") or {}
+                                last_cache_read_tokens = details.get("cache_read", 0)
+                                last_cache_creation_tokens = details.get("cache_creation", 0)
 
                             elif hasattr(output, "response_metadata"):
                                 meta = output.response_metadata

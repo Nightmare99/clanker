@@ -477,10 +477,15 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
         conversation_messages = list(resumed_messages)
         pending_restore_messages = list(resumed_messages)
 
-    # Token tracking
+    # Token tracking. The context window comes solely from the user's model
+    # config (max_input_tokens); None means it's unset and the usage line will
+    # omit the context percentage.
     current_model = get_default_model()
     tracker_model_name = current_model.name if current_model else "unknown"
-    token_tracker = SessionTokenTracker(model_name=tracker_model_name)
+    token_tracker = SessionTokenTracker(
+        model_name=tracker_model_name,
+        context_window=current_model.max_input_tokens if current_model else None,
+    )
 
     while True:
         try:
@@ -566,6 +571,10 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
 
                 # Track tokens
                 if result.input_tokens > 0 or result.output_tokens > 0:
+                    # Re-resolve the window from config so a mid-session
+                    # `/model <name>` switch is reflected in the usage line.
+                    cm = get_default_model()
+                    token_tracker.context_window = cm.max_input_tokens if cm else None
                     token_tracker.add_turn(
                         result.input_tokens,
                         result.output_tokens,
@@ -642,10 +651,15 @@ def run_single_prompt(prompt: str, console: Console, settings: Settings) -> None
         console.print_error(str(e))
         sys.exit(1)
 
-    # Token tracking
+    # Token tracking. The context window comes solely from the user's model
+    # config (max_input_tokens); None means it's unset and the usage line will
+    # omit the context percentage.
     current_model = get_default_model()
     tracker_model_name = current_model.name if current_model else "unknown"
-    token_tracker = SessionTokenTracker(model_name=tracker_model_name)
+    token_tracker = SessionTokenTracker(
+        model_name=tracker_model_name,
+        context_window=current_model.max_input_tokens if current_model else None,
+    )
 
     state = {
         "messages": [HumanMessage(content=prompt)],
