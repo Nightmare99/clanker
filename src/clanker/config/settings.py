@@ -48,6 +48,12 @@ class ContextSettings(BaseModel):
     # Oversized results are head/tail truncated at the tool boundary so one
     # large output cannot overflow the context window. 0 disables truncation.
     max_tool_result_tokens: int = Field(default=20_000, ge=0)
+    # Maximum tokens of any single tool-call ARGUMENT string (e.g. write_file
+    # `content`, edit_file old_string/new_string) sent back to the model.
+    # Oversized args are head/tail truncated on the request path so accumulated
+    # large writes cannot bloat the request past a provider's size limit (a
+    # common cause of HTTP 413 on proxy/gateway endpoints). 0 disables.
+    max_tool_call_arg_tokens: int = Field(default=4_000, ge=0)
     # Maximum agent loop steps (LangGraph super-steps) per turn before the
     # turn is stopped. Each model call + tool round-trip is one step; large
     # multi-file lint/test loops can legitimately use many. Hitting the limit
@@ -214,6 +220,7 @@ context:
   keep_recent_turns: 4  # Keep last N conversation turns after summarization
   summarization_threshold: 80.0  # Trigger at this % of context window (50-99)
   max_tool_result_tokens: 20000  # Cap any single tool result to this many tokens (0 disables)
+  max_tool_call_arg_tokens: 4000  # Cap any single tool-call argument (e.g. file content sent to write_file) to this many tokens (0 disables)
   max_agent_steps: 1000  # Max agent loop steps per turn before stopping gracefully
 
 memory:

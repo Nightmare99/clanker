@@ -61,6 +61,27 @@ class TestSettings:
         with pytest.raises(ValueError):
             ContextSettings(max_agent_steps=20_000)
 
+    def test_max_tool_call_arg_tokens(self, tmp_path: Path) -> None:
+        """max_tool_call_arg_tokens defaults, validates, and round-trips."""
+        # Default and validation (>= 0).
+        assert ContextSettings().max_tool_call_arg_tokens == 4000
+        assert ContextSettings(max_tool_call_arg_tokens=0).max_tool_call_arg_tokens == 0
+        with pytest.raises(ValueError):
+            ContextSettings(max_tool_call_arg_tokens=-1)
+
+        # save_yaml / from_yaml round-trip.
+        settings = Settings()
+        settings.context.max_tool_call_arg_tokens = 1234
+        config_file = tmp_path / "config.yaml"
+        settings.save_yaml(config_file)
+        reloaded = Settings.from_yaml(config_file)
+        assert reloaded.context.max_tool_call_arg_tokens == 1234
+
+        # Commented YAML template includes the key.
+        template_file = tmp_path / "template.yaml"
+        Settings().save_yaml_with_comments(template_file)
+        assert "max_tool_call_arg_tokens" in template_file.read_text()
+
     def test_settings_from_yaml(self, tmp_path: Path) -> None:
         """Test loading settings from YAML."""
         config_file = tmp_path / "config.yaml"

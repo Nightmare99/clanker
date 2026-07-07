@@ -4,6 +4,7 @@ from langchain.agents import create_agent
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from clanker.agent.middleware import (
+    ToolCallArgTruncationMiddleware,
     ToolResultTruncationMiddleware,
     multimodal_tool_results,
 )
@@ -106,16 +107,25 @@ def create_agent_graph(
         max_tokens=settings.context.max_tool_result_tokens,
     )
 
+    # Cap oversized tool-call ARGUMENTS on the request path so accumulated large
+    # writes/edits cannot bloat the request past a proxy's HTTP body-byte limit
+    # (a common cause of 413 that the token-based summarization trigger misses).
+    tool_call_arg_truncation = ToolCallArgTruncationMiddleware(
+        max_tokens=settings.context.max_tool_call_arg_tokens,
+    )
+
     # Create agent with middleware
-    # Order matters: tool_truncation runs first (outermost) so it truncates AFTER
-    # multimodal_tool_results extracts images; summarization manages the window.
-    # - tool_truncation: bounds any single tool result
+    # Order matters: first = outermost, last = innermost on the request path.
+    # - tool_truncation: bounds any single tool RESULT (tool path)
     # - multimodal_tool_results: converts tool results with images to multimodal ToolMessages
-    # - summarization: handles context window management
+    # - summarization: handles context window management (before_model node)
+    # - tool_call_arg_truncation: bounds oversized tool-call ARGS last, so it
+    #   trims exactly the messages that hit the wire after summarization selects
+    #   its kept window
     agent = create_agent(
         model=model,
         tools=all_tools,
-        middleware=[tool_truncation, multimodal_tool_results, summarization],
+        middleware=[tool_truncation, multimodal_tool_results, summarization, tool_call_arg_truncation],
         checkpointer=checkpointer,
         system_prompt=get_system_prompt(),
     )
@@ -175,16 +185,25 @@ async def create_agent_graph_async(
         max_tokens=settings.context.max_tool_result_tokens,
     )
 
+    # Cap oversized tool-call ARGUMENTS on the request path so accumulated large
+    # writes/edits cannot bloat the request past a proxy's HTTP body-byte limit
+    # (a common cause of 413 that the token-based summarization trigger misses).
+    tool_call_arg_truncation = ToolCallArgTruncationMiddleware(
+        max_tokens=settings.context.max_tool_call_arg_tokens,
+    )
+
     # Create agent with middleware
-    # Order matters: tool_truncation runs first (outermost) so it truncates AFTER
-    # multimodal_tool_results extracts images; summarization manages the window.
-    # - tool_truncation: bounds any single tool result
+    # Order matters: first = outermost, last = innermost on the request path.
+    # - tool_truncation: bounds any single tool RESULT (tool path)
     # - multimodal_tool_results: converts tool results with images to multimodal ToolMessages
-    # - summarization: handles context window management
+    # - summarization: handles context window management (before_model node)
+    # - tool_call_arg_truncation: bounds oversized tool-call ARGS last, so it
+    #   trims exactly the messages that hit the wire after summarization selects
+    #   its kept window
     agent = create_agent(
         model=model,
         tools=tools,
-        middleware=[tool_truncation, multimodal_tool_results, summarization],
+        middleware=[tool_truncation, multimodal_tool_results, summarization, tool_call_arg_truncation],
         checkpointer=checkpointer,
         system_prompt=get_system_prompt(),
     )

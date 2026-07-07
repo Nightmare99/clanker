@@ -173,6 +173,50 @@ async def _heal_orphaned_tool_calls(graph, config) -> None:
         heal_logger.warning("Failed to heal orphaned tool calls: %s", exc)
 
 
+async def _compact_oversized_tool_call_args(graph, config, settings) -> None:
+    """Shrink oversized tool-call args in the committed checkpoint after a 413.
+
+    Structural twin of :func:`_heal_orphaned_tool_calls`, but for payload size: a
+    proxy/gateway can reject a turn with ``413 Request Entity Too Large`` when
+    accumulated large tool-call arguments (e.g. ``write_file`` content) bloat the
+    request. This rewrites those args in the persisted state so the *next* turn is
+    not stuck re-sending the same oversized history.
+
+    Uses the same ``_truncate_tool_call_args`` helper the request-path middleware
+    uses, and relies on ``add_messages`` upsert-by-id (``model_copy`` preserves the
+    message ``id``) so trimmed AIMessages REPLACE the originals in place -- no
+    reordering, no tool_use/tool_result pairing change. Best-effort; never raises.
+    """
+    heal_logger = get_logger("streaming")
+    try:
+        from clanker.agent.middleware import _truncate_tool_call_args
+
+        max_tokens = settings.context.max_tool_call_arg_tokens
+        if max_tokens <= 0:
+            return
+
+        snapshot = await graph.aget_state(config)
+        messages = snapshot.values.get("messages", []) if snapshot and snapshot.values else []
+        rewritten = [
+            new
+            for m in messages
+            if (new := _truncate_tool_call_args(m, max_tokens)) is not m
+        ]
+        if not rewritten:
+            return
+
+        heal_logger.warning(
+            "Compacting %d oversized tool-call message(s) after a too-large error",
+            len(rewritten),
+        )
+        # as_node="tools" attributes the update to the tool node so the graph
+        # resumes at the model node (mirrors _heal_orphaned_tool_calls; without it
+        # aupdate_state raises KeyError('model') on the create_agent graph).
+        await graph.aupdate_state(config, {"messages": rewritten}, as_node="tools")
+    except Exception as exc:  # noqa: BLE001 - unwedge must never break the turn
+        heal_logger.warning("Failed to compact oversized tool-call args: %s", exc)
+
+
 @dataclass
 class StreamResult:
     """Result from streaming an agent response."""
@@ -640,6 +684,40 @@ def stream_agent_response_sync(
         except (KeyboardInterrupt, asyncio.CancelledError):
             stop_loading()
             rich_console.print("\n[bold yellow]*BZZZT*[/bold yellow] Agent halted. Control returned to you. [bold yellow]*CLANK*[/bold yellow]")
+            return StreamResult(
+                response=current_response,
+                input_tokens=last_input_tokens,
+                output_tokens=last_output_tokens,
+                cache_read_tokens=last_cache_read_tokens,
+                cache_creation_tokens=last_cache_creation_tokens,
+                model_name=model_name,
+                summarization_occurred=summarization_detected,
+            )
+
+        except Exception as exc:  # noqa: BLE001
+            # A context-length / payload-too-large rejection (e.g. HTTP 413 from a
+            # proxy whose body-byte limit the token-based summarization trigger
+            # never catches). Re-raise anything else so cli.py's generic handler
+            # still logs genuine bugs. KeyboardInterrupt/CancelledError are
+            # BaseException and handled above, so this never swallows them.
+            from clanker.context import is_context_length_error
+
+            if not is_context_length_error(exc):
+                raise
+
+            stop_loading()
+            tool_handler.finalize_live()
+            get_logger("streaming").warning(
+                "Model call rejected as too large (context/payload): %s", exc
+            )
+            # Unwedge the persisted state so the next turn isn't stuck re-sending
+            # the same oversized history.
+            await _compact_oversized_tool_call_args(graph, config, settings)
+            rich_console.print(
+                "\n[bold yellow]*CLANK*[/bold yellow] That request was too large "
+                "for the model endpoint. I've trimmed the bulky bits from history "
+                "(large file contents are safe on disk) — try again or rephrase."
+            )
             return StreamResult(
                 response=current_response,
                 input_tokens=last_input_tokens,

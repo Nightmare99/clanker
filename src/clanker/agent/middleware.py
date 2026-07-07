@@ -4,7 +4,7 @@ import json
 from typing import Any, Callable
 
 from langchain.agents.middleware import AgentMiddleware, AgentState
-from langchain.messages import ToolMessage
+from langchain.messages import AIMessage, AnyMessage, ToolMessage
 
 from clanker.logging import get_logger
 
@@ -111,25 +111,26 @@ _TOOL_TRUNCATION_MARKER = (
 )
 
 
-def _truncate_text(text: str, max_chars: int) -> str:
+def _truncate_text(text: str, max_chars: int, marker: str = _TOOL_TRUNCATION_MARKER) -> str:
     """Head/tail truncate *text* to at most *max_chars*, keeping both ends.
 
     Tool output is often most useful at the head (what was found) and the tail
     (errors, tracebacks, summaries), so we preserve a slice of each around a
-    marker rather than cutting the end off entirely.
+    marker rather than cutting the end off entirely. *marker* defaults to the
+    tool-result marker; callers truncating tool-call args pass their own.
     """
     if max_chars <= 0 or len(text) <= max_chars:
         return text
     # If the budget is too small to fit the marker, hard-truncate without it so
     # the result never exceeds max_chars.
-    if max_chars <= len(_TOOL_TRUNCATION_MARKER):
+    if max_chars <= len(marker):
         return text[:max_chars]
-    budget = max_chars - len(_TOOL_TRUNCATION_MARKER)
+    budget = max_chars - len(marker)
     head = (budget * 3) // 5
     tail = budget - head
     if tail <= 0:
-        return text[:budget] + _TOOL_TRUNCATION_MARKER
-    return text[:head] + _TOOL_TRUNCATION_MARKER + text[-tail:]
+        return text[:budget] + marker
+    return text[:head] + marker + text[-tail:]
 
 
 def _truncate_tool_message(result: Any, max_tokens: int) -> Any:
@@ -233,3 +234,128 @@ class ToolResultTruncationMiddleware(AgentMiddleware):
     async def awrap_tool_call(self, request: Any, handler: Callable) -> Any:
         result = await handler(request)
         return _truncate_tool_message(result, self.max_tokens)
+
+
+# Default per-tool-call-argument budget (tokens) when none is configured.
+_DEFAULT_MAX_TOOL_CALL_ARG_TOKENS = 4_000  # ~16 KB per string arg
+
+_TOOL_ARG_TRUNCATION_MARKER = (
+    "\n\n... [argument value elided by clanker to keep the request within the "
+    "provider's size limit. If this was a file write/edit, the content was "
+    "already applied to disk -- re-read the file to see it] ...\n\n"
+)
+
+
+def _truncate_tool_call_args(message: AnyMessage, max_tokens: int) -> AnyMessage:
+    """Return a copy of *message* with oversized string tool-call args truncated.
+
+    Only :class:`AIMessage` objects that carry ``tool_calls`` are affected. Every
+    *top-level* string argument value longer than the per-arg character budget is
+    head/tail truncated with :data:`_TOOL_ARG_TRUNCATION_MARKER`; anything else
+    (numbers, bools, already-truncated strings, nested containers) is left as-is.
+
+    Tool names are **not** special-cased -- any large string arg from any tool
+    (``write_file``/``append_file`` ``content``, ``edit_file`` ``old_string`` /
+    ``new_string``, MCP tools, future tools) is bounded the same way.
+
+    Rewriting ``message.tool_calls`` is sufficient to shrink the wire payload for
+    both providers we support: langchain-openai serializes ``tool_calls``
+    preferentially over ``additional_kwargs``, and langchain-anthropic prefers the
+    ``tool_calls`` entry over the matching ``content`` tool_use block. So we do not
+    touch ``content`` blocks or ``additional_kwargs``.
+
+    Returns the SAME object when nothing changed (identity short-circuit, so callers
+    can cheaply detect no-ops). Idempotent: the length check and marker guard skip
+    already-truncated values.
+    """
+    if max_tokens <= 0:
+        return message
+    if not isinstance(message, AIMessage) or not message.tool_calls:
+        return message
+
+    max_chars = max_tokens * _CHARS_PER_TOKEN
+    changed = False
+    new_tool_calls = []
+    for tool_call in message.tool_calls:
+        args = tool_call.get("args")
+        if not isinstance(args, dict):
+            new_tool_calls.append(tool_call)
+            continue
+
+        new_args = args
+        for key, value in args.items():
+            if (
+                isinstance(value, str)
+                and len(value) > max_chars
+                and _TOOL_ARG_TRUNCATION_MARKER not in value
+            ):
+                if new_args is args:
+                    new_args = dict(args)  # copy-on-first-write
+                new_args[key] = _truncate_text(value, max_chars, _TOOL_ARG_TRUNCATION_MARKER)
+                logger.info(
+                    "Truncated tool-call arg '%s.%s' from %d chars (~%d token budget)",
+                    tool_call.get("name", "?"),
+                    key,
+                    len(value),
+                    max_tokens,
+                )
+
+        if new_args is not args:
+            changed = True
+            new_tool_calls.append({**tool_call, "args": new_args})
+        else:
+            new_tool_calls.append(tool_call)
+
+    if not changed:
+        return message
+    return message.model_copy(update={"tool_calls": new_tool_calls})
+
+
+class ToolCallArgTruncationMiddleware(AgentMiddleware):
+    """Bounds oversized tool-call ARGUMENTS on the request path.
+
+    :class:`ToolResultTruncationMiddleware` caps tool *results* (``ToolMessage``).
+    It does nothing for the arguments the model sends INTO a tool: ``write_file`` /
+    ``append_file`` put the whole file body in ``content``; ``edit_file`` puts whole
+    blocks in ``old_string`` / ``new_string``. Those live in the AIMessage's
+    ``tool_calls`` and re-send on every subsequent turn, bloating the request until
+    a proxy/gateway's HTTP body-byte limit rejects it (``413 Request Entity Too
+    Large``) -- which the token-based summarization trigger never catches (413 is a
+    byte limit, not a token-context overflow).
+
+    This truncates oversized string args in ``request.messages`` just before the
+    model call, WITHOUT mutating persisted checkpoint state (``request.override``
+    builds a fresh request; the helper returns copies). The file is already on disk,
+    so history needs only a marker. Idempotent and provider-agnostic.
+
+    Place this LAST in the middleware list: first = outermost, last = innermost on
+    the request path, so it bounds exactly the messages that hit the wire, after
+    summarization has selected its kept window.
+    """
+
+    def __init__(self, max_tokens: int = _DEFAULT_MAX_TOOL_CALL_ARG_TOKENS) -> None:
+        super().__init__()
+        self.tools = []
+        self.state_schema = AgentState
+        self.max_tokens = max_tokens
+
+    def wrap_model_call(self, request: Any, handler: Callable) -> Any:
+        return handler(self._bounded(request))
+
+    async def awrap_model_call(self, request: Any, handler: Callable) -> Any:
+        return await handler(self._bounded(request))
+
+    def _bounded(self, request: Any) -> Any:
+        """Return *request* with oversized tool-call args truncated, or unchanged.
+
+        Returns the original request object when nothing was oversized, avoiding a
+        needless ``override`` allocation on the common path.
+        """
+        if self.max_tokens <= 0:
+            return request
+        new_messages = [
+            _truncate_tool_call_args(m, self.max_tokens) for m in request.messages
+        ]
+        if all(new is old for new, old in zip(new_messages, request.messages, strict=True)):
+            return request
+        return request.override(messages=new_messages)
