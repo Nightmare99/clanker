@@ -48,25 +48,31 @@ def notify(message: str, level: str = "info") -> dict:
     """Send an immediate status update or progress message to the user.
 
     Use this tool liberally and often to keep the user continuously informed
-    as you work - for example when processing many files, running slow commands,
-    or executing a multi-step plan. The message is printed to the terminal
-    RIGHT NOW while the agent continues execution; the user does NOT have
-    to wait for the final response to see it.
+    as you work - narrate what you're doing like a pair-programmer thinking out
+    loud. Send a quick update whenever you start a step, switch phases, kick off
+    a background job, hit a milestone, or discover something important. The
+    message is printed to the terminal RIGHT NOW while the agent continues
+    execution; the user does NOT have to wait for the final response to see it.
 
     Err on the side of sending updates: a steady stream of short status messages
     is far better than leaving the user in silence. When in doubt, notify. The
     only thing to avoid is mechanically narrating every trivial action in a tight
     burst (e.g. one notify per line of a quick edit).
 
+    Messages render as formatted Markdown panels, so use light Markdown: **bold**
+    for the key action or noun, and backticks for code, paths, commands, and
+    identifiers.
+
     Good uses:
-    - "Scanning 200 files for test coverage..."
-    - "Tests are passing, now fixing the type errors..."
-    - "Found 3 bugs in auth.py, fixing them now..."
-    - "Build succeeded, running integration tests..."
+    - "Scanning **200 files** for test coverage..."
+    - "Tests pass — now fixing the **type errors** in `api.py`..."
+    - "Found **3 bugs** in `auth.py`, fixing them now..."
+    - "`build` succeeded — running integration tests..."
 
     Args:
         message: The status message to display to the user. Keep it concise
-                 (one sentence). No markdown - plain text only.
+                 (one short sentence). Light Markdown is supported and encouraged
+                 (**bold**, `code`); avoid long paragraphs.
         level: Display level - one of: "info" (default, cyan),
                "success" (green), "warning" (yellow), "error" (red).
 

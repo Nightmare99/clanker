@@ -5,6 +5,7 @@ import random
 from contextlib import contextmanager
 
 from rich.console import Console as RichConsole
+from rich.console import Group
 from rich.live import Live
 from rich import box
 from rich.markdown import Heading, Markdown
@@ -140,6 +141,20 @@ CLANKER_THEME = Theme({
 })
 
 
+# A borderless box that draws ONLY a left edge -- the "quote bar" look shared by
+# the assistant message panel and the notify tool. Reused so both stay in sync.
+_LEFT_BORDER_BOX = box.Box(
+    "│   \n"
+    "│   \n"
+    "│   \n"
+    "│   \n"
+    "│   \n"
+    "│   \n"
+    "│   \n"
+    "│   "
+)
+
+
 class Console:
     """Rich console wrapper for Clanker output."""
 
@@ -180,28 +195,16 @@ class Console:
         self._console.print(text)
 
     def print_assistant_message(self, message: str) -> None:
-        """Print an assistant message using Markdown with only a green left border."""
+        """Print an assistant message using Markdown with only a pink left border."""
         message_str = message.strip()
         if not message_str:
             return
-
-        from rich.box import Box
-        LEFT_ONLY = Box(
-            '│   \n'
-            '│   \n'
-            '│   \n'
-            '│   \n'
-            '│   \n'
-            '│   \n'
-            '│   \n'
-            '│   '
-        )
 
         try:
             markdown_content = Markdown(message_str)
             panel = Panel(
                 markdown_content,
-                box=LEFT_ONLY,
+                box=_LEFT_BORDER_BOX,
                 border_style="rgb(255,105,180)",
                 padding=(0, 2),
             )
@@ -210,7 +213,7 @@ class Console:
             self._console.print(
                 Panel(
                     message_str,
-                    box=LEFT_ONLY,
+                    box=_LEFT_BORDER_BOX,
                     border_style="rgb(255,105,180)",
                     padding=(0, 2),
                 )
@@ -734,25 +737,49 @@ class Console:
     def print_notify(self, message: str, level: str = "info") -> None:
         """Print an agent status notification (from the notify tool).
 
-        Displayed inline while the agent is still executing so the user
-        gets real-time progress feedback.
+        Rendered as fancy bordered Markdown -- the same left-"quote bar" look as
+        the assistant's final message, but tinted per severity and tagged with a
+        small level header so progress updates read as first-class output while
+        the agent is still executing.
 
         Args:
             message: The status message sent by the agent.
             level: Severity / display style - "info", "success", "warning", "error".
         """
-        level_styles = {
-            "info": ("🔔", "cyan"),
-            "success": ("✅", "green"),
-            "warning": ("⚠️ ", "yellow"),
-            "error": ("❌", "red bold"),
-        }
-        icon, style = level_styles.get(level, ("🔔", "cyan"))
+        message_str = (message or "").strip()
+        if not message_str:
+            return
 
-        text = Text()
-        text.append(f"  {icon} ", style="dim")
-        text.append(message, style=style)
-        self._console.print(text)
+        # header label + border/tint color per level. 
+        # The bold colored label carries the severity.
+        level_styles = {
+            "info": ("NOTE", "rgb(0,190,220)"),
+            "success": ("DONE", "rgb(130,220,100)"),
+            "warning": ("HEADS UP", "rgb(240,200,60)"),
+            "error": ("ERROR", "rgb(255,90,90)"),
+        }
+        label, color = level_styles.get(level, level_styles["info"])
+
+        # A header line (bold level tag) sits above the message so severity stays
+        # legible even though the border is the main visual cue.
+        header = Text(label, style=f"bold {color}")
+
+        try:
+            body = Markdown(message_str)
+        except Exception:  # noqa: BLE001
+            body = Text(message_str)
+
+        try:
+            panel = Panel(
+                Group(header, body),
+                box=_LEFT_BORDER_BOX,
+                border_style=color,
+                padding=(0, 2),
+            )
+            self._console.print(panel)
+        except Exception:  # noqa: BLE001
+            # Absolute fallback: never let a display error break the agent.
+            self._console.print(Text(f"  {label}: {message_str}", style=color))
 
     def print_success(self, message: str) -> None:
         """Print a success message."""
