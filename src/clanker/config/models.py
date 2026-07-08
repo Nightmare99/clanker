@@ -358,11 +358,10 @@ def create_llm_from_config(model_config: ModelConfig):
             get_valid_copilot_token,
         )
 
-        # The bearer token is fetched fresh (and refreshed if needed) on every
-        # model construction rather than stored in model_config.api_key -- it's
-        # short-lived and tied to the shared ~/.clanker/copilot_auth.json cache,
-        # not something that belongs in models.json.
-        token = get_valid_copilot_token()
+        # Eager check: raises CopilotAuthError with a clear message right now if
+        # never logged in, instead of surfacing as an opaque SDK auth failure on
+        # the first real request. The RESOLVED token is discarded -- see below.
+        get_valid_copilot_token()
 
         kwargs = {
             "base_url": COPILOT_BASE_URL,
@@ -382,9 +381,16 @@ def create_llm_from_config(model_config: ModelConfig):
         # (version-safe: kwarg on newer langchain-openai, env var on older).
         _apply_stream_chunk_timeout(ChatOpenAI, kwargs, model_config)
 
-        # stream_usage enables token counts in streaming responses
+        # Pass the FUNCTION itself as api_key, not a resolved token string.
+        # ChatOpenAI's underlying openai.OpenAI/AsyncOpenAI clients call this
+        # provider fresh before every request (openai's own
+        # BaseClient._prepare_options -> _refresh_api_key), so a token that
+        # expires mid-turn (a turn can span many tool-calling round-trips,
+        # hence many model calls) is refreshed on the very next call instead
+        # of every subsequent call in that turn reusing a now-stale token
+        # that would otherwise be frozen in at construction time.
         return ChatOpenAI(
-            api_key=token,
+            api_key=get_valid_copilot_token,
             stream_usage=True,
             **kwargs,
         )

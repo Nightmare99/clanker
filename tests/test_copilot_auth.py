@@ -350,6 +350,74 @@ class TestCreateLlmFromConfig:
         with pytest.raises(CopilotAuthError):
             create_llm_from_config(model_config)
 
+    def test_api_key_is_callable_not_resolved_string(self, monkeypatch):
+        """Regression test: a token that expires mid-turn must be refreshed on
+        the NEXT model call, not frozen in at graph-build time.
+
+        Previously create_llm_from_config resolved get_valid_copilot_token()
+        to a plain string and passed that into ChatOpenAI(api_key=...), which
+        freezes it into the underlying openai.OpenAI/AsyncOpenAI clients at
+        construction. A turn spanning many tool-calling round-trips (many
+        model calls) would keep reusing that one frozen string even after it
+        expired, surfacing as "IDE token expired" deep inside a later call.
+        """
+        import clanker.config.copilot_auth as ca
+        from clanker.config.models import ModelConfig, create_llm_from_config
+
+        calls: list[str] = []
+
+        def fake_provider() -> str:
+            calls.append("called")
+            return f"token-{len(calls)}"
+
+        monkeypatch.setattr(ca, "get_valid_copilot_token", fake_provider)
+
+        model_config = ModelConfig(
+            name="copilot:claude-sonnet-5", provider="GitHubCopilot", model="claude-sonnet-5",
+        )
+        llm = create_llm_from_config(model_config)
+
+        # The eager up-front check (for a clear CopilotAuthError) consumes
+        # exactly one call; the resolved value must NOT be baked into the
+        # client -- both clients still show an empty api_key until a real
+        # request triggers their own refresh.
+        assert len(calls) == 1
+        assert llm.root_client.api_key == ""
+        assert llm.root_async_client.api_key == ""
+
+    def test_multiple_refreshes_across_simulated_calls_get_fresh_tokens(self, monkeypatch):
+        """A later model call in the same turn must see a token minted after
+        an earlier call, not the one resolved when the LLM was constructed."""
+        import asyncio
+
+        import clanker.config.copilot_auth as ca
+        from clanker.config.models import ModelConfig, create_llm_from_config
+
+        calls: list[str] = []
+
+        def fake_provider() -> str:
+            calls.append("called")
+            return f"token-{len(calls)}"
+
+        monkeypatch.setattr(ca, "get_valid_copilot_token", fake_provider)
+
+        model_config = ModelConfig(
+            name="copilot:claude-sonnet-5", provider="GitHubCopilot", model="claude-sonnet-5",
+        )
+        llm = create_llm_from_config(model_config)
+
+        # Simulate the sync client handling two separate model calls: each
+        # must pick up a token freshly, not reuse the first one.
+        llm.root_client._refresh_api_key()
+        first = llm.root_client.api_key
+        llm.root_client._refresh_api_key()
+        second = llm.root_client.api_key
+        assert first != second
+
+        # Same guarantee on the async client (the path the real agent uses).
+        asyncio.run(llm.root_async_client._refresh_api_key())
+        assert llm.root_async_client.api_key not in (first, second)
+
 
 # ---------------------------------------------------------------------------
 # Web routes

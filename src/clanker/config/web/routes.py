@@ -491,9 +491,9 @@ async def test_model_config(name: str) -> MessageResponse:
         elif provider == "GitHubCopilot":
             from langchain_openai import ChatOpenAI
             from clanker.config.copilot_auth import COPILOT_BASE_URL, get_valid_copilot_token
-            token = get_valid_copilot_token()
+            get_valid_copilot_token()  # eager check: clear error if never logged in
             kwargs = {
-                "api_key": token,
+                "api_key": get_valid_copilot_token,  # callable -> refreshed per-request
                 "base_url": COPILOT_BASE_URL,
                 "default_headers": copilot_request_headers(),
             }
