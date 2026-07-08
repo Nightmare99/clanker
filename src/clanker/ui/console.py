@@ -855,6 +855,7 @@ Commands:
   /help       Display this help matrix
   /clear      Wipe conversation memory banks
   /model      Query current AI model status
+  /copilot-login  Connect a GitHub Copilot subscription as a model provider
   /config     Display configuration parameters
   /mcp        Show MCP server connections
   /logs       Access diagnostic log files

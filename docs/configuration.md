@@ -95,10 +95,16 @@ no separate proxy process, no manual API key. Clanker performs the same
 device-code login the VS Code Copilot Chat extension uses, then talks to
 Copilot's API directly.
 
-**Connect** (either works):
+**Connect** (any of these work):
 
 ```bash
 clanker copilot-login          # CLI: prints a URL + code, waits for approval
+```
+
+or from inside an interactive session:
+
+```
+❯ /copilot-login
 ```
 
 or open `clanker config`, go to the **Models** tab, and click **Connect
@@ -119,8 +125,9 @@ Configured models:
 ❯ /model copilot:gpt-5.5
 ```
 
-Re-run `clanker copilot-login` (or click **Refresh Models** in the web UI)
-any time to pick up new Copilot models or refreshed limits.
+Re-run `clanker copilot-login` (or `/copilot-login` in a session, or click
+**Refresh Models** in the web UI) any time to pick up new Copilot models or
+refreshed limits.
 
 **Notes:**
 - The Copilot bearer token is cached separately at `~/.clanker/copilot_auth.json`

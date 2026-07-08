@@ -53,6 +53,7 @@ Inside the interactive session:
 | `/clear` | Clear conversation history |
 | `/model` | List available models and show current |
 | `/model <name>` | Switch to a different model |
+| `/copilot-login` | Connect a GitHub Copilot subscription as a model provider |
 | `/workflow` | List available workflows |
 | `/workflow <name>` | Execute a stored workflow |
 | `/skill` | List available skills |

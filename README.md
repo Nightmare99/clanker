@@ -8,7 +8,7 @@ An AI-powered coding assistant CLI built with LangChain and LangGraph.
 - File operations: read, write, edit, search
 - Shell command execution with sandboxing
 - Session persistence and conversation history
-- **Multi-provider support**: Anthropic, OpenAI, Azure OpenAI, Ollama (bring your own key)
+- **Multi-provider support**: Anthropic, OpenAI, Azure OpenAI, Ollama, GitHub Copilot (bring your own key, or connect an existing Copilot subscription)
 - Easy model switching with `/model` command
 - Extended thinking support for Claude models
 - Web-based configuration UI (BYOK mode)
@@ -52,6 +52,7 @@ clanker
 clanker                        # Interactive mode
 clanker "explain main.py"      # Single prompt
 clanker config                 # Web configuration UI
+clanker copilot-login          # Connect a GitHub Copilot subscription
 clanker -m claude              # Use a specific model
 clanker --resume <session-id>  # Resume conversation
 clanker --yolo                 # Auto-execute bash commands (skip approval)

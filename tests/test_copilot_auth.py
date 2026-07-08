@@ -432,3 +432,82 @@ class TestCopilotWebRoutes:
         monkeypatch.setattr(routes_mod, "sync_copilot_models", boom)
         response = client.post("/api/copilot/refresh-models")
         assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# /copilot-login slash command (in-session REPL command)
+# ---------------------------------------------------------------------------
+
+class TestCopilotLoginSlashCommand:
+    @pytest.fixture
+    def console(self):
+        from clanker.ui.console import Console
+
+        return Console()
+
+    @pytest.fixture
+    def session_manager(self):
+        from clanker.memory.checkpointer import SessionManager
+
+        # Avoid full init side effects (disk I/O) -- handle_command only
+        # needs the object identity, not its state, for this command.
+        return SessionManager.__new__(SessionManager)
+
+    def test_full_flow_success(self, console, session_manager, monkeypatch):
+        import clanker.cli as cli_mod
+
+        session = DeviceFlowSession(
+            device_code="dc", user_code="ABCD-1234",
+            verification_uri="https://github.com/login/device",
+            interval=0, expires_at=time.time() + 900,
+        )
+        monkeypatch.setattr("clanker.config.copilot_auth.start_device_flow", lambda: session)
+        monkeypatch.setattr("clanker.config.copilot_auth.poll_for_github_token", lambda s: "gh_token")
+        complete_calls = []
+        monkeypatch.setattr(
+            "clanker.config.copilot_auth.complete_login",
+            lambda token: complete_calls.append(token),
+        )
+        monkeypatch.setattr("clanker.config.copilot_auth.sync_copilot_models", lambda: 4)
+        monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
+
+        result = cli_mod.handle_command("/copilot-login", console, session_manager)
+        assert result is None
+        assert complete_calls == ["gh_token"]
+
+    def test_start_failure_reported_not_raised(self, console, session_manager, monkeypatch):
+        import clanker.cli as cli_mod
+
+        def boom():
+            raise CopilotAuthError("network is down")
+
+        monkeypatch.setattr("clanker.config.copilot_auth.start_device_flow", boom)
+        # Must not raise -- handle_command reports the error and returns.
+        result = cli_mod.handle_command("/copilot-login", console, session_manager)
+        assert result is None
+
+    def test_keyboard_interrupt_during_poll_is_handled(self, console, session_manager, monkeypatch):
+        import clanker.cli as cli_mod
+
+        session = DeviceFlowSession(
+            device_code="dc", user_code="ABCD-1234",
+            verification_uri="https://github.com/login/device",
+            interval=0, expires_at=time.time() + 900,
+        )
+        monkeypatch.setattr("clanker.config.copilot_auth.start_device_flow", lambda: session)
+
+        def raise_interrupt(s):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr("clanker.config.copilot_auth.poll_for_github_token", raise_interrupt)
+        monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
+
+        # Cancelling mid-poll must not propagate or crash the REPL.
+        result = cli_mod.handle_command("/copilot-login", console, session_manager)
+        assert result is None
+
+    def test_listed_in_completer_and_help(self):
+        from clanker.cli import CommandCompleter
+
+        assert "/copilot-login" in CommandCompleter.COMMANDS
+

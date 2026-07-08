@@ -136,6 +136,46 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
                 if model_names:
                     console.print_info(f"Available: {', '.join(model_names)}")
 
+    elif cmd == "/copilot-login":
+        from clanker.config.copilot_auth import (
+            CopilotAuthError,
+            complete_login,
+            poll_for_github_token,
+            start_device_flow,
+            sync_copilot_models,
+        )
+
+        try:
+            session = start_device_flow()
+        except CopilotAuthError as e:
+            console.print_error(str(e))
+            return None
+
+        console.print_info(f"Open {session.verification_uri} and enter code: {session.user_code}")
+        console.print_info("Waiting for approval... (Ctrl+C to cancel)")
+
+        github_token: str | None = None
+        try:
+            while github_token is None:
+                time.sleep(session.interval)
+                github_token = poll_for_github_token(session)
+        except KeyboardInterrupt:
+            console.print_warning("Login cancelled.")
+            return None
+        except CopilotAuthError as e:
+            console.print_error(str(e))
+            return None
+
+        try:
+            complete_login(github_token)
+            synced = sync_copilot_models()
+        except CopilotAuthError as e:
+            console.print_error(str(e))
+            return None
+
+        console.print_success(f"Connected! Synced {synced} Copilot model(s).")
+        console.print_info("Use /model to switch to one.")
+
     elif cmd == "/config":
         settings = get_settings()
         console.print_info(f"Config file: {CONFIG_PATH}")
@@ -337,6 +377,7 @@ class CommandCompleter(Completer):
         "/q",
         "/clear",
         "/model",
+        "/copilot-login",
         "/config",
         "/mcp",
         "/logs",
