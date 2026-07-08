@@ -84,15 +84,31 @@ def _preload_tool_dependencies() -> None:
     main() runs, before any subprocess can exist -- guaranteeing they're
     already in sys.modules by the time a tool call needs them.
 
+    ``ddgs`` needs special handling: ``import ddgs`` alone only loads a thin
+    lazy-loading proxy (``ddgs/__init__.py``'s ``_DDGSProxy``) -- the real
+    implementation (~20 submodules, including the compiled ``primp`` HTTP
+    client extension) is deferred until ``DDGS()`` is actually instantiated.
+    A bare ``__import__("ddgs")`` therefore does NOT protect web_search; we
+    have to construct ``DDGS()`` (side-effect-free, no network call) to force
+    the proxy to resolve its real class and pull in everything web_search
+    will need.
+
     Each import is independently guarded: a missing or broken package should
     degrade that one tool gracefully (its own lazy import + informative error
     message still runs), not break every other command at startup.
     """
-    for module_name in ("ddgs", "trafilatura", "fitz", "pypdf"):
+    for module_name in ("trafilatura", "fitz", "pypdf"):
         try:
             __import__(module_name)
         except Exception:  # noqa: BLE001
             pass
+
+    try:
+        from ddgs import DDGS
+
+        DDGS()  # forces the lazy proxy to load its real implementation now
+    except Exception:  # noqa: BLE001
+        pass
 
 
 _preload_tool_dependencies()

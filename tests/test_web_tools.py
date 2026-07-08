@@ -320,8 +320,23 @@ class TestSSLCertificates:
 
         _preload_tool_dependencies()
 
-        for module_name in ("ddgs", "trafilatura", "fitz", "pypdf"):
+        for module_name in ("trafilatura", "fitz", "pypdf"):
             assert module_name in sys.modules, f"{module_name} was not preloaded"
+
+        # ddgs needs a stronger check than "is the top-level package imported":
+        # `import ddgs` alone only loads a lazy-loading proxy
+        # (ddgs/__init__.py's _DDGSProxy) -- the REAL implementation
+        # (ddgs.ddgs and ~20 more submodules, including the compiled `primp`
+        # HTTP client extension) is deferred until DDGS() is instantiated.
+        # A regression here (reverting to a bare `__import__("ddgs")`) would
+        # still pass an "ddgs in sys.modules" check while leaving web_search
+        # fully exposed to the crash this preload exists to prevent.
+        assert "ddgs" in sys.modules
+        assert "ddgs.ddgs" in sys.modules, (
+            "ddgs's real implementation was not forced to load -- "
+            "web_search is still vulnerable to the zlib/fork crash"
+        )
+        assert "primp" in sys.modules, "ddgs's compiled HTTP client dependency was not preloaded"
 
     def test_preload_tool_dependencies_survives_missing_package(self, monkeypatch) -> None:
         """A missing/broken package must not raise -- only degrade that one
@@ -333,11 +348,25 @@ class TestSSLCertificates:
         real_import = builtins.__import__
 
         def flaky_import(name, *args, **kwargs):
-            if name == "ddgs":
+            if name == "trafilatura":
                 raise ImportError("simulated missing package")
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", flaky_import)
+
+        _preload_tool_dependencies()  # must not raise
+
+    def test_preload_tool_dependencies_survives_ddgs_construction_failure(self, monkeypatch) -> None:
+        """If DDGS() itself raises (e.g. a future ddgs release changes its
+        constructor), the preload must still not crash startup."""
+        import ddgs
+
+        from clanker.cli import _preload_tool_dependencies
+
+        def broken_ddgs(*args, **kwargs):
+            raise RuntimeError("simulated DDGS() construction failure")
+
+        monkeypatch.setattr(ddgs, "DDGS", broken_ddgs)
 
         _preload_tool_dependencies()  # must not raise
 
