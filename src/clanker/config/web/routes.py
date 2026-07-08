@@ -1,6 +1,8 @@
 """API routes for Clanker configuration."""
 
 import os
+import secrets
+import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -18,6 +20,15 @@ from clanker.config.models import (
     set_default_model,
     add_model,
     remove_model,
+)
+from clanker.config.copilot_auth import (
+    CopilotAuthError,
+    complete_login,
+    copilot_request_headers,
+    is_connected as is_copilot_connected,
+    poll_for_github_token,
+    start_device_flow,
+    sync_copilot_models,
 )
 
 router = APIRouter(tags=["config"])
@@ -477,6 +488,19 @@ async def test_model_config(name: str) -> MessageResponse:
             model_name = model_config.model or "llama3"
             llm = ChatOllama(base_url=base_url, model=model_name)
 
+        elif provider == "GitHubCopilot":
+            from langchain_openai import ChatOpenAI
+            from clanker.config.copilot_auth import COPILOT_BASE_URL, get_valid_copilot_token
+            token = get_valid_copilot_token()
+            kwargs = {
+                "api_key": token,
+                "base_url": COPILOT_BASE_URL,
+                "default_headers": copilot_request_headers(),
+            }
+            if model_config.model:
+                kwargs["model"] = model_config.model
+            llm = ChatOpenAI(**kwargs)
+
         else:
             raise ValueError(f"Unsupported provider: {provider}")
 
@@ -491,3 +515,113 @@ async def test_model_config(name: str) -> MessageResponse:
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Connection failed: {str(e)}")
+
+
+# ==================== GitHub Copilot native provider ====================
+
+# In-flight device-code login sessions, keyed by a short session id. Module-
+# level state is fine here (mirrors other process-wide singletons in clanker,
+# e.g. runtime.py's yolo-mode flag): the config web server is a single
+# long-lived process and a login session only needs to survive a few polls.
+_copilot_login_sessions: dict[str, Any] = {}
+
+
+class CopilotLoginStartResponse(BaseModel):
+    """Response for starting a GitHub Copilot device-code login."""
+
+    session_id: str
+    user_code: str
+    verification_uri: str
+    expires_in: int
+
+
+class CopilotLoginPollRequest(BaseModel):
+    """Request body for polling an in-progress Copilot login."""
+
+    session_id: str
+
+
+class CopilotLoginPollResponse(BaseModel):
+    """Response for polling a Copilot login session."""
+
+    status: str  # "pending" | "success" | "expired" | "error"
+    models_synced: int | None = None
+    detail: str | None = None
+
+
+class CopilotStatusResponse(BaseModel):
+    """Whether Copilot is currently connected."""
+
+    connected: bool
+
+
+class CopilotSyncResponse(BaseModel):
+    """Result of an on-demand Copilot model sync."""
+
+    models_synced: int
+
+
+@router.post("/copilot/login/start", response_model=CopilotLoginStartResponse)
+async def copilot_login_start() -> CopilotLoginStartResponse:
+    """Begin a GitHub device-code login for Copilot."""
+    try:
+        session = start_device_flow()
+    except CopilotAuthError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    session_id = secrets.token_hex(8)
+    _copilot_login_sessions[session_id] = session
+
+    return CopilotLoginStartResponse(
+        session_id=session_id,
+        user_code=session.user_code,
+        verification_uri=session.verification_uri,
+        expires_in=int(session.expires_at - time.time()),
+    )
+
+
+@router.post("/copilot/login/poll", response_model=CopilotLoginPollResponse)
+async def copilot_login_poll(request: CopilotLoginPollRequest) -> CopilotLoginPollResponse:
+    """Make one poll attempt for a Copilot login session's approval.
+
+    On success, exchanges for the Copilot token, persists it, and syncs the
+    model list before returning -- so the caller's next config fetch already
+    shows the new `copilot:*` models.
+    """
+    session = _copilot_login_sessions.get(request.session_id)
+    if session is None:
+        return CopilotLoginPollResponse(status="error", detail="Unknown or expired login session.")
+
+    try:
+        github_token = poll_for_github_token(session)
+    except CopilotAuthError as e:
+        _copilot_login_sessions.pop(request.session_id, None)
+        return CopilotLoginPollResponse(status="expired", detail=str(e))
+
+    if github_token is None:
+        return CopilotLoginPollResponse(status="pending")
+
+    _copilot_login_sessions.pop(request.session_id, None)
+    try:
+        complete_login(github_token)
+        synced = sync_copilot_models()
+    except CopilotAuthError as e:
+        return CopilotLoginPollResponse(status="error", detail=str(e))
+
+    return CopilotLoginPollResponse(status="success", models_synced=synced)
+
+
+@router.get("/copilot/status", response_model=CopilotStatusResponse)
+async def copilot_status() -> CopilotStatusResponse:
+    """Whether a Copilot login has been completed."""
+    return CopilotStatusResponse(connected=is_copilot_connected())
+
+
+@router.post("/copilot/refresh-models", response_model=CopilotSyncResponse)
+async def copilot_refresh_models() -> CopilotSyncResponse:
+    """Re-run the Copilot model sync on demand (e.g. after Copilot adds a model)."""
+    try:
+        synced = sync_copilot_models()
+    except CopilotAuthError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return CopilotSyncResponse(models_synced=synced)

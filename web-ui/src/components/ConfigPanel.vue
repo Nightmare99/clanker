@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import {
   NLayout,
   NLayoutSider,
@@ -116,6 +116,12 @@ const hasChanges = ref(false)
 // Models management
 const models = ref<ModelConfig[]>([])
 const defaultModel = ref<string | null>(null)
+
+// GitHub Copilot connect flow
+const copilotConnected = ref(false)
+const copilotConnecting = ref(false)
+const copilotSession = ref<{ sessionId: string; userCode: string; verificationUri: string } | null>(null)
+let copilotPollTimer: ReturnType<typeof setInterval> | null = null
 const modelsConfigPath = ref('')
 const showModelModal = ref(false)
 const editingModel = ref<string | null>(null)
@@ -166,6 +172,7 @@ const modelProviderOptions = [
   { label: 'Azure OpenAI', value: 'AzureOpenAI', description: 'OpenAI models on Azure' },
   { label: 'Anthropic', value: 'Anthropic', description: 'Claude models' },
   { label: 'Ollama', value: 'Ollama', description: 'Local models via Ollama' },
+  { label: 'GitHub Copilot', value: 'GitHubCopilot', description: 'Auto-configured via Connect below' },
 ]
 
 // Provider colors and icons for visual distinction (neon palette)
@@ -174,6 +181,7 @@ const providerStyles: Record<string, { color: string; bgColor: string }> = {
   'AzureOpenAI': { color: '#00f0ff', bgColor: 'rgba(0, 240, 255, 0.12)' },
   'Anthropic': { color: '#ff2bd6', bgColor: 'rgba(255, 43, 214, 0.12)' },
   'Ollama': { color: '#ffe600', bgColor: 'rgba(255, 230, 0, 0.12)' },
+  'GitHubCopilot': { color: '#8957e5', bgColor: 'rgba(137, 87, 229, 0.12)' },
 }
 
 const logLevelOptions = [
@@ -227,6 +235,109 @@ async function fetchModels() {
   } catch (error) {
     console.error('Failed to load models:', error)
   }
+}
+
+// GitHub Copilot connect flow
+async function fetchCopilotStatus() {
+  try {
+    const response = await fetch('/api/copilot/status')
+    const data = await response.json()
+    copilotConnected.value = data.connected
+  } catch (error) {
+    console.error('Failed to load Copilot status:', error)
+  }
+}
+
+function stopCopilotPolling() {
+  if (copilotPollTimer !== null) {
+    clearInterval(copilotPollTimer)
+    copilotPollTimer = null
+  }
+}
+
+async function startCopilotLogin() {
+  copilotConnecting.value = true
+  copilotSession.value = null
+  try {
+    const response = await fetch('/api/copilot/login/start', { method: 'POST' })
+    if (!response.ok) {
+      const err = await response.json()
+      message.error(err.detail || 'Failed to start GitHub Copilot login')
+      copilotConnecting.value = false
+      return
+    }
+    const data = await response.json()
+    copilotSession.value = {
+      sessionId: data.session_id,
+      userCode: data.user_code,
+      verificationUri: data.verification_uri,
+    }
+    // Poll every 3s -- generous relative to GitHub's device-flow interval
+    // (typically 5s), avoids hammering the endpoint while staying responsive.
+    copilotPollTimer = setInterval(pollCopilotLogin, 3000)
+  } catch (error) {
+    message.error('Failed to start GitHub Copilot login')
+    console.error(error)
+    copilotConnecting.value = false
+  }
+}
+
+async function pollCopilotLogin() {
+  if (!copilotSession.value) return
+  try {
+    const response = await fetch('/api/copilot/login/poll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: copilotSession.value.sessionId }),
+    })
+    const data = await response.json()
+
+    if (data.status === 'pending') {
+      return
+    }
+
+    stopCopilotPolling()
+    copilotConnecting.value = false
+    copilotSession.value = null
+
+    if (data.status === 'success') {
+      copilotConnected.value = true
+      message.success(`Connected! Synced ${data.models_synced} Copilot model(s).`)
+      await fetchModels()
+    } else if (data.status === 'expired') {
+      message.warning('GitHub Copilot login code expired. Try again.')
+    } else {
+      message.error(data.detail || 'GitHub Copilot login failed.')
+    }
+  } catch (error) {
+    stopCopilotPolling()
+    copilotConnecting.value = false
+    message.error('Lost connection while waiting for GitHub Copilot login.')
+    console.error(error)
+  }
+}
+
+async function refreshCopilotModels() {
+  try {
+    const response = await fetch('/api/copilot/refresh-models', { method: 'POST' })
+    if (!response.ok) {
+      const err = await response.json()
+      message.error(err.detail || 'Failed to refresh Copilot models')
+      return
+    }
+    const data = await response.json()
+    message.success(`Synced ${data.models_synced} Copilot model(s).`)
+    await fetchModels()
+  } catch (error) {
+    message.error('Failed to refresh Copilot models')
+    console.error(error)
+  }
+}
+
+function cancelCopilotLogin() {
+  stopCopilotPolling()
+  copilotConnecting.value = false
+  copilotSession.value = null
 }
 
 function openAddModel() {
@@ -518,6 +629,11 @@ async function testMcpServer(name: string) {
 onMounted(() => {
   fetchConfig()
   fetchModels()
+  fetchCopilotStatus()
+})
+
+onUnmounted(() => {
+  stopCopilotPolling()
 })
 </script>
 
@@ -579,6 +695,43 @@ onMounted(() => {
                 Add Model
               </NButton>
             </div>
+
+            <!-- GitHub Copilot Connect -->
+            <NCard class="copilot-card" :style="{ borderColor: providerStyles['GitHubCopilot'].color + '40' }">
+              <div class="copilot-card-content">
+                <div class="copilot-card-info">
+                  <NTag
+                    size="small"
+                    :color="{ color: providerStyles['GitHubCopilot'].bgColor, textColor: providerStyles['GitHubCopilot'].color, borderColor: 'transparent' }"
+                  >
+                    GitHub Copilot
+                  </NTag>
+                  <span v-if="copilotConnected" class="copilot-status-text">
+                    Connected — models sync automatically as <code>copilot:&lt;model&gt;</code>
+                  </span>
+                  <span v-else-if="copilotSession" class="copilot-status-text">
+                    Open <a :href="copilotSession.verificationUri" target="_blank" rel="noopener">{{ copilotSession.verificationUri }}</a>
+                    and enter code <strong class="copilot-user-code">{{ copilotSession.userCode }}</strong>
+                  </span>
+                  <span v-else class="copilot-status-text">
+                    Connect your existing GitHub Copilot subscription to use its models directly — no separate proxy required.
+                  </span>
+                </div>
+                <NSpace>
+                  <NButton v-if="copilotSession" quaternary @click="cancelCopilotLogin">Cancel</NButton>
+                  <NButton v-if="copilotConnected" size="small" @click="refreshCopilotModels">Refresh Models</NButton>
+                  <NButton
+                    v-else
+                    type="primary"
+                    :loading="copilotConnecting"
+                    :disabled="!!copilotSession"
+                    @click="startCopilotLogin"
+                  >
+                    Connect GitHub Copilot
+                  </NButton>
+                </NSpace>
+              </div>
+            </NCard>
 
             <!-- Models Grid -->
             <div v-if="models.length > 0" class="models-grid">
@@ -1365,6 +1518,42 @@ onMounted(() => {
   font-size: 12px;
   color: var(--neon-lime);
   border: 1px solid rgba(182, 255, 26, 0.25);
+}
+
+.copilot-card {
+  margin-bottom: 24px;
+}
+
+.copilot-card-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.copilot-card-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.copilot-status-text {
+  color: #b0b0b0;
+  font-size: 13px;
+}
+
+.copilot-status-text code {
+  background: var(--oled-surface-2);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.copilot-user-code {
+  color: #8957e5;
+  letter-spacing: 0.05em;
 }
 
 .models-grid {

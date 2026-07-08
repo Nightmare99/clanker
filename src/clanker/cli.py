@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 import warnings
 
 # Suppress pydantic v1 compatibility warning on Python 3.14+
@@ -700,16 +701,36 @@ class ClankerGroup(click.Group):
     """Custom group that handles prompt argument alongside subcommands."""
 
     def invoke(self, ctx: click.Context):
-        """Invoke, handling the case where prompt matches a subcommand."""
-        # If prompt is a subcommand name, invoke that subcommand instead
+        """Invoke, handling the case where prompt matches a subcommand.
+
+        `prompt` is a group-level positional argument, so it greedily
+        consumes the first token (e.g. "config") before Click's own
+        subcommand-name resolution ever runs. When that token happens to
+        match a real subcommand, any remaining tokens (`ctx.args` -- e.g.
+        `--help`, `--port 9000`) still need to go through THAT subcommand's
+        own argument parsing. Building a fresh sub-context via
+        `cmd.make_context` (rather than calling `ctx.invoke(cmd)` directly,
+        which skips parsing entirely) ensures flags like `--help` are
+        handled instead of being silently dropped -- previously `clanker
+        config --help` (or any `clanker <subcommand> --help`) would ignore
+        `--help` and run the subcommand for real instead of printing usage.
+        """
         prompt = ctx.params.get("prompt")
         if prompt and prompt in self.commands:
             # Clear the prompt and invoke the subcommand
             ctx.params["prompt"] = None
             ctx.invoked_subcommand = prompt
+            cmd = self.commands[prompt]
+            # Leftover, not-yet-parsed tokens (e.g. "--help", "--port 9000")
+            # live in ctx._protected_args (Click's internal name; exposed as
+            # the deprecated `protected_args` property) alongside ctx.args --
+            # mirrors click.Group.invoke's own "args = [*ctx._protected_args,
+            # *ctx.args]" so the subcommand's flags are actually parsed.
+            leftover_args = [*getattr(ctx, "_protected_args", []), *ctx.args]
             with ctx:
-                cmd = self.commands[prompt]
-                return ctx.invoke(cmd)
+                sub_ctx = cmd.make_context(prompt, leftover_args, parent=ctx)
+                with sub_ctx:
+                    return cmd.invoke(sub_ctx)
         return super().invoke(ctx)
 
 
@@ -928,6 +949,61 @@ def config(port: int, no_browser: bool) -> None:
     from clanker.config.web import run_config_server
 
     run_config_server(port=port, open_browser=not no_browser)
+
+
+@main.command("copilot-login")
+def copilot_login() -> None:
+    """Connect your GitHub Copilot subscription as a model provider.
+
+    Runs a GitHub device-code login (open a URL, enter a code) and, on
+    success, auto-configures one model per Copilot model (named
+    `copilot:<model>`) with its real context-window size. Use /model to
+    switch to one afterward -- no API key needed, just your existing
+    Copilot subscription.
+
+    Examples:
+
+        clanker copilot-login
+    """
+    from clanker.config.copilot_auth import (
+        CopilotAuthError,
+        complete_login,
+        poll_for_github_token,
+        start_device_flow,
+        sync_copilot_models,
+    )
+
+    click.echo("Starting GitHub device login for Copilot...")
+    try:
+        session = start_device_flow()
+    except CopilotAuthError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    click.echo(f"\nOpen {session.verification_uri} and enter code: {session.user_code}\n")
+    click.echo("Waiting for approval...")
+
+    github_token: str | None = None
+    try:
+        while github_token is None:
+            time.sleep(session.interval)
+            github_token = poll_for_github_token(session)
+    except KeyboardInterrupt:
+        click.echo("\nLogin cancelled.")
+        sys.exit(1)
+    except CopilotAuthError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    try:
+        complete_login(github_token)
+        synced = sync_copilot_models()
+    except CopilotAuthError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    click.echo(f"Connected! Synced {synced} Copilot model(s).")
+    click.echo("Use /model in a session to switch to one, or 'clanker -m copilot:<model>'.")
 
 
 if __name__ == "__main__":

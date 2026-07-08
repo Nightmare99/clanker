@@ -28,6 +28,21 @@ from clanker.config.models import (
     remove_model,
     create_llm_from_config,
 )
+from clanker.config.copilot_auth import (
+    COPILOT_MODEL_NAME_PREFIX,
+    COPILOT_TOKEN_PATH,
+    CopilotAuthError,
+    DeviceFlowSession,
+    complete_login,
+    disconnect as copilot_disconnect,
+    exchange_for_copilot_token,
+    get_valid_copilot_token,
+    is_connected as is_copilot_connected,
+    list_copilot_models,
+    poll_for_github_token,
+    start_device_flow,
+    sync_copilot_models,
+)
 
 __all__ = [
     "CONFIG_PATH",
@@ -54,4 +69,18 @@ __all__ = [
     "add_model",
     "remove_model",
     "create_llm_from_config",
+    # GitHub Copilot native provider
+    "COPILOT_MODEL_NAME_PREFIX",
+    "COPILOT_TOKEN_PATH",
+    "CopilotAuthError",
+    "DeviceFlowSession",
+    "complete_login",
+    "copilot_disconnect",
+    "exchange_for_copilot_token",
+    "get_valid_copilot_token",
+    "is_copilot_connected",
+    "list_copilot_models",
+    "poll_for_github_token",
+    "start_device_flow",
+    "sync_copilot_models",
 ]

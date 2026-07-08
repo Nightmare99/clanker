@@ -20,7 +20,7 @@ MODELS_CONFIG_PATH = Path.home() / ".clanker" / "models.json"
 # while still catching genuinely stalled TCP connections.
 DEFAULT_STREAM_CHUNK_TIMEOUT = 600
 
-ProviderType = Literal["AzureOpenAI", "OpenAI", "Anthropic", "Ollama"]
+ProviderType = Literal["AzureOpenAI", "OpenAI", "Anthropic", "Ollama", "GitHubCopilot"]
 
 
 def _resolve_stream_chunk_timeout(model_config: "ModelConfig") -> int | None:
@@ -347,6 +347,46 @@ def create_llm_from_config(model_config: ModelConfig):
         return ChatOllama(
             base_url=base_url,
             model=model_name,
+        )
+
+    elif provider == "GitHubCopilot":
+        from langchain_openai import ChatOpenAI
+
+        from clanker.config.copilot_auth import (
+            COPILOT_BASE_URL,
+            copilot_request_headers,
+            get_valid_copilot_token,
+        )
+
+        # The bearer token is fetched fresh (and refreshed if needed) on every
+        # model construction rather than stored in model_config.api_key -- it's
+        # short-lived and tied to the shared ~/.clanker/copilot_auth.json cache,
+        # not something that belongs in models.json.
+        token = get_valid_copilot_token()
+
+        kwargs = {
+            "base_url": COPILOT_BASE_URL,
+            "default_headers": copilot_request_headers(),
+        }
+        if model_config.model:
+            kwargs["model"] = model_config.model
+
+        if model_config.max_tokens:
+            kwargs["max_tokens"] = model_config.max_tokens
+
+        # Model profile (needed for fractional token limits, e.g. summarization)
+        if model_config.max_input_tokens:
+            kwargs["profile"] = {"max_input_tokens": model_config.max_input_tokens}
+
+        # Tolerate long silent reasoning pauses without tripping the stream timeout
+        # (version-safe: kwarg on newer langchain-openai, env var on older).
+        _apply_stream_chunk_timeout(ChatOpenAI, kwargs, model_config)
+
+        # stream_usage enables token counts in streaming responses
+        return ChatOpenAI(
+            api_key=token,
+            stream_usage=True,
+            **kwargs,
         )
 
     else:

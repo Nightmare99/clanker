@@ -64,7 +64,7 @@ The recommended way to configure LLM providers is using the JSON-based models co
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | Yes | Display name for the model (used with `/model` command) |
-| `provider` | Yes | One of: `OpenAI`, `AzureOpenAI`, `Anthropic`, `Ollama` |
+| `provider` | Yes | One of: `OpenAI`, `AzureOpenAI`, `Anthropic`, `Ollama`, `GitHubCopilot` |
 | `model` | No | Model identifier (e.g., `gpt-4o`, `claude-sonnet-4-20250514`) |
 | `api_key` | No | API key (leave null to use environment variable) |
 | `base_url` | No | Custom API endpoint |
@@ -87,6 +87,52 @@ Use the `/model` command in interactive mode:
 ```
 
 The current model is shown on startup.
+
+## GitHub Copilot
+
+If you have a GitHub Copilot subscription, you can use its models directly —
+no separate proxy process, no manual API key. Clanker performs the same
+device-code login the VS Code Copilot Chat extension uses, then talks to
+Copilot's API directly.
+
+**Connect** (either works):
+
+```bash
+clanker copilot-login          # CLI: prints a URL + code, waits for approval
+```
+
+or open `clanker config`, go to the **Models** tab, and click **Connect
+GitHub Copilot** — it shows the same code/URL and polls for you.
+
+On success, clanker calls Copilot's own model-list endpoint and auto-creates
+one model entry per Copilot model, named `copilot:<model-id>` (e.g.
+`copilot:claude-sonnet-5`, `copilot:gpt-5.5`), each with its **real**
+`max_input_tokens`/`max_tokens` taken from Copilot's own metadata — not a
+guess. They show up in `/model` like any other configured model:
+
+```
+❯ /model
+Configured models:
+  copilot:claude-sonnet-5 (GitHubCopilot) *
+  copilot:gpt-5.5 (GitHubCopilot)
+  ...
+❯ /model copilot:gpt-5.5
+```
+
+Re-run `clanker copilot-login` (or click **Refresh Models** in the web UI)
+any time to pick up new Copilot models or refreshed limits.
+
+**Notes:**
+- The Copilot bearer token is cached separately at `~/.clanker/copilot_auth.json`
+  (not in `models.json`) and refreshes itself automatically when it expires —
+  you only need to log in once.
+- This uses GitHub's internal Copilot token-exchange endpoint and sends the
+  same editor-identity headers VS Code's Copilot Chat extension sends. It is
+  not an officially documented integration path; treat it the same way you
+  would any third-party Copilot API bridge.
+- `reasoning_effort` can still be set manually per `copilot:*` model entry if
+  the underlying model supports it — clanker does not currently validate
+  which reasoning efforts each Copilot model accepts.
 
 ## User Instructions
 
