@@ -62,6 +62,21 @@
 - Ensure logging is enabled in config: `logging.enabled: true`
 - Check the log directory exists: `~/.clanker/logs/`
 
+### "zlib.error: incorrect header check" / "Error -3 while decompressing data"
+
+- This can happen in the pre-built binary release after a bash command runs
+  (`execute_shell` / background jobs) and the agent then uses a tool whose
+  third-party dependency hadn't been loaded yet (e.g. `web_search`,
+  `web_read`, reading a PDF). It's a known PyInstaller quirk: forking a
+  subprocess can disturb the frozen binary's on-demand module loader, so the
+  *first* import of a not-yet-loaded package can fail right after a fork.
+  Which tool trips it depends on call order, which is why it can look random.
+- Clanker preloads the packages known to hit this (`ddgs`, `trafilatura`,
+  `fitz`/PyMuPDF, `pypdf`, plus Pygments' lexers/styles) at startup, before
+  any subprocess can run, specifically to avoid this. If you still hit it —
+  e.g. from a newly added tool dependency — simply retrying the same prompt
+  works, since the module is now loaded for the rest of the session.
+
 ### "Command blocked - Command is blacklisted"
 
 - The command matched an entry in your command blacklist (a case-insensitive

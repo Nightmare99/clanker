@@ -65,6 +65,38 @@ def _configure_certificates() -> None:
 
 _configure_certificates()
 
+
+def _preload_tool_dependencies() -> None:
+    """Eagerly import third-party packages that tools otherwise import lazily.
+
+    In a PyInstaller-frozen binary, module code is decompressed on demand from
+    a zlib-compressed archive the first time it's imported. Forking a
+    subprocess (execute_shell, bash_background -- i.e. any bash tool call)
+    can corrupt that archive reader's file-descriptor state for the *parent*
+    process, so importing a module for the first time AFTER a fork sometimes
+    fails with ``zlib.error: incorrect header check`` / ``Error -3 while
+    decompressing data``. Which package trips it depends purely on which tool
+    the agent happens to call first after a bash command -- hence it looking
+    "random." We hit this once already for pygments (see the eager-import
+    block in ui/console.py); web_search (ddgs), web_read (trafilatura), and
+    PDF reading (fitz/PyMuPDF, pypdf) are lazily imported inside their tool
+    functions and are equally exposed, so we import them here -- before
+    main() runs, before any subprocess can exist -- guaranteeing they're
+    already in sys.modules by the time a tool call needs them.
+
+    Each import is independently guarded: a missing or broken package should
+    degrade that one tool gracefully (its own lazy import + informative error
+    message still runs), not break every other command at startup.
+    """
+    for module_name in ("ddgs", "trafilatura", "fitz", "pypdf"):
+        try:
+            __import__(module_name)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+_preload_tool_dependencies()
+
 # Module logger (initialized after setup_logging is called)
 logger = get_logger("cli")
 

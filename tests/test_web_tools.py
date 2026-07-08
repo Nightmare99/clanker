@@ -310,6 +310,37 @@ class TestSSLCertificates:
         _configure_certificates()
         assert os.environ["SSL_CERT_FILE"] == "/custom/ca.pem"
 
+    def test_preload_tool_dependencies_loads_known_lazy_imports(self) -> None:
+        """The packages tools otherwise import lazily must be in sys.modules
+        after this runs, so a subprocess fork can't corrupt their first-ever
+        import (the "zlib.error: incorrect header check" PyInstaller quirk)."""
+        import sys
+
+        from clanker.cli import _preload_tool_dependencies
+
+        _preload_tool_dependencies()
+
+        for module_name in ("ddgs", "trafilatura", "fitz", "pypdf"):
+            assert module_name in sys.modules, f"{module_name} was not preloaded"
+
+    def test_preload_tool_dependencies_survives_missing_package(self, monkeypatch) -> None:
+        """A missing/broken package must not raise -- only degrade that one
+        tool, not break startup for every other command."""
+        import builtins
+
+        from clanker.cli import _preload_tool_dependencies
+
+        real_import = builtins.__import__
+
+        def flaky_import(name, *args, **kwargs):
+            if name == "ddgs":
+                raise ImportError("simulated missing package")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", flaky_import)
+
+        _preload_tool_dependencies()  # must not raise
+
 
 class TestRawTextFallback:
     """web_read must return raw text/code when trafilatura extracts nothing.
