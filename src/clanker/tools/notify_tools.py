@@ -19,32 +19,32 @@ from clanker.logging import get_logger
 logger = get_logger("tools.notify")
 
 # Module-level output callback set by the streaming layer.
-# Signature: (message: str, level: str) -> None
+# Signature: (message: str, level: str, title: str | None) -> None
 # When None, falls back to plain print().
-_output_callback: Callable[[str, str], None] | None = None
+_output_callback: Callable[[str, str, str | None], None] | None = None
 
 
-def set_notify_callback(callback: Callable[[str, str], None] | None) -> None:
+def set_notify_callback(callback: Callable[[str, str, str | None], None] | None) -> None:
     """Register the output callback for the notify tool.
 
     Called by the streaming layer before graph execution begins so that
     notify() can write directly to the Rich console mid-stream.
 
     Args:
-        callback: Function that accepts (message, level) and prints to the
-                  console, or None to clear the callback.
+        callback: Function that accepts (message, level, title) and prints to
+                  the console, or None to clear the callback.
     """
     global _output_callback
     _output_callback = callback
 
 
-def get_notify_callback() -> Callable[[str, str], None] | None:
+def get_notify_callback() -> Callable[[str, str, str | None], None] | None:
     """Return the currently registered notify callback."""
     return _output_callback
 
 
 @tool
-def notify(message: str, level: str = "info") -> dict:
+def notify(message: str, level: str = "info", title: str | None = None) -> dict:
     """Send an immediate status update or progress message to the user.
 
     Use this tool liberally and often to keep the user continuously informed
@@ -61,7 +61,9 @@ def notify(message: str, level: str = "info") -> dict:
 
     Messages render as formatted Markdown panels, so use light Markdown: **bold**
     for the key action or noun, and backticks for code, paths, commands, and
-    identifiers.
+    identifiers. Severity is always shown via a colored left border, so `level`
+    alone is enough to convey urgency -- `title` is an optional short heading on
+    top of that, not a substitute for it.
 
     Good uses:
     - "Scanning **200 files** for test coverage..."
@@ -75,6 +77,9 @@ def notify(message: str, level: str = "info") -> dict:
                  (**bold**, `code`); avoid long paragraphs.
         level: Display level - one of: "info" (default, cyan),
                "success" (green), "warning" (yellow), "error" (red).
+        title: Optional short heading (2-4 words, e.g. "Build failed",
+               "Found the bug") shown above the message. Omit it for quick,
+               self-explanatory updates -- it's not required on every call.
 
     Returns:
         Confirmation dict so the agent knows the message was sent.
@@ -83,23 +88,23 @@ def notify(message: str, level: str = "info") -> dict:
     if level not in valid_levels:
         level = "info"
 
-    logger.debug("notify(%s): %s", level, message)
+    logger.debug("notify(%s, title=%r): %s", level, title, message)
 
     callback = _output_callback
     if callback is not None:
         try:
-            callback(message, level)
+            callback(message, level, title)
         except Exception as exc:
             # Never let a display error break the agent
             logger.warning("notify callback raised: %s", exc)
-            _fallback_print(message, level)
+            _fallback_print(message, level, title)
     else:
-        _fallback_print(message, level)
+        _fallback_print(message, level, title)
 
-    return {"ok": True, "sent": True, "message": message, "level": level}
+    return {"ok": True, "sent": True, "message": message, "level": level, "title": title}
 
 
-def _fallback_print(message: str, level: str) -> None:
+def _fallback_print(message: str, level: str, title: str | None = None) -> None:
     """Plain-text fallback when no Rich callback is registered."""
     prefix = {
         "info": "[INFO]",
@@ -107,4 +112,6 @@ def _fallback_print(message: str, level: str) -> None:
         "warning": "[WARN]",
         "error": "[ERR]",
     }.get(level, "[INFO]")
-    print(f"\n{prefix} {message}", flush=True)
+    heading = f" {title}" if title else ""
+    print(f"\n{prefix}{heading} {message}", flush=True)
+

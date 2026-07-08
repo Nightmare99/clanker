@@ -734,44 +734,52 @@ class Console:
             self._console.print(Text(f"  {line}", style="yellow"))
         self._console.print()
 
-    def print_notify(self, message: str, level: str = "info") -> None:
+    def print_notify(self, message: str, level: str = "info", title: str | None = None) -> None:
         """Print an agent status notification (from the notify tool).
 
         Rendered as fancy bordered Markdown -- the same left-"quote bar" look as
-        the assistant's final message, but tinted per severity and tagged with a
-        small level header so progress updates read as first-class output while
-        the agent is still executing.
+        the assistant's final message, tinted per severity. The colored border
+        alone always conveys severity; `title`, when the agent provides one, is
+        shown as a bold header above the message. When no title is given, the
+        header is omitted entirely -- just the tinted border and the message.
 
         Args:
             message: The status message sent by the agent.
             level: Severity / display style - "info", "success", "warning", "error".
+            title: Optional short heading shown above the message. Omitted
+                   (no header line at all) when not provided.
         """
         message_str = (message or "").strip()
         if not message_str:
             return
 
-        # header label + border/tint color per level. 
-        # The bold colored label carries the severity.
-        level_styles = {
-            "info": ("NOTE", "rgb(0,190,220)"),
-            "success": ("DONE", "rgb(130,220,100)"),
-            "warning": ("HEADS UP", "rgb(240,200,60)"),
-            "error": ("ERROR", "rgb(255,90,90)"),
+        # border/tint color per level -- always shown, this is the primary
+        # severity cue regardless of whether a title is present.
+        level_colors = {
+            "info": "rgb(0,190,220)",
+            "success": "rgb(130,220,100)",
+            "warning": "rgb(240,200,60)",
+            "error": "rgb(255,90,90)",
         }
-        label, color = level_styles.get(level, level_styles["info"])
+        color = level_colors.get(level, level_colors["info"])
 
-        # A header line (bold level tag) sits above the message so severity stays
-        # legible even though the border is the main visual cue.
-        header = Text(label, style=f"bold {color}")
+        title_str = (title or "").strip()
 
         try:
             body = Markdown(message_str)
         except Exception:  # noqa: BLE001
             body = Text(message_str)
 
+        renderable = body
+        if title_str:
+            # An agent-given heading sits above the message; omitted entirely
+            # (no blank header line) when the agent didn't send one.
+            header = Text(title_str, style=f"bold {color}")
+            renderable = Group(header, body)
+
         try:
             panel = Panel(
-                Group(header, body),
+                renderable,
                 box=_LEFT_BORDER_BOX,
                 border_style=color,
                 padding=(0, 2),
@@ -779,7 +787,8 @@ class Console:
             self._console.print(panel)
         except Exception:  # noqa: BLE001
             # Absolute fallback: never let a display error break the agent.
-            self._console.print(Text(f"  {label}: {message_str}", style=color))
+            prefix = f"{title_str}: " if title_str else ""
+            self._console.print(Text(f"  {prefix}{message_str}", style=color))
 
     def print_success(self, message: str) -> None:
         """Print a success message."""

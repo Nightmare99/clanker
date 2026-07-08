@@ -360,8 +360,8 @@ def stream_agent_response_sync(
         )
 
         # Register the notify callback
-        def _notify_callback(message: str, level: str) -> None:
-            console.print_notify(message, level)
+        def _notify_callback(message: str, level: str, title: str | None = None) -> None:
+            console.print_notify(message, level, title)
 
         set_notify_callback(_notify_callback)
 
