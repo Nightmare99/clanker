@@ -285,6 +285,10 @@ def create_llm_from_config(model_config: ModelConfig):
         if model_config.max_tokens:
             kwargs["max_tokens"] = model_config.max_tokens
 
+        # Model profile (needed for fractional token limits, e.g. summarization)
+        if model_config.max_input_tokens:
+            kwargs["profile"] = {"max_input_tokens": model_config.max_input_tokens}
+
         # Tolerate long silent reasoning pauses without tripping the stream timeout
         # (version-safe: kwarg on newer langchain-openai, env var on older).
         _apply_stream_chunk_timeout(AzureChatOpenAI, kwargs, model_config)
@@ -322,6 +326,10 @@ def create_llm_from_config(model_config: ModelConfig):
             kwargs["model"] = model_config.model
         if model_config.base_url:
             kwargs["base_url"] = model_config.base_url
+
+        # Model profile (needed for fractional token limits, e.g. summarization)
+        if model_config.max_input_tokens:
+            kwargs["profile"] = {"max_input_tokens": model_config.max_input_tokens}
 
         # Extended thinking support
         if model_config.thinking_enabled:

@@ -873,6 +873,7 @@ Commands:
 [bold]History & Memory:[/bold]
   /history    List past conversations
   /restore    Resume a previous session (usage: /restore <id>)
+  /compact    Compact the current conversation history manually
   /memories   Show stored workspace memories
   /remember   Store a memory (usage: /remember <text>)
   /forget     Delete a memory (usage: /forget <id>)

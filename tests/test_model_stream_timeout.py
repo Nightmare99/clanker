@@ -137,3 +137,43 @@ class TestConstruction:
         _apply_stream_chunk_timeout(FakeChat, kwargs, cfg)
         assert "stream_chunk_timeout" not in kwargs
         assert os.environ["LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S"] == "300"
+
+
+def _langchain_anthropic_available() -> bool:
+    try:
+        import langchain_anthropic  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+class TestModelProfileConstruction:
+    @pytest.mark.skipif(not _langchain_anthropic_available(), reason="langchain_anthropic not installed")
+    def test_anthropic_profile(self, monkeypatch):
+        from clanker.config.models import create_llm_from_config
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        cfg = ModelConfig(
+            name="ag-gemini-flash-3.5",
+            provider="Anthropic",
+            model="gemini-3.5-flash-low",
+            max_input_tokens=1048576,
+        )
+        model = create_llm_from_config(cfg)
+        assert model is not None
+        assert getattr(model, "profile", None) == {"max_input_tokens": 1048576}
+
+    @pytest.mark.skipif(not _langchain_openai_available(), reason="langchain_openai not installed")
+    def test_azure_openai_profile(self, monkeypatch):
+        from clanker.config.models import create_llm_from_config
+        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "sk-test")
+        monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://test.openai.azure.com")
+        monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT_NAME", "test-deployment")
+        cfg = ModelConfig(
+            name="azure-test",
+            provider="AzureOpenAI",
+            max_input_tokens=200000,
+        )
+        model = create_llm_from_config(cfg)
+        assert model is not None
+        assert getattr(model, "profile", None) == {"max_input_tokens": 200000}
+

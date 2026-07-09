@@ -117,7 +117,12 @@ _preload_tool_dependencies()
 logger = get_logger("cli")
 
 
-def handle_command(command: str, console: Console, session_manager: SessionManager) -> str | None:
+def handle_command(
+    command: str,
+    console: Console,
+    session_manager: SessionManager,
+    conversation_messages: list | None = None,
+) -> str | None:
     """Handle built-in commands.
 
     Args:
@@ -309,6 +314,70 @@ def handle_command(command: str, console: Console, session_manager: SessionManag
             session_id = parts[1].strip()
             return f"restore:{session_id}"
 
+    elif cmd == "/compact":
+        if conversation_messages is None:
+            console.print_warning("No active conversation messages context to compact.")
+            return None
+        if not conversation_messages:
+            console.print_info("No conversation history to compact.")
+            return None
+
+        from clanker.config import get_settings
+        from clanker.agent.graph import create_model
+        from clanker.agent.summarization import RobustSummarizationMiddleware
+
+        settings = get_settings()
+        try:
+            model = create_model()
+        except ValueError as e:
+            console.print_error(f"Cannot compact: {e}")
+            return None
+
+        keep_count = settings.context.keep_recent_turns * 2
+        trigger_fraction = settings.context.summarization_threshold / 100.0
+        summarization = RobustSummarizationMiddleware(
+            model=model,
+            trigger=("fraction", trigger_fraction),
+            keep=("messages", keep_count),
+        )
+
+        summarization._ensure_message_ids(conversation_messages)
+
+        cutoff_index = summarization._determine_cutoff_index(conversation_messages)
+        if cutoff_index <= 0:
+            cutoff_index = max(1, len(conversation_messages) - 1)
+
+        console.print_info("Compacting conversation history...")
+        messages_to_summarize, preserved_messages = summarization._partition_messages(
+            conversation_messages, cutoff_index
+        )
+
+        try:
+            summary = summarization._create_summary(messages_to_summarize)
+            new_messages = summarization._build_new_messages(summary)
+            compacted_messages = [*new_messages, *preserved_messages]
+
+            from clanker.agent.graph import create_agent_graph
+            from langchain_core.messages import RemoveMessage
+            from langgraph.graph.message import REMOVE_ALL_MESSAGES
+
+            graph = create_agent_graph(settings, checkpointer=session_manager.checkpointer)
+            config = session_manager.get_config()
+            graph.update_state(config, {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *compacted_messages]})
+
+            conversation_messages.clear()
+            conversation_messages.extend(compacted_messages)
+
+            session_manager.save_conversation_snapshot(compacted_messages)
+
+            console.print_success(
+                f"Successfully compacted conversation! Condensed {len(messages_to_summarize)} messages "
+                f"into a summary. History now contains {len(compacted_messages)} message(s)."
+            )
+        except Exception as e:
+            logger.exception("Failed to compact conversation: %s", e)
+            console.print_error(f"Failed to compact conversation: {e}")
+
     elif cmd == "/memories":
         store = get_memory_store()
         memories = store.list_all()
@@ -431,6 +500,7 @@ class CommandCompleter(Completer):
         "/logs",
         "/history",
         "/restore",
+        "/compact",
         "/memories",
         "/remember",
         "/forget",
@@ -587,7 +657,7 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
 
             # Handle commands
             if user_input.startswith("/"):
-                result = handle_command(user_input, console, session_manager)
+                result = handle_command(user_input, console, session_manager, conversation_messages)
                 if result == "exit":
                     # Save conversation before exiting
                     if conversation_messages:
