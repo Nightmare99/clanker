@@ -234,27 +234,28 @@ class ToolDisplayHandler:
 
         # Build arg summary inline
         if tool_name in ("read_file", "write_file", "edit_file", "append_file"):
-            arg = args.get("file_path", "file")
+            arg = str(args.get("file_path") or args.get("file") or "file")
         elif tool_name == "execute_shell":
-            arg = (args.get("command", "") or "")[:60]
+            arg = str(args.get("command") or "")[:60]
         elif tool_name == "bash_background":
-            name = (args.get("name") or "").strip()
-            cmd = (args.get("command", "") or "")[:50]
+            name_val = args.get("name")
+            name = str(name_val).strip() if name_val is not None else ""
+            cmd = str(args.get("command") or "")[:50]
             arg = f"[{name}] {cmd}" if name else cmd
         elif tool_name in ("bash_status", "bash_output", "bash_wait", "bash_kill"):
             arg = _job_label(args.get("job_id", "all"))
         elif tool_name == "glob_search":
-            arg = args.get("pattern", "*")
+            arg = str(args.get("pattern") or "*")
         elif tool_name == "grep_search":
-            arg = (args.get("pattern", "") or "")[:40]
+            arg = str(args.get("pattern") or "")[:40]
         elif tool_name == "list_directory":
-            arg = args.get("path", ".")
+            arg = str(args.get("path") or ".")
         elif tool_name == "web_search":
-            arg = (args.get("query", "") or "")[:60]
+            arg = str(args.get("query") or "")[:60]
         elif tool_name == "web_read":
-            arg = (args.get("url", "") or "")[:80]
+            arg = str(args.get("url") or "")[:80]
         elif tool_name == "load_skill":
-            arg = args.get("name", "") or "?"
+            arg = str(args.get("name") or "?")
         else:
             arg = ""
             for key in ["query", "path", "url", "input", "text", "command", "name"]:

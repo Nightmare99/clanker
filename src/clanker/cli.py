@@ -133,6 +133,7 @@ def handle_command(
     Returns:
         "exit" to exit, "restore:ID" to restore a session, None to continue.
     """
+    from clanker.config import get_settings
     cmd = command.strip().lower()
     parts = command.strip().split(maxsplit=1)
     logger.debug("Handling command: %s", cmd)
@@ -322,7 +323,6 @@ def handle_command(
             console.print_info("No conversation history to compact.")
             return None
 
-        from clanker.config import get_settings
         from clanker.agent.graph import create_model
         from clanker.agent.summarization import RobustSummarizationMiddleware
 
@@ -477,6 +477,64 @@ def handle_command(
                 if skills:
                     console.print_info(f"Available: {', '.join(skills.keys())}")
 
+    elif cmd.startswith("/mnq-model"):
+        parts = command.strip().split(maxsplit=2)
+        settings = get_settings()
+        if len(parts) < 2:
+            console.print_info("MNQ Role Model Mappings:")
+            for role in ["architect", "frontend", "backend", "devops", "dba", "tester"]:
+                val = getattr(settings.mnq.models, role, "strong")
+                console.print(f"  [bold cyan]{role}[/bold cyan]: {val}")
+            console.print_info("\nUse: /mnq-model <role> <model_name_or_tier>")
+        elif len(parts) == 2:
+            console.print_warning("Usage: /mnq-model <role> <model_name_or_tier>")
+        else:
+            role = parts[1].strip().lower()
+            model_target = parts[2].strip()
+
+            valid_roles = ["architect", "frontend", "backend", "devops", "dba", "tester"]
+            if role not in valid_roles:
+                console.print_warning(f"Invalid role '{role}'. Must be one of {valid_roles}")
+            else:
+                setattr(settings.mnq.models, role, model_target)
+                settings.save_yaml(CONFIG_PATH)
+                reload_settings()
+                console.print_success(f"Mapped role '{role}' to '{model_target}'.")
+
+    elif cmd.startswith("/mnq-resume"):
+        return "mnq-resume"
+
+    elif cmd.startswith("/mnq-clear"):
+        return "mnq-clear"
+
+    elif cmd.startswith("/mnq"):
+        parts = command.strip().split(maxsplit=1)
+        if len(parts) == 1:
+            settings = get_settings()
+            status = "enabled" if settings.mnq.enabled else "disabled"
+            console.print_info(f"MNQ Mode: {status}")
+
+            # Print task board status
+            from clanker.agent.mnq.orchestrator import MNQOrchestrator
+            sm = SessionManager()
+            orchestrator = MNQOrchestrator(settings, console, sm.checkpointer, session_id=sm.session_id)
+            orchestrator.print_fancy_board()
+        else:
+            action = parts[1].strip().lower()
+            settings = get_settings()
+            if action in ("on", "enable", "true"):
+                settings.mnq.enabled = True
+                settings.save_yaml(CONFIG_PATH)
+                reload_settings()
+                console.print_success("MNQ Mode enabled. Multi-agent architecture will be used.")
+            elif action in ("off", "disable", "false"):
+                settings.mnq.enabled = False
+                settings.save_yaml(CONFIG_PATH)
+                reload_settings()
+                console.print_success("MNQ Mode disabled. Single-agent loop will be used.")
+            else:
+                console.print_warning("Usage: /mnq [on|off]")
+
     else:
         console.print_warning(f"Unknown command: {command}")
         console.print_info("Type /help for available commands.")
@@ -506,6 +564,10 @@ class CommandCompleter(Completer):
         "/forget",
         "/workflow",
         "/skill",
+        "/mnq",
+        "/mnq-model",
+        "/mnq-resume",
+        "/mnq-clear",
     ]
 
     def get_completions(self, document, complete_event):
@@ -856,6 +918,170 @@ def run_single_prompt(prompt: str, console: Console, settings: Settings) -> None
         sys.exit(1)
 
 
+def run_mnq_single_prompt(prompt: str, console: Console, settings: Settings) -> None:
+    """Run a single prompt in MNQ mode.
+
+    Args:
+        prompt: User request.
+        console: Console instance.
+        settings: Settings instance.
+    """
+    logger.info("Starting single prompt in MNQ mode")
+    from clanker.agent.mnq.orchestrator import MNQOrchestrator
+
+    session_manager = SessionManager()
+    orchestrator = MNQOrchestrator(settings, console, session_manager.checkpointer, session_id=session_manager.session_id)
+
+    # 1. Run planning
+    if not orchestrator.run_initial_planning(prompt):
+        return
+
+    # 2. Run execution loop
+    orchestrator.execute_workflow()
+
+
+def run_mnq_interactive(
+    console: Console, settings: Settings, resume_session: str | None = None
+) -> None:
+    """Run the interactive REPL in MNQ mode.
+
+    Args:
+        console: Console instance.
+        settings: Settings instance.
+        resume_session: Optional session ID to resume.
+    """
+    logger.info("Starting interactive REPL in MNQ mode")
+    from clanker.agent.mnq.orchestrator import MNQOrchestrator
+    from clanker.agent.mnq.agent import run_role_agent
+
+    session_manager = SessionManager()
+    if resume_session:
+        messages = session_manager.get_session_messages(resume_session)
+        if messages:
+            session_manager.resume_session(resume_session)
+            console.print_info(f"Resuming session {resume_session}")
+        else:
+            console.print_warning(f"Session {resume_session} not found, starting new session")
+
+    orchestrator = MNQOrchestrator(
+        settings, console, session_manager.checkpointer, session_id=session_manager.session_id
+    )
+
+    history_path = settings.memory.storage_path / "history"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+
+    prompt_session = PromptSession(
+        history=FileHistory(str(history_path)),
+        completer=CommandCompleter(),
+        complete_while_typing=True,
+    )
+
+    console.print_welcome(user_instructions_loaded=False)
+    console.print_info("🤖 MNQ Multi-Agent Mode Active.")
+    orchestrator.print_fancy_board()
+
+    # Find existing MNQ sessions in the workspace
+    try:
+        db_files = list(orchestrator.db_dir.glob("mnq_board_*.db"))
+        mnq_sessions = []
+        for f in db_files:
+            name = f.stem
+            if name.startswith("mnq_board_") and name != "mnq_board_default" and name != f"mnq_board_{session_manager.session_id}":
+                sess_id = name[len("mnq_board_"):]
+                try:
+                    from clanker.agent.mnq.board import TaskBoard
+                    tb = TaskBoard(f)
+                    has_tasks = len(tb.get_tasks()) > 0
+                    tb.close()
+                    if has_tasks:
+                        mnq_sessions.append(sess_id)
+                except Exception:
+                    pass
+        if mnq_sessions and not resume_session:
+            console.print_info("\n📋 Available MNQ sessions in this workspace:")
+            for s in mnq_sessions:
+                console.print(f"  [bold cyan]{s}[/bold cyan]")
+            console.print_info("Use [bold]/restore <session_id>[/bold] or restart with [bold]-r <session_id>[/bold] to resume one.")
+    except Exception:
+        pass
+
+    if orchestrator.board.has_unverified_tasks():
+        console.print_info("\n💡 Found incomplete tasks from a previous session.")
+        console.print_info("Type [bold]/mnq-resume[/bold] to resume executing them.")
+
+    while True:
+        try:
+            user_input = prompt_session.prompt("mnq ❯ ").strip()
+            if not user_input:
+                continue
+
+            if user_input.startswith("/"):
+                result = handle_command(user_input, console, session_manager, [])
+                if result == "exit":
+                    cleanup_event_loop()
+                    break
+                elif result == "mnq-resume":
+                    if orchestrator.board.has_unverified_tasks():
+                        console.print_info("Resuming execution of incomplete tasks...")
+                        orchestrator.execute_workflow()
+                    else:
+                        console.print_warning("No incomplete tasks to resume.")
+                elif result == "mnq-clear":
+                    orchestrator.board.clear()
+                    console.print_success("Task board cleared.")
+                elif result and result.startswith("restore:"):
+                    session_id = result.split(":", 1)[1]
+                    session_manager.resume_session(session_id)
+                    orchestrator.switch_session(session_id)
+                    console.print_success(f"Restored MNQ session {session_id}")
+                    orchestrator.print_fancy_board()
+                    if orchestrator.board.has_unverified_tasks():
+                        console.print_info("\n💡 Found incomplete tasks in this restored session.")
+                        console.print_info("Type [bold]/mnq-resume[/bold] to resume executing them.")
+                continue
+
+            # If user entered a prompt: run the orchestrator starting from planning!
+            # If there are already tasks on the board, this represents a follow-up request.
+            # The Architect will update the board.
+            if orchestrator.board.get_tasks():
+                console.print_notify(
+                    "📐 Software Architect updating task board with new request...",
+                    "info",
+                    "Replanning Phase",
+                )
+                arch_config = {"configurable": {"thread_id": orchestrator.architect_thread_id}}
+                board_summary = orchestrator.format_board_summary()
+                task_desc = (
+                    f"The user has added a new requirement/instruction: {user_input}\n\n"
+                    f"Please update the task board. Add new tasks or adjust existing ones as needed "
+                    f"using the `add_task` or `update_task_status` tools to fulfill the request."
+                )
+                run_role_agent(
+                    role="architect",
+                    task_description=task_desc,
+                    board_summary=board_summary,
+                    settings=settings,
+                    checkpointer=session_manager.checkpointer,
+                    config=arch_config,
+                    console=console,
+                )
+            else:
+                # First request in this session
+                if not orchestrator.run_initial_planning(user_input):
+                    continue
+
+            # Run workflow execution
+            orchestrator.execute_workflow()
+
+        except (KeyboardInterrupt, EOFError):
+            console.print_warning("Session aborted by user.")
+            cleanup_event_loop()
+            break
+        except Exception as e:
+            logger.exception("Error in MNQ interactive loop: %s", e)
+            console.print_error(f"Error: {e}")
+
+
 class ClankerGroup(click.Group):
     """Custom group that handles prompt argument alongside subcommands."""
 
@@ -940,6 +1166,12 @@ class ClankerGroup(click.Group):
     is_flag=True,
     help="Skip bash command approval (auto-execute all commands)",
 )
+@click.option(
+    "--mode",
+    type=click.Choice(["single", "mnq"]),
+    default=None,
+    help="Operational mode: single-agent (default) or multi-agent (MNQ)",
+)
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -952,6 +1184,7 @@ def main(
     version: bool,
     check_update: bool,
     yolo: bool,
+    mode: str | None,
 ) -> None:
     """Clanker - AI-Powered Coding Assistant.
 
@@ -1073,10 +1306,25 @@ def main(
         add_model(temp_model)
         set_default_model("cli-override")
 
-    if prompt:
-        run_single_prompt(prompt, console, settings)
+    # Determine mode: command line option overrides settings file config
+    is_mnq = False
+    if mode == "mnq":
+        is_mnq = True
+    elif mode == "single":
+        is_mnq = False
     else:
-        run_interactive(console, settings, resume_session=resume)
+        is_mnq = settings.mnq.enabled
+
+    if is_mnq:
+        if prompt:
+            run_mnq_single_prompt(prompt, console, settings)
+        else:
+            run_mnq_interactive(console, settings, resume_session=resume)
+    else:
+        if prompt:
+            run_single_prompt(prompt, console, settings)
+        else:
+            run_interactive(console, settings, resume_session=resume)
 
 
 @main.command()

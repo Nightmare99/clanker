@@ -114,6 +114,24 @@ class AgentSettings(BaseModel):
     name: str = "Clanker"
 
 
+class MNQRoleModels(BaseModel):
+    """Model tiering/mapping for MNQ roles."""
+
+    architect: str = "strong"
+    frontend: str = "strong"
+    backend: str = "strong"
+    devops: str = "mid"
+    dba: str = "mid"
+    tester: str = "strong"
+
+
+class MNQSettings(BaseModel):
+    """MNQ mode configuration."""
+
+    enabled: bool = False
+    models: MNQRoleModels = Field(default_factory=MNQRoleModels)
+
+
 class Settings(BaseSettings):
     """Main application settings."""
 
@@ -132,6 +150,7 @@ class Settings(BaseSettings):
     mcp: MCPSettings = Field(default_factory=MCPSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     web_search: WebSearchSettings = Field(default_factory=WebSearchSettings)
+    mnq: MNQSettings = Field(default_factory=MNQSettings)
 
     @classmethod
     def from_yaml(cls, path: Path, create_default: bool = True) -> "Settings":
@@ -251,6 +270,17 @@ logging:
   backup_count: 3  # Number of backup files to keep (max 10)
   console_output: false  # Also output logs to console
   detailed_format: true  # Include function/line info in logs
+
+# MNQ Multi-Agent Mode configuration
+mnq:
+  enabled: false
+  models:
+    architect: strong
+    frontend: strong
+    backend: strong
+    devops: mid
+    dba: mid
+    tester: strong
 """
         with open(path, "w") as f:
             f.write(config_content)

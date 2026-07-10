@@ -251,39 +251,40 @@ class Console:
     def _tool_summary_arg(self, tool_name: str, args: dict) -> str:
         """Return a short human-readable argument string for a tool call."""
         if tool_name in ("read_file", "write_file", "append_file", "edit_file"):
-            return args.get("file_path", "")
+            return str(args.get("file_path") or args.get("file") or "")
         elif tool_name == "execute_shell":
-            return self._truncate(args.get("command", ""), 60)
+            return self._truncate(str(args.get("command") or ""), 60)
         elif tool_name == "bash_background":
-            name = (args.get("name") or "").strip()
-            cmd = self._truncate(args.get("command", ""), 50)
+            name_val = args.get("name")
+            name = str(name_val).strip() if name_val is not None else ""
+            cmd = self._truncate(str(args.get("command") or ""), 50)
             return f"[{name}] {cmd}" if name else cmd
         elif tool_name in ("bash_status", "bash_output", "bash_wait", "bash_kill"):
             return _job_label(args.get("job_id", "all"))
         elif tool_name == "glob_search":
-            pat = args.get("pattern", "*")
-            path = args.get("path", "")
+            pat = str(args.get("pattern") or "*")
+            path = str(args.get("path") or "")
             return f"{pat} in {path}" if path and path != "." else pat
         elif tool_name == "grep_search":
-            pat = self._truncate(args.get("pattern", ""), 40)
-            path = args.get("path", "")
+            pat = self._truncate(str(args.get("pattern") or ""), 40)
+            path = str(args.get("path") or "")
             return f"{pat} in {path}" if path and path != "." else pat
         elif tool_name == "list_directory":
-            return args.get("path", ".")
+            return str(args.get("path") or ".")
         elif tool_name == "web_search":
-            return self._truncate(args.get("query", ""), 60)
+            return self._truncate(str(args.get("query") or ""), 60)
         elif tool_name == "web_read":
-            return self._truncate(args.get("url", ""), 70)
+            return self._truncate(str(args.get("url") or ""), 70)
         elif tool_name == "load_skill":
-            return args.get("name", "")
+            return str(args.get("name") or "")
         elif tool_name in ("remember", "recall"):
-            return self._truncate(args.get("topic", "") or args.get("query", ""), 40)
+            return self._truncate(str(args.get("topic") or args.get("query") or ""), 40)
         elif tool_name == "notify":
-            return self._truncate(args.get("message", ""), 40)
+            return self._truncate(str(args.get("message") or ""), 40)
         else:
             # MCP tools or unknown
             if "__" in tool_name:
-                return args.get("query", args.get("path", args.get("input", "")))
+                return str(args.get("query") or args.get("path") or args.get("input") or "")
             for key in ["query", "path", "url", "input", "text", "command", "name"]:
                 if key in args:
                     return self._truncate(str(args[key]), 40)
@@ -848,6 +849,7 @@ class Console:
 Commands:
   [dim]/model[/dim]    Switch model     [dim]/clear[/dim]    Clear history
   [dim]/history[/dim]  Past sessions    [dim]/memories[/dim] View memories
+  [dim]/mnq[/dim]      Toggle MNQ mode  [dim]/mnq-model[/dim] Map MNQ roles
   [dim]/help[/dim]     Show help        [dim]/exit[/dim]     Power down
 
 [bold green]>[/bold green] State your objective, human. [bold cyan]*CLANK*[/bold cyan]
@@ -883,6 +885,10 @@ Commands:
 
 [bold]Skills:[/bold]
   /skill       List or load a skill (usage: /skill <name>); the agent also loads skills automatically
+
+[bold]MNQ Multi-Agent Mode:[/bold]
+  /mnq         Toggle MNQ mode or show board status (usage: /mnq [on|off])
+  /mnq-model   Configure role model mappings (usage: /mnq-model <role> <model>)
 
 [bold]Operational Capabilities:[/bold]
   • File operations: read, write, edit, append

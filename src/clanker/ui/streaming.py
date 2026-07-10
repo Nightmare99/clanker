@@ -265,6 +265,7 @@ def stream_agent_response_sync(
     state: dict,
     config: dict,
     console,
+    graph=None,
 ) -> StreamResult:
     """Synchronous wrapper for async stream_agent_response.
 
@@ -277,6 +278,7 @@ def stream_agent_response_sync(
         state: Initial state for the agent.
         config: Configuration dict with thread_id.
         console: Console instance for output.
+        graph: Optional pre-created agent graph.
 
     Returns:
         StreamResult with response text and token usage.
@@ -288,7 +290,9 @@ def stream_agent_response_sync(
         from clanker.agent import create_agent_graph_async
 
         # Create graph inside async context so MCP client is in same event loop
-        graph, mcp_client = await create_agent_graph_async(settings, checkpointer)
+        nonlocal graph
+        if graph is None:
+            graph, mcp_client = await create_agent_graph_async(settings, checkpointer)
         current_response = ""  # Buffer for current model run
         current_thinking = ""  # Buffer for thinking content
         shown_tool_calls: set[str] = set()

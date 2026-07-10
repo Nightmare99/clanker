@@ -40,6 +40,7 @@ import {
   PlayOutline,
   StarOutline,
   Star,
+  PeopleOutline,
 } from '@vicons/ionicons5'
 import { h } from 'vue'
 
@@ -164,6 +165,7 @@ const menuOptions: MenuOption[] = [
   { label: 'Safety', key: 'safety', icon: () => h(NIcon, null, { default: () => h(ShieldCheckmarkOutline) }) },
   { label: 'MCP Servers', key: 'mcp', icon: () => h(NIcon, null, { default: () => h(ExtensionPuzzleOutline) }) },
   { label: 'Logging', key: 'logging', icon: () => h(NIcon, null, { default: () => h(DocumentTextOutline) }) },
+  { label: 'MNQ Mode', key: 'mnq', icon: () => h(NIcon, null, { default: () => h(PeopleOutline) }) },
 ]
 
 // Provider options for model config
@@ -209,12 +211,36 @@ const modelIdPlaceholder = computed(() => {
   }
 })
 
+const mnqModelOptions = computed(() => {
+  const options = [
+    { label: 'Strong Model (Default)', value: 'strong' },
+    { label: 'Mid-tier Model', value: 'mid' },
+  ]
+  models.value.forEach(m => {
+    options.push({ label: `${m.name} (${m.provider})`, value: m.name })
+  })
+  return options
+})
+
 // API functions
 async function fetchConfig() {
   try {
     const response = await fetch('/api/config')
     const data = await response.json()
     config.value = data.config
+    if (config.value && !config.value.mnq) {
+      config.value.mnq = {
+        enabled: false,
+        models: {
+          architect: 'strong',
+          frontend: 'strong',
+          backend: 'strong',
+          devops: 'mid',
+          dba: 'mid',
+          tester: 'strong',
+        }
+      }
+    }
     configPath.value = data.config_path
   } catch (error) {
     message.error('Failed to load configuration')
@@ -1347,6 +1373,68 @@ onUnmounted(() => {
               <NFormItem label="Detailed Format">
                 <NSwitch
                   v-model:value="config.logging.detailed_format"
+                  @update:value="markChanged"
+                />
+              </NFormItem>
+            </NForm>
+          </NCard>
+
+          <!-- MNQ Multi-Agent Mode Settings -->
+          <NCard v-if="activeKey === 'mnq'" class="settings-card">
+            <NForm label-placement="left" label-width="240">
+              <NFormItem label="Enable MNQ Multi-Agent Mode">
+                <NSwitch
+                  v-model:value="config.mnq.enabled"
+                  @update:value="markChanged"
+                />
+              </NFormItem>
+
+              <NDivider title-placement="left">Role Model Mappings</NDivider>
+
+              <NFormItem label="Software Architect">
+                <NSelect
+                  v-model:value="config.mnq.models.architect"
+                  :options="mnqModelOptions"
+                  @update:value="markChanged"
+                />
+              </NFormItem>
+
+              <NFormItem label="Frontend Engineer">
+                <NSelect
+                  v-model:value="config.mnq.models.frontend"
+                  :options="mnqModelOptions"
+                  @update:value="markChanged"
+                />
+              </NFormItem>
+
+              <NFormItem label="Backend Engineer">
+                <NSelect
+                  v-model:value="config.mnq.models.backend"
+                  :options="mnqModelOptions"
+                  @update:value="markChanged"
+                />
+              </NFormItem>
+
+              <NFormItem label="DevOps Engineer">
+                <NSelect
+                  v-model:value="config.mnq.models.devops"
+                  :options="mnqModelOptions"
+                  @update:value="markChanged"
+                />
+              </NFormItem>
+
+              <NFormItem label="Database Administrator (DBA)">
+                <NSelect
+                  v-model:value="config.mnq.models.dba"
+                  :options="mnqModelOptions"
+                  @update:value="markChanged"
+                />
+              </NFormItem>
+
+              <NFormItem label="QA Tester">
+                <NSelect
+                  v-model:value="config.mnq.models.tester"
+                  :options="mnqModelOptions"
                   @update:value="markChanged"
                 />
               </NFormItem>
