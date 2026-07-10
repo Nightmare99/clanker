@@ -735,11 +735,19 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
                     # `/model <name>` switch is reflected in the usage line.
                     cm = get_default_model()
                     token_tracker.context_window = cm.max_input_tokens if cm else None
+                    # Compute cost for this turn (None when pricing not configured)
+                    turn_cost = cm.compute_cost(
+                        result.input_tokens,
+                        result.output_tokens,
+                        result.cache_read_tokens,
+                        result.cache_creation_tokens,
+                    ) if cm else None
                     token_tracker.add_turn(
                         result.input_tokens,
                         result.output_tokens,
                         result.cache_read_tokens,
                         result.cache_creation_tokens,
+                        turn_cost,
                     )
 
                 # Track AI response
@@ -767,12 +775,15 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
 
                 # Show token usage
                 if (result.input_tokens > 0 or result.output_tokens > 0) and settings.output.show_token_usage:
+                    last_turn = token_tracker.turns[-1] if token_tracker.turns else None
                     console.print_token_usage(
                         result.input_tokens,
                         result.output_tokens,
                         token_tracker.context_used_percent,
                         result.cache_read_tokens,
                         result.cache_creation_tokens,
+                        cost_usd=last_turn.cost_usd if last_turn else None,
+                        session_cost_usd=token_tracker.total_cost_usd,
                     )
 
                 logger.debug("Agent response completed successfully")
@@ -837,19 +848,31 @@ def run_single_prompt(prompt: str, console: Console, settings: Settings) -> None
 
         # Display token usage
         if result.input_tokens > 0 or result.output_tokens > 0:
+            # Compute cost for this turn (None when pricing not configured)
+            current_model_cfg = get_default_model()
+            turn_cost = current_model_cfg.compute_cost(
+                result.input_tokens,
+                result.output_tokens,
+                result.cache_read_tokens,
+                result.cache_creation_tokens,
+            ) if current_model_cfg else None
             token_tracker.add_turn(
                 result.input_tokens,
                 result.output_tokens,
                 result.cache_read_tokens,
                 result.cache_creation_tokens,
+                turn_cost,
             )
             if settings.output.show_token_usage:
+                last_turn = token_tracker.turns[-1] if token_tracker.turns else None
                 console.print_token_usage(
                     result.input_tokens,
                     result.output_tokens,
                     token_tracker.context_used_percent,
                     result.cache_read_tokens,
                     result.cache_creation_tokens,
+                    cost_usd=last_turn.cost_usd if last_turn else None,
+                    session_cost_usd=token_tracker.total_cost_usd,
                 )
     except Exception as e:
         console.print_error(f"Agent error: {e}")

@@ -20,10 +20,16 @@ class TokenUsage:
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
 
+    # Cost for this specific turn (None when not configured)
+    cost_usd: float | None = None
+
     # Cumulative tracking across the session
     cumulative_input: int = 0
     cumulative_output: int = 0
     cumulative_total: int = 0
+
+    # Cumulative cost across the session (None when not configured)
+    cumulative_cost_usd: float | None = None
 
     # Context window info. None when the model config does not specify
     # max_input_tokens — in that case usage percentages are unknown.
@@ -71,8 +77,17 @@ class SessionTokenTracker:
     # Cumulative output tokens (for cost tracking)
     total_output: int = 0
 
-    def add_turn(self, input_tokens: int, output_tokens: int,
-                 cache_read: int = 0, cache_creation: int = 0) -> TokenUsage:
+    # Cumulative cost across all turns (None when no pricing is configured)
+    total_cost_usd: float | None = None
+
+    def add_turn(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read: int = 0,
+        cache_creation: int = 0,
+        turn_cost: float | None = None,
+    ) -> TokenUsage:
         """Record token usage for a conversation turn.
 
         Args:
@@ -82,6 +97,8 @@ class SessionTokenTracker:
             output_tokens: Total output tokens across all LLM calls in the turn.
             cache_read: Cache-read tokens from the last LLM call (Anthropic).
             cache_creation: Cache-creation tokens from the last LLM call (Anthropic).
+            turn_cost: Pre-computed USD cost for this turn, or None when pricing
+                       is not configured.
 
         Returns:
             TokenUsage for this turn with cumulative stats.
@@ -92,15 +109,21 @@ class SessionTokenTracker:
         self.current_context_tokens = input_tokens + output_tokens
         self.total_output += output_tokens
 
+        # Accumulate session cost (stays None until at least one priced turn)
+        if turn_cost is not None:
+            self.total_cost_usd = (self.total_cost_usd or 0.0) + turn_cost
+
         usage = TokenUsage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=input_tokens + output_tokens,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
+            cost_usd=turn_cost,
             cumulative_input=input_tokens,
             cumulative_output=self.total_output,
             cumulative_total=self.current_context_tokens,
+            cumulative_cost_usd=self.total_cost_usd,
             context_window=self.context_window,
         )
 

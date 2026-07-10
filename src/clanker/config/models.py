@@ -94,6 +94,61 @@ class ModelConfig(BaseModel):
         description="Seconds to wait for the next stream chunk (None=default, 0=disabled)",
     )
 
+    # Cost tracking (USD per million tokens). All fields are optional; when
+    # none are set, the cost display is skipped. Prices follow the standard
+    # "per-million-tokens" unit used by every major provider's pricing page.
+    cost_input: float | None = Field(
+        default=None,
+        description="Input token cost in USD per million tokens",
+    )
+    cost_output: float | None = Field(
+        default=None,
+        description="Output token cost in USD per million tokens",
+    )
+    cost_cache_read: float | None = Field(
+        default=None,
+        description="Cache-read token cost in USD per million tokens (Anthropic prompt caching)",
+    )
+    cost_cache_creation: float | None = Field(
+        default=None,
+        description="Cache-creation token cost in USD per million tokens (Anthropic prompt caching)",
+    )
+
+    def compute_cost(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int = 0,
+        cache_creation_tokens: int = 0,
+    ) -> float | None:
+        """Compute the USD cost for a single LLM call.
+
+        Returns None when no cost fields are configured so the caller can
+        distinguish "no cost data" from "zero cost".
+
+        Pricing formula: (tokens / 1_000_000) * price_per_million.
+        Cache-read tokens replace regular input tokens at a discounted rate
+        for Anthropic models; we bill them separately here.
+        """
+        if (
+            self.cost_input is None
+            and self.cost_output is None
+            and self.cost_cache_read is None
+            and self.cost_cache_creation is None
+        ):
+            return None
+
+        cost = 0.0
+        if self.cost_input is not None:
+            cost += (input_tokens / 1_000_000) * self.cost_input
+        if self.cost_output is not None:
+            cost += (output_tokens / 1_000_000) * self.cost_output
+        if self.cost_cache_read is not None:
+            cost += (cache_read_tokens / 1_000_000) * self.cost_cache_read
+        if self.cost_cache_creation is not None:
+            cost += (cache_creation_tokens / 1_000_000) * self.cost_cache_creation
+        return cost
+
     class Config:
         extra = "allow"  # Allow additional provider-specific fields
 
@@ -125,7 +180,7 @@ def save_models_config(config: ModelsConfig) -> None:
     MODELS_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     with open(MODELS_CONFIG_PATH, "w") as f:
-        json.dump(config.model_dump(), f, indent=2)
+        json.dump(config.model_dump(exclude_none=True), f, indent=2)
 
     logger.info("Saved models config to %s", MODELS_CONFIG_PATH)
 

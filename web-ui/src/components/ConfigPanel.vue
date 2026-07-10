@@ -102,6 +102,11 @@ interface ModelConfig {
   reasoning_effort: string | null
   // Streaming reliability (OpenAI/Azure): seconds to wait for next chunk
   stream_chunk_timeout: number | null
+  // Cost tracking (USD per million tokens — optional, omit to skip cost display)
+  cost_input: number | null
+  cost_output: number | null
+  cost_cache_read: number | null
+  cost_cache_creation: number | null
 }
 
 // State
@@ -141,6 +146,10 @@ const modelForm = ref<ModelConfig>({
   thinking_budget_tokens: 10000,
   reasoning_effort: null,
   stream_chunk_timeout: null,
+  cost_input: null,
+  cost_output: null,
+  cost_cache_read: null,
+  cost_cache_creation: null,
 })
 
 // MCP Server editing
@@ -356,6 +365,10 @@ function openAddModel() {
     thinking_budget_tokens: 10000,
     reasoning_effort: null,
     stream_chunk_timeout: null,
+    cost_input: null,
+    cost_output: null,
+    cost_cache_read: null,
+    cost_cache_creation: null,
   }
   showModelModal.value = true
 }
@@ -797,6 +810,15 @@ onUnmounted(() => {
                     <span class="detail-label">Reasoning:</span>
                     <NTag size="small" type="warning">{{ model.reasoning_effort }}</NTag>
                   </div>
+                  <div v-if="model.cost_input != null || model.cost_output != null" class="model-detail-row">
+                    <span class="detail-label">Pricing:</span>
+                    <span class="detail-value" style="font-size: 0.82em; color: var(--n-text-color-3)">
+                      <template v-if="model.cost_input != null">in ${{ model.cost_input }}/M</template>
+                      <template v-if="model.cost_input != null && model.cost_output != null"> · </template>
+                      <template v-if="model.cost_output != null">out ${{ model.cost_output }}/M</template>
+                      <template v-if="model.cost_cache_read != null"> · cache ${{ model.cost_cache_read }}/M</template>
+                    </span>
+                  </div>
                 </div>
 
                 <!-- Card Actions -->
@@ -1032,6 +1054,65 @@ onUnmounted(() => {
                   </small>
                 </NAlert>
               </template>
+
+              <!-- Cost Tracking -->
+              <NDivider style="margin: 16px 0">Cost Tracking (optional)</NDivider>
+              <NAlert type="info" style="margin-bottom: 12px">
+                <small>
+                  Enter your model's pricing in <strong>USD per million tokens</strong>.
+                  When set, Clanker shows the estimated cost after each response.
+                  Leave all fields empty to skip cost tracking.
+                  You can find pricing on your provider's pricing page (e.g. <a href="https://openai.com/pricing" target="_blank" rel="noopener">openai.com/pricing</a>).
+                </small>
+              </NAlert>
+
+              <NFormItem label="Input ($/M tokens)">
+                <NInputNumber
+                  v-model:value="modelForm.cost_input"
+                  :min="0"
+                  :precision="6"
+                  :step="0.1"
+                  placeholder="e.g. 2.50"
+                  clearable
+                  style="width: 100%"
+                />
+              </NFormItem>
+
+              <NFormItem label="Output ($/M tokens)">
+                <NInputNumber
+                  v-model:value="modelForm.cost_output"
+                  :min="0"
+                  :precision="6"
+                  :step="0.1"
+                  placeholder="e.g. 10.00"
+                  clearable
+                  style="width: 100%"
+                />
+              </NFormItem>
+
+              <NFormItem label="Cache Read ($/M)">
+                <NInputNumber
+                  v-model:value="modelForm.cost_cache_read"
+                  :min="0"
+                  :precision="6"
+                  :step="0.01"
+                  placeholder="e.g. 0.30 (Anthropic cache read)"
+                  clearable
+                  style="width: 100%"
+                />
+              </NFormItem>
+
+              <NFormItem label="Cache Write ($/M)">
+                <NInputNumber
+                  v-model:value="modelForm.cost_cache_creation"
+                  :min="0"
+                  :precision="6"
+                  :step="0.01"
+                  placeholder="e.g. 3.75 (Anthropic cache write)"
+                  clearable
+                  style="width: 100%"
+                />
+              </NFormItem>
             </NForm>
 
             <template #footer>

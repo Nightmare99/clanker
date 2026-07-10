@@ -938,6 +938,8 @@ Commands:
         context_used_percent: float | None,
         cache_read: int = 0,
         cache_creation: int = 0,
+        cost_usd: float | None = None,
+        session_cost_usd: float | None = None,
     ) -> None:
         """Print token usage and context remaining.
 
@@ -949,6 +951,8 @@ Commands:
                 the context segment is omitted entirely (no misleading number).
             cache_read: Tokens read from cache (Anthropic).
             cache_creation: Tokens used for cache creation (Anthropic).
+            cost_usd: USD cost for this turn, or None when pricing is not configured.
+            session_cost_usd: Cumulative USD cost for the session, or None.
         """
         text = Text()
         text.append("  ", style="dim")
@@ -964,6 +968,27 @@ Commands:
         if cache_read > 0:
             text.append(" ", style="dim")
             text.append(f"cache:{cache_read:,}", style="dim magenta")
+
+        # Show cost for this turn (only when pricing is configured)
+        if cost_usd is not None:
+            text.append(" ", style="dim")
+            # Format smartly: show more decimals for tiny amounts
+            if cost_usd < 0.0001:
+                cost_str = f"${cost_usd:.6f}"
+            elif cost_usd < 0.01:
+                cost_str = f"${cost_usd:.4f}"
+            else:
+                cost_str = f"${cost_usd:.4f}"
+            text.append(cost_str, style="dim cyan")
+            # Show session total if we have more than one turn
+            if session_cost_usd is not None and session_cost_usd != cost_usd:
+                if session_cost_usd < 0.0001:
+                    sess_str = f"${session_cost_usd:.6f}"
+                elif session_cost_usd < 0.01:
+                    sess_str = f"${session_cost_usd:.4f}"
+                else:
+                    sess_str = f"${session_cost_usd:.4f}"
+                text.append(f" (session {sess_str})", style="dim")
 
         # Context remaining — only when the window is known. Without a configured
         # max_input_tokens we cannot compute a percentage, so we show nothing

@@ -323,6 +323,13 @@ class ModelRequest(BaseModel):
     thinking_budget_tokens: int = 10000
     # Reasoning effort (Azure OpenAI o1/o3 models)
     reasoning_effort: str | None = None
+    # Streaming reliability (OpenAI/Azure only)
+    stream_chunk_timeout: int | None = None
+    # Cost tracking (USD per million tokens)
+    cost_input: float | None = None
+    cost_output: float | None = None
+    cost_cache_read: float | None = None
+    cost_cache_creation: float | None = None
 
 
 class SetDefaultRequest(BaseModel):
@@ -368,6 +375,11 @@ async def create_model_config(request: ModelRequest) -> MessageResponse:
             thinking_enabled=request.thinking_enabled,
             thinking_budget_tokens=request.thinking_budget_tokens,
             reasoning_effort=request.reasoning_effort,
+            stream_chunk_timeout=request.stream_chunk_timeout,
+            cost_input=request.cost_input,
+            cost_output=request.cost_output,
+            cost_cache_read=request.cost_cache_read,
+            cost_cache_creation=request.cost_cache_creation,
         )
         add_model(model)
         return MessageResponse(message=f"Model '{request.name}' saved successfully", success=True)
@@ -402,6 +414,11 @@ async def update_model_config(name: str, request: ModelRequest) -> MessageRespon
             thinking_enabled=request.thinking_enabled,
             thinking_budget_tokens=request.thinking_budget_tokens,
             reasoning_effort=request.reasoning_effort,
+            stream_chunk_timeout=request.stream_chunk_timeout,
+            cost_input=request.cost_input,
+            cost_output=request.cost_output,
+            cost_cache_read=request.cost_cache_read,
+            cost_cache_creation=request.cost_cache_creation,
         )
 
         # If name changed, remove old one
