@@ -54,12 +54,27 @@ class ScrollableWindow(Window):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.scroll_y = 0
+        self.auto_scroll_to_bottom = True
 
     def _scroll_when_linewrapping(self, ui_content, width, height) -> None:
+        if self.auto_scroll_to_bottom:
+            prev_lineno = ui_content.line_count - 1
+            used_height = 0
+            for lineno in range(ui_content.line_count - 1, -1, -1):
+                line_height = ui_content.get_height_for_line(lineno, width, self.get_line_prefix)
+                used_height += line_height
+                if used_height > height:
+                    break
+                prev_lineno = lineno
+            self.scroll_y = prev_lineno
+
         super()._scroll_when_linewrapping(ui_content, width, height)
         self.vertical_scroll = self.scroll_y
 
     def _scroll_without_linewrapping(self, ui_content, width, height) -> None:
+        if self.auto_scroll_to_bottom:
+            self.scroll_y = max(0, ui_content.line_count - height)
+
         super()._scroll_without_linewrapping(ui_content, width, height)
         self.vertical_scroll = self.scroll_y
 
@@ -71,11 +86,13 @@ class ScrollableWindow(Window):
         if self.scroll_y < max_scroll:
             self.scroll_y += 1
             self.vertical_scroll = self.scroll_y
+        self.auto_scroll_to_bottom = (self.scroll_y >= max_scroll)
 
     def _scroll_up(self) -> None:
         if self.scroll_y > 0:
             self.scroll_y -= 1
             self.vertical_scroll = self.scroll_y
+            self.auto_scroll_to_bottom = False
 
 
 class REPLApplication:
@@ -156,6 +173,7 @@ class REPLApplication:
         def _(event) -> None:
             self.output_window.scroll_y = max(0, self.output_window.scroll_y - 10)
             self.output_window.vertical_scroll = self.output_window.scroll_y
+            self.output_window.auto_scroll_to_bottom = False
 
         @kb.add("pagedown")
         def _(event) -> None:
@@ -163,6 +181,7 @@ class REPLApplication:
             if info is not None:
                 max_scroll = max(0, info.content_height - info.window_height)
                 self.output_window.scroll_y = min(max_scroll, self.output_window.scroll_y + 10)
+                self.output_window.auto_scroll_to_bottom = (self.output_window.scroll_y >= max_scroll)
             else:
                 self.output_window.scroll_y += 10
             self.output_window.vertical_scroll = self.output_window.scroll_y
@@ -171,6 +190,7 @@ class REPLApplication:
         def _(event) -> None:
             self.output_window.scroll_y = max(0, self.output_window.scroll_y - 1)
             self.output_window.vertical_scroll = self.output_window.scroll_y
+            self.output_window.auto_scroll_to_bottom = False
 
         @kb.add("s-down")
         def _(event) -> None:
@@ -178,6 +198,7 @@ class REPLApplication:
             if info is not None:
                 max_scroll = max(0, info.content_height - info.window_height)
                 self.output_window.scroll_y = min(max_scroll, self.output_window.scroll_y + 1)
+                self.output_window.auto_scroll_to_bottom = (self.output_window.scroll_y >= max_scroll)
             else:
                 self.output_window.scroll_y += 1
             self.output_window.vertical_scroll = self.output_window.scroll_y
@@ -367,18 +388,11 @@ class REPLApplication:
             # Only auto-scroll to the bottom if the user was already scrolled to the bottom
             # (allowing a minor 2-line threshold for cushion)
             if self.output_window.scroll_y >= max_scroll - 2:
-                self.output_window.scroll_y = max_scroll
-                self.output_window.vertical_scroll = max_scroll
+                self.output_window.auto_scroll_to_bottom = True
+            else:
+                self.output_window.auto_scroll_to_bottom = False
         else:
-            # Fallback when layout is not rendered yet: determine actual terminal height
-            import shutil
-            term_height = shutil.get_terminal_size().lines
-            # Leave space for the status bar and text input field
-            window_height_guess = max(10, term_height - 3)
-            line_count = self.output_text.count("\n")
-            max_scroll_fallback = max(0, line_count - window_height_guess)
-            self.output_window.scroll_y = max_scroll_fallback
-            self.output_window.vertical_scroll = max_scroll_fallback
+            self.output_window.auto_scroll_to_bottom = True
 
         if hasattr(self, "app") and self.app:
             self.app.invalidate()
