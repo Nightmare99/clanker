@@ -110,7 +110,7 @@ class TestByokLoopHonorsInterrupt:
         import inspect
 
         module = _load_streaming_module()
-        src = inspect.getsource(module.stream_agent_response_sync)
+        src = inspect.getsource(module.stream_agent_response_async)
         # The interrupt check must appear within the BYOK streaming function.
         assert "if _interrupted:" in src, "BYOK loop is missing the _interrupted check"
 
@@ -119,7 +119,7 @@ class TestByokLoopHonorsInterrupt:
         import inspect
 
         module = _load_streaming_module()
-        src = inspect.getsource(module.stream_agent_response_sync)
+        src = inspect.getsource(module.stream_agent_response_async)
         # Graceful handler present, and the limit is configurable (not hardcoded 500).
         assert "except GraphRecursionError" in src, "missing GraphRecursionError handler"
         assert "max_agent_steps" in src, "recursion limit is not configurable"

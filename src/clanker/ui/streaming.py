@@ -19,6 +19,7 @@ from clanker.tools.notify_tools import set_notify_callback
 from clanker.tools.ask_tools import set_ask_callback
 from clanker.runtime import is_yolo_mode
 from clanker.ui.tool_display import ToolDisplayHandler, normalize_tool_output
+from clanker.ui.mid_turn_input import MidTurnInputListener
 
 # Persistent event loop for the streaming session
 _persistent_loop: asyncio.AbstractEventLoop | None = None
@@ -259,12 +260,546 @@ def _suppress_subprocess_stderr():
             os.close(saved_stderr_fd)
 
 
+async def stream_agent_response_async(
+    settings: Settings,
+    checkpointer,
+    state: dict,
+    config: dict,
+    console,
+    mid_turn_listener: MidTurnInputListener | None = None,
+) -> StreamResult:
+    """Async handler for streaming agent response."""
+    import asyncio
+    from langgraph.errors import GraphRecursionError
+    from langchain_core.messages import HumanMessage
+    from clanker.agent import create_agent_graph_async
+
+    loop = asyncio.get_running_loop()
+
+    # Create graph inside async context so MCP client is in same event loop
+    graph, mcp_client = await create_agent_graph_async(settings, checkpointer)
+    current_response = ""  # Buffer for current model run
+    current_thinking = ""  # Buffer for thinking content
+    shown_tool_calls: set[str] = set()
+    current_model_run: str | None = None  # Track current model run_id
+    thinking_shown = False
+    in_think_tag = False  # Track if we're inside <think>...</think> tags
+    think_tag_closed = False  # Track if </think> has been seen
+    rich_console = console._console
+
+    # Loading state
+    loading_live: Live | None = None
+    first_content_received = False
+
+    # Summarization detection
+    # Track model calls before any tools run - if we see 2+ model starts
+    # before the first tool, the first was likely summarization
+    model_call_count = 0
+    tools_started = False
+    summarization_detected = False
+    summarization_spinner_shown = False
+
+    # Token tracking
+    # input_tokens: overwritten each call (last call re-sends full history)
+    # output_tokens: overwritten each call (last input already encodes prior outputs)
+    # cumulative_output_tokens: summed across all calls (for cost accounting)
+    last_input_tokens = 0
+    last_output_tokens = 0
+    cumulative_output_tokens = 0
+    last_cache_read_tokens = 0
+    last_cache_creation_tokens = 0
+    model_name = ""
+
+    def start_loading(message: str | None = None):
+        """Start the loading spinner."""
+        global _current_loading_live
+        nonlocal loading_live
+        # Guard against a second Live: the ToolDisplayHandler owns a separate
+        # Live on the same console, and Rich allows only one active at a time.
+        # Starting another would raise LiveError ("Only one live display...").
+        if loading_live is None and getattr(rich_console, "_live", None) is None:
+            msg = message or console.get_loading_message()
+            spinner = Spinner("dots", text=Text(f" {msg}", style="cyan"))
+            loading_live = Live(spinner, console=rich_console, refresh_per_second=10, transient=True)
+            loading_live.start()
+            _current_loading_live = loading_live
+
+    def stop_loading():
+        """Stop the loading spinner."""
+        global _current_loading_live
+        nonlocal loading_live
+        if loading_live is not None:
+            loading_live.stop()
+            loading_live = None
+            _current_loading_live = None
+
+    def update_loading(message: str):
+        """Update the loading spinner message."""
+        nonlocal loading_live
+        if loading_live is not None:
+            spinner = Spinner("dots", text=Text(f" {message}", style="cyan"))
+            loading_live.update(spinner)
+
+    # Unified tool display handler for all providers
+    tool_handler = ToolDisplayHandler(
+        console=console,
+        show_tool_calls=settings.output.show_tool_calls,
+        on_tool_start=stop_loading,
+        on_tool_end=start_loading,
+    )
+
+    # Register the notify callback
+    def _notify_callback(message: str, level: str, title: str | None = None) -> None:
+        console.print_notify(message, level, title)
+
+    set_notify_callback(_notify_callback)
+
+    # Register the interactive asker (ask_user tool). Pause the spinner and
+    # any tool Live while the selection prompt owns the terminal, then resume.
+    def _ask_callback(question, options, *, multi_select, allow_other, allow_cancel):
+        from clanker.ui.prompts import select_options
+
+        stop_loading()
+        try:
+            tool_handler.finalize_live()
+        except Exception:
+            pass
+        if mid_turn_listener is not None:
+            asyncio.run_coroutine_threadsafe(mid_turn_listener.suspend_async(), loop).result()
+        try:
+            return select_options(
+                question,
+                options,
+                multi_select=multi_select,
+                allow_other=allow_other,
+                allow_cancel=allow_cancel,
+            )
+        finally:
+            if mid_turn_listener is not None:
+                asyncio.run_coroutine_threadsafe(mid_turn_listener.resume_async(), loop).result()
+            start_loading()
+
+    set_ask_callback(_ask_callback)
+
+    # Register the interactive bash-approval prompter. Same spinner/Live
+    # coordination as the asker so the arrow-key menu owns the terminal.
+    def _approval_callback(question, options, *, preface=None):
+        from clanker.ui.prompts import select_options
+
+        stop_loading()
+        try:
+            tool_handler.finalize_live()
+        except Exception:
+            pass
+        if mid_turn_listener is not None:
+            asyncio.run_coroutine_threadsafe(mid_turn_listener.suspend_async(), loop).result()
+        try:
+            return select_options(
+                question,
+                options,
+                allow_other=False,
+                allow_cancel=False,
+                preface=preface,
+            )
+        finally:
+            if mid_turn_listener is not None:
+                asyncio.run_coroutine_threadsafe(mid_turn_listener.resume_async(), loop).result()
+            start_loading()
+
+    set_approval_callback(_approval_callback)
+
+    try:
+        # Start loading spinner
+        start_loading()
+
+        # Start mid-turn input listener if provided
+        if mid_turn_listener is not None:
+            mid_turn_listener.start_async()
+
+        # Add recursion limit to config (default 100 is too low for complex tasks).
+        # Configurable so large multi-file lint/test loops don't hit it prematurely.
+        stream_config = {**config, "recursion_limit": settings.context.max_agent_steps}
+
+        # Heal any orphaned tool_use left in the checkpoint by a prior
+        # interrupted turn, otherwise the API rejects this turn with a 400
+        # ("tool_use ids without tool_result"). Self-healing: runs every turn,
+        # no-ops when the history is already valid.
+        await _heal_orphaned_tool_calls(graph, config)
+
+        with _suppress_subprocess_stderr():
+            async for event in graph.astream_events(
+                state, config=stream_config, version="v2"
+            ):
+                event_type = event.get("event", "")
+
+                # Check for interrupt flag (set by the SIGINT handler on Ctrl+C).
+                # The handler intentionally does NOT cancel the task, so we must
+                # break out of the event loop ourselves to return control.
+                if _interrupted:
+                    stop_loading()
+                    tool_handler.finalize_live()
+                    rich_console.print(
+                        "\n[bold yellow]*BZZZT*[/bold yellow] Agent halted. "
+                        "Control returned to you. [bold yellow]*CLANK*[/bold yellow]"
+                    )
+                    return StreamResult(
+                        response=current_response,
+                        input_tokens=last_input_tokens,
+                        output_tokens=last_output_tokens,
+                        cache_read_tokens=last_cache_read_tokens,
+                        cache_creation_tokens=last_cache_creation_tokens,
+                        model_name=model_name,
+                        summarization_occurred=summarization_detected,
+                    )
+
+                # Show tool calls immediately (don't batch)
+                if event_type == "on_tool_start":
+                    tools_started = True
+
+                    # --- Mid-turn injection point ---
+                    # Between tool calls is the safest place to inject user
+                    # messages: the model has just issued a tool call, the
+                    # tool hasn't run yet, so history is in a clean state.
+                    if mid_turn_listener and mid_turn_listener.has_messages():
+                        queued = mid_turn_listener.drain()
+                        for user_text in queued:
+                            try:
+                                stop_loading()
+                                tool_handler.finalize_live()
+                                await graph.aupdate_state(
+                                    config,
+                                    {"messages": [HumanMessage(content=user_text)]},
+                                    as_node="tools",
+                                )
+                                get_logger("streaming").info(
+                                    "Mid-turn message injected: %s", user_text[:80]
+                                )
+                                start_loading("Processing your message...")
+                            except Exception as exc:  # noqa: BLE001
+                                get_logger("streaming").warning(
+                                    "Failed to inject mid-turn message: %s", exc
+                                )
+
+                    if settings.output.show_tool_calls:
+                        run_id = event.get("run_id", "")
+                        if run_id and run_id not in shown_tool_calls:
+                            shown_tool_calls.add(run_id)
+                            tool_name = event.get("name", "unknown")
+                            if mid_turn_listener is not None:
+                                mid_turn_listener.update_status(f"Running tool {tool_name}...")
+                            tool_input = event.get("data", {}).get("input", {})
+                            # Skip run display when approval is needed
+                            if tool_name == "run" and not is_yolo_mode():
+                                continue
+                            # Skip display-only tools (notify, ask_user) -
+                            # they render their own output.
+                            if tool_name.lower() in ("notify", "ask_user"):
+                                continue
+                            # Queue tool with spinner - result will be
+                            # printed together with header when tool ends
+                            tool_handler.handle_tool_start(tool_name, tool_input)
+                    else:
+                        if mid_turn_listener is not None:
+                            tool_name = event.get("name", "unknown")
+                            mid_turn_listener.update_status(f"Running tool {tool_name}...")
+                        stop_loading()
+
+                # Show tool result
+                elif event_type == "on_tool_end":
+                    tool_name_end = event.get("name", "")
+                    if tool_name_end.lower() in ("notify", "ask_user"):
+                        start_loading()
+                        continue
+                    # Show tool header + output together
+                    if settings.output.show_tool_calls:
+                        data = event.get("data", {})
+                        tool_output = normalize_tool_output(data.get("output"))
+                        tool_handler.handle_tool_end(tool_name_end, tool_output)
+                    else:
+                        # Clear tracking so tool can be called again
+                        tool_handler.clear_tool_tracking(tool_name_end)
+                        start_loading()
+
+                # Track model calls to detect summarization
+                elif event_type == "on_chat_model_start":
+                    if mid_turn_listener is not None:
+                        mid_turn_listener.update_status("Thinking...")
+                    run_id = event.get("run_id", "")
+                    if run_id != current_model_run:
+                        model_call_count += 1
+
+                        # If this is the 2nd+ model call before tools started,
+                        # the previous call was likely summarization
+                        if model_call_count == 1 and not tools_started:
+                            # First model call - could be summarization, show special message
+                            # We'll know for sure if we see another model start
+                            pass
+                        elif model_call_count == 2 and not tools_started and not summarization_spinner_shown:
+                            # Second model call before tools = first was summarization!
+                            summarization_detected = True
+                            summarization_spinner_shown = True
+                            stop_loading()
+                            console.print_info("*WHIRR* Compressing memory banks...")
+                            start_loading()
+
+                        if tool_handler.has_pending_tools():
+                            tool_handler.flush_pending_tools()
+                        current_response = ""
+                        current_thinking = ""
+                        thinking_shown = False
+                        first_content_received = False
+                        in_think_tag = False
+                        think_tag_closed = False
+                        current_model_run = run_id
+
+                # Stream text from LLM
+                elif event_type == "on_chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk:
+                        content = getattr(chunk, "content", None)
+
+                        if content and not first_content_received:
+                            first_content_received = True
+
+                        # Handle Anthropic list content (with thinking blocks)
+                        if isinstance(content, list):
+                            for block in content:
+                                if isinstance(block, dict):
+                                    if block.get("type") == "thinking":
+                                        thinking_text = block.get("thinking", "")
+                                        if thinking_text:
+                                            current_thinking += thinking_text
+                                            if not thinking_shown:
+                                                console.print_thinking_start()
+                                                thinking_shown = True
+                                    elif block.get("type") == "text":
+                                        text = block.get("text", "")
+                                        if text:
+                                            stop_loading()
+                                            current_response += text
+                                elif hasattr(block, "type"):
+                                    if block.type == "thinking":
+                                        thinking_text = getattr(block, "thinking", "")
+                                        if thinking_text:
+                                            current_thinking += thinking_text
+                                            if not thinking_shown:
+                                                console.print_thinking_start()
+                                                thinking_shown = True
+                                    elif block.type == "text":
+                                        text = getattr(block, "text", "")
+                                        if text:
+                                            stop_loading()
+                                            current_response += text
+
+                        # Handle string content (standard format)
+                        elif content and isinstance(content, str):
+                            remaining = content
+                            while remaining:
+                                if think_tag_closed:
+                                    stop_loading()
+                                    current_response += remaining
+                                    remaining = ""
+                                elif in_think_tag:
+                                    end_idx = remaining.find("</think>")
+                                    if end_idx != -1:
+                                        current_thinking += remaining[:end_idx]
+                                        remaining = remaining[end_idx + 8:]
+                                        in_think_tag = False
+                                        think_tag_closed = True
+                                        stop_loading()
+                                    else:
+                                        current_thinking += remaining
+                                        remaining = ""
+                                else:
+                                    end_idx = remaining.find("</think>")
+                                    start_idx = remaining.find("<think>")
+
+                                    if start_idx != -1 and (end_idx == -1 or start_idx < end_idx):
+                                        current_response += remaining[:start_idx]
+                                        remaining = remaining[start_idx + 7:]
+                                        in_think_tag = True
+                                        if not thinking_shown:
+                                            console.print_thinking_start()
+                                            thinking_shown = True
+                                    elif end_idx != -1:
+                                        current_thinking += remaining[:end_idx]
+                                        remaining = remaining[end_idx + 8:]
+                                        think_tag_closed = True
+                                        stop_loading()
+                                        if not thinking_shown and current_thinking:
+                                            console.print_thinking_start()
+                                            thinking_shown = True
+                                    else:
+                                        current_thinking += remaining
+                                        if not thinking_shown:
+                                            console.print_thinking_start()
+                                            thinking_shown = True
+                                        remaining = ""
+
+                # Capture token usage when model completes
+                elif event_type == "on_chat_model_end":
+                    output = event.get("data", {}).get("output")
+                    if output:
+                        if hasattr(output, "response_metadata"):
+                            meta = output.response_metadata
+                            model_name = meta.get("model", "") or meta.get("model_name", "")
+
+                        if hasattr(output, "usage_metadata") and output.usage_metadata:
+                            usage = output.usage_metadata
+                            last_input_tokens = usage.get("input_tokens", 0)
+                            last_output_tokens = usage.get("output_tokens", 0)
+                            cumulative_output_tokens += last_output_tokens
+                            # Cache counts live under input_token_details in
+                            # LangChain's usage_metadata (the flat
+                            # cache_*_input_tokens keys are raw-Anthropic and
+                            # never appear here, so reading them yields 0).
+                            details = usage.get("input_token_details") or {}
+                            last_cache_read_tokens = details.get("cache_read", 0)
+                            last_cache_creation_tokens = details.get("cache_creation", 0)
+
+                        elif hasattr(output, "response_metadata"):
+                            meta = output.response_metadata
+                            usage = meta.get("usage", {})
+                            if usage:
+                                last_input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
+                                last_output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+                                cumulative_output_tokens += last_output_tokens
+
+                            if not usage and "token_usage" in meta:
+                                usage = meta.get("token_usage", {})
+                                last_input_tokens = usage.get("prompt_tokens", 0)
+                                last_output_tokens = usage.get("completion_tokens", 0)
+                                cumulative_output_tokens += last_output_tokens
+
+                            if not usage:
+                                last_input_tokens = meta.get("prompt_tokens", 0)
+                                last_output_tokens = meta.get("completion_tokens", 0)
+                                cumulative_output_tokens += last_output_tokens
+
+    except CommandRejectedError as e:
+        stop_loading()
+        rich_console.print(f"\n[bold yellow]Operation cancelled:[/bold yellow] {e}")
+        return StreamResult(
+            response="",
+            input_tokens=last_input_tokens,
+            output_tokens=last_output_tokens,
+            cache_read_tokens=last_cache_read_tokens,
+            cache_creation_tokens=last_cache_creation_tokens,
+            model_name=model_name,
+            summarization_occurred=summarization_detected,
+        )
+
+    except GraphRecursionError:
+        # The agent looped past the per-turn step budget without finishing.
+        # End the turn gracefully (preserving any partial text) instead of
+        # crashing; the user can nudge it to continue or raise
+        # context.max_agent_steps. Any tool_use left dangling by the aborted
+        # turn is repaired by _heal_orphaned_tool_calls on the next turn.
+        stop_loading()
+        tool_handler.finalize_live()
+        limit = settings.context.max_agent_steps
+        rich_console.print(
+            f"\n[bold yellow]*WHIRR*[/bold yellow] Hit the step limit "
+            f"({limit} steps) without finishing. Stopping here so you can "
+            f"steer. Say 'continue' to resume, or raise "
+            f"[cyan]context.max_agent_steps[/cyan] in config for longer runs."
+        )
+        return StreamResult(
+            response=current_response,
+            input_tokens=last_input_tokens,
+            output_tokens=last_output_tokens,
+            cache_read_tokens=last_cache_read_tokens,
+            cache_creation_tokens=last_cache_creation_tokens,
+            model_name=model_name,
+            summarization_occurred=summarization_detected,
+        )
+
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        stop_loading()
+        rich_console.print("\n[bold yellow]*BZZZT*[/bold yellow] Agent halted. Control returned to you. [bold yellow]*CLANK*[/bold yellow]")
+        return StreamResult(
+            response=current_response,
+            input_tokens=last_input_tokens,
+            output_tokens=last_output_tokens,
+            cache_read_tokens=last_cache_read_tokens,
+            cache_creation_tokens=last_cache_creation_tokens,
+            model_name=model_name,
+            summarization_occurred=summarization_detected,
+        )
+
+    except Exception as exc:  # noqa: BLE001
+        # A context-length / payload-too-large rejection (e.g. HTTP 413 from a
+        # proxy whose body-byte limit the token-based summarization trigger
+        # never catches). Re-raise anything else so cli.py's generic handler
+        # still logs genuine bugs. KeyboardInterrupt/CancelledError are
+        # BaseException and handled above, so this never swallows them.
+        from clanker.context import is_context_length_error
+
+        if not is_context_length_error(exc):
+            raise
+
+        stop_loading()
+        tool_handler.finalize_live()
+        get_logger("streaming").warning(
+            "Model call rejected as too large (context/payload): %s", exc
+        )
+        # Unwedge the persisted state so the next turn isn't stuck re-sending
+        # the same oversized history.
+        await _compact_oversized_tool_call_args(graph, config, settings)
+        rich_console.print(
+            "\n[bold yellow]*CLANK*[/bold yellow] That request was too large "
+            "for the model endpoint. I've trimmed the bulky bits from history "
+            "(large file contents are safe on disk) — try again or rephrase."
+        )
+        return StreamResult(
+            response=current_response,
+            input_tokens=last_input_tokens,
+            output_tokens=last_output_tokens,
+            cache_read_tokens=last_cache_read_tokens,
+            cache_creation_tokens=last_cache_creation_tokens,
+            model_name=model_name,
+            summarization_occurred=summarization_detected,
+        )
+
+    finally:
+        _teardown_live_displays(rich_console, stop_loading, tool_handler)
+        set_notify_callback(None)
+        set_ask_callback(None)
+        set_approval_callback(None)
+        if mid_turn_listener is not None:
+            await mid_turn_listener.stop_async()
+
+    # If we buffered thinking but never saw </think>, treat it as response
+    if current_thinking and not think_tag_closed and not current_response:
+        current_response = current_thinking
+        current_thinking = ""
+
+    # Print final response
+    if current_response.strip():
+        console.print_assistant_message(current_response)
+
+    # Show thinking summary if present
+    if current_thinking:
+        console.print_thinking(current_thinking)
+
+    return StreamResult(
+        response=current_response,
+        input_tokens=last_input_tokens,
+        output_tokens=last_output_tokens,
+        cache_read_tokens=last_cache_read_tokens,
+        cache_creation_tokens=last_cache_creation_tokens,
+        model_name=model_name,
+        summarization_occurred=summarization_detected,
+    )
+
+
 def stream_agent_response_sync(
     settings: Settings,
     checkpointer,
     state: dict,
     config: dict,
     console,
+    mid_turn_listener: MidTurnInputListener | None = None,
 ) -> StreamResult:
     """Synchronous wrapper for async stream_agent_response.
 
@@ -281,483 +816,6 @@ def stream_agent_response_sync(
     Returns:
         StreamResult with response text and token usage.
     """
-    async def _stream_async() -> StreamResult:
-
-        from langgraph.errors import GraphRecursionError
-
-        from clanker.agent import create_agent_graph_async
-
-        # Create graph inside async context so MCP client is in same event loop
-        graph, mcp_client = await create_agent_graph_async(settings, checkpointer)
-        current_response = ""  # Buffer for current model run
-        current_thinking = ""  # Buffer for thinking content
-        shown_tool_calls: set[str] = set()
-        current_model_run: str | None = None  # Track current model run_id
-        thinking_shown = False
-        in_think_tag = False  # Track if we're inside <think>...</think> tags
-        think_tag_closed = False  # Track if </think> has been seen
-        rich_console = console._console
-
-        # Loading state
-        loading_live: Live | None = None
-        first_content_received = False
-
-        # Summarization detection
-        # Track model calls before any tools run - if we see 2+ model starts
-        # before the first tool, the first was likely summarization
-        model_call_count = 0
-        tools_started = False
-        summarization_detected = False
-        summarization_spinner_shown = False
-
-        # Token tracking
-        # input_tokens: overwritten each call (last call re-sends full history)
-        # output_tokens: overwritten each call (last input already encodes prior outputs)
-        # cumulative_output_tokens: summed across all calls (for cost accounting)
-        last_input_tokens = 0
-        last_output_tokens = 0
-        cumulative_output_tokens = 0
-        last_cache_read_tokens = 0
-        last_cache_creation_tokens = 0
-        model_name = ""
-
-        def start_loading(message: str | None = None):
-            """Start the loading spinner."""
-            global _current_loading_live
-            nonlocal loading_live
-            # Guard against a second Live: the ToolDisplayHandler owns a separate
-            # Live on the same console, and Rich allows only one active at a time.
-            # Starting another would raise LiveError ("Only one live display...").
-            if loading_live is None and getattr(rich_console, "_live", None) is None:
-                msg = message or console.get_loading_message()
-                spinner = Spinner("dots", text=Text(f" {msg}", style="cyan"))
-                loading_live = Live(spinner, console=rich_console, refresh_per_second=10, transient=True)
-                loading_live.start()
-                _current_loading_live = loading_live
-
-        def stop_loading():
-            """Stop the loading spinner."""
-            global _current_loading_live
-            nonlocal loading_live
-            if loading_live is not None:
-                loading_live.stop()
-                loading_live = None
-                _current_loading_live = None
-
-        def update_loading(message: str):
-            """Update the loading spinner message."""
-            nonlocal loading_live
-            if loading_live is not None:
-                spinner = Spinner("dots", text=Text(f" {message}", style="cyan"))
-                loading_live.update(spinner)
-
-        # Unified tool display handler for all providers
-        tool_handler = ToolDisplayHandler(
-            console=console,
-            show_tool_calls=settings.output.show_tool_calls,
-            on_tool_start=stop_loading,
-            on_tool_end=start_loading,
-        )
-
-        # Register the notify callback
-        def _notify_callback(message: str, level: str, title: str | None = None) -> None:
-            console.print_notify(message, level, title)
-
-        set_notify_callback(_notify_callback)
-
-        # Register the interactive asker (ask_user tool). Pause the spinner and
-        # any tool Live while the selection prompt owns the terminal, then resume.
-        def _ask_callback(question, options, *, multi_select, allow_other, allow_cancel):
-            from clanker.ui.prompts import select_options
-
-            stop_loading()
-            try:
-                tool_handler.finalize_live()
-            except Exception:
-                pass
-            try:
-                return select_options(
-                    question,
-                    options,
-                    multi_select=multi_select,
-                    allow_other=allow_other,
-                    allow_cancel=allow_cancel,
-                )
-            finally:
-                start_loading()
-
-        set_ask_callback(_ask_callback)
-
-        # Register the interactive bash-approval prompter. Same spinner/Live
-        # coordination as the asker so the arrow-key menu owns the terminal.
-        def _approval_callback(question, options, *, preface=None):
-            from clanker.ui.prompts import select_options
-
-            stop_loading()
-            try:
-                tool_handler.finalize_live()
-            except Exception:
-                pass
-            try:
-                return select_options(
-                    question,
-                    options,
-                    allow_other=False,
-                    allow_cancel=False,
-                    preface=preface,
-                )
-            finally:
-                start_loading()
-
-        set_approval_callback(_approval_callback)
-
-        try:
-            # Start loading spinner
-            start_loading()
-
-            # Add recursion limit to config (default 100 is too low for complex tasks).
-            # Configurable so large multi-file lint/test loops don't hit it prematurely.
-            stream_config = {**config, "recursion_limit": settings.context.max_agent_steps}
-
-            # Heal any orphaned tool_use left in the checkpoint by a prior
-            # interrupted turn, otherwise the API rejects this turn with a 400
-            # ("tool_use ids without tool_result"). Self-healing: runs every turn,
-            # no-ops when the history is already valid.
-            await _heal_orphaned_tool_calls(graph, config)
-
-            with _suppress_subprocess_stderr():
-                async for event in graph.astream_events(
-                    state, config=stream_config, version="v2"
-                ):
-                    event_type = event.get("event", "")
-
-                    # Check for interrupt flag (set by the SIGINT handler on Ctrl+C).
-                    # The handler intentionally does NOT cancel the task, so we must
-                    # break out of the event loop ourselves to return control.
-                    if _interrupted:
-                        stop_loading()
-                        tool_handler.finalize_live()
-                        rich_console.print(
-                            "\n[bold yellow]*BZZZT*[/bold yellow] Agent halted. "
-                            "Control returned to you. [bold yellow]*CLANK*[/bold yellow]"
-                        )
-                        return StreamResult(
-                            response=current_response,
-                            input_tokens=last_input_tokens,
-                            output_tokens=last_output_tokens,
-                            cache_read_tokens=last_cache_read_tokens,
-                            cache_creation_tokens=last_cache_creation_tokens,
-                            model_name=model_name,
-                            summarization_occurred=summarization_detected,
-                        )
-
-                    # Show tool calls immediately (don't batch)
-                    if event_type == "on_tool_start":
-                        tools_started = True
-                        if settings.output.show_tool_calls:
-                            run_id = event.get("run_id", "")
-                            if run_id and run_id not in shown_tool_calls:
-                                shown_tool_calls.add(run_id)
-                                tool_name = event.get("name", "unknown")
-                                tool_input = event.get("data", {}).get("input", {})
-                                # Skip run display when approval is needed
-                                if tool_name == "run" and not is_yolo_mode():
-                                    continue
-                                # Skip display-only tools (notify, ask_user) -
-                                # they render their own output.
-                                if tool_name.lower() in ("notify", "ask_user"):
-                                    continue
-                                # Queue tool with spinner - result will be
-                                # printed together with header when tool ends
-                                tool_handler.handle_tool_start(tool_name, tool_input)
-                        else:
-                            stop_loading()
-
-                    # Show tool result
-                    elif event_type == "on_tool_end":
-                        tool_name_end = event.get("name", "")
-                        if tool_name_end.lower() in ("notify", "ask_user"):
-                            start_loading()
-                            continue
-                        # Show tool header + output together
-                        if settings.output.show_tool_calls:
-                            data = event.get("data", {})
-                            tool_output = normalize_tool_output(data.get("output"))
-                            tool_handler.handle_tool_end(tool_name_end, tool_output)
-                        else:
-                            # Clear tracking so tool can be called again
-                            tool_handler.clear_tool_tracking(tool_name_end)
-                            start_loading()
-
-                    # Track model calls to detect summarization
-                    elif event_type == "on_chat_model_start":
-                        run_id = event.get("run_id", "")
-                        if run_id != current_model_run:
-                            model_call_count += 1
-
-                            # If this is the 2nd+ model call before tools started,
-                            # the previous call was likely summarization
-                            if model_call_count == 1 and not tools_started:
-                                # First model call - could be summarization, show special message
-                                # We'll know for sure if we see another model start
-                                pass
-                            elif model_call_count == 2 and not tools_started and not summarization_spinner_shown:
-                                # Second model call before tools = first was summarization!
-                                summarization_detected = True
-                                summarization_spinner_shown = True
-                                stop_loading()
-                                console.print_info("*WHIRR* Compressing memory banks...")
-                                start_loading()
-
-                            if tool_handler.has_pending_tools():
-                                tool_handler.flush_pending_tools()
-                            current_response = ""
-                            current_thinking = ""
-                            thinking_shown = False
-                            first_content_received = False
-                            in_think_tag = False
-                            think_tag_closed = False
-                            current_model_run = run_id
-
-                    # Stream text from LLM
-                    elif event_type == "on_chat_model_stream":
-                        chunk = event.get("data", {}).get("chunk")
-                        if chunk:
-                            content = getattr(chunk, "content", None)
-
-                            if content and not first_content_received:
-                                first_content_received = True
-
-                            # Handle Anthropic list content (with thinking blocks)
-                            if isinstance(content, list):
-                                for block in content:
-                                    if isinstance(block, dict):
-                                        if block.get("type") == "thinking":
-                                            thinking_text = block.get("thinking", "")
-                                            if thinking_text:
-                                                current_thinking += thinking_text
-                                                if not thinking_shown:
-                                                    console.print_thinking_start()
-                                                    thinking_shown = True
-                                        elif block.get("type") == "text":
-                                            text = block.get("text", "")
-                                            if text:
-                                                stop_loading()
-                                                current_response += text
-                                    elif hasattr(block, "type"):
-                                        if block.type == "thinking":
-                                            thinking_text = getattr(block, "thinking", "")
-                                            if thinking_text:
-                                                current_thinking += thinking_text
-                                                if not thinking_shown:
-                                                    console.print_thinking_start()
-                                                    thinking_shown = True
-                                        elif block.type == "text":
-                                            text = getattr(block, "text", "")
-                                            if text:
-                                                stop_loading()
-                                                current_response += text
-
-                            # Handle string content (standard format)
-                            elif content and isinstance(content, str):
-                                remaining = content
-                                while remaining:
-                                    if think_tag_closed:
-                                        stop_loading()
-                                        current_response += remaining
-                                        remaining = ""
-                                    elif in_think_tag:
-                                        end_idx = remaining.find("</think>")
-                                        if end_idx != -1:
-                                            current_thinking += remaining[:end_idx]
-                                            remaining = remaining[end_idx + 8:]
-                                            in_think_tag = False
-                                            think_tag_closed = True
-                                            stop_loading()
-                                        else:
-                                            current_thinking += remaining
-                                            remaining = ""
-                                    else:
-                                        end_idx = remaining.find("</think>")
-                                        start_idx = remaining.find("<think>")
-
-                                        if start_idx != -1 and (end_idx == -1 or start_idx < end_idx):
-                                            current_response += remaining[:start_idx]
-                                            remaining = remaining[start_idx + 7:]
-                                            in_think_tag = True
-                                            if not thinking_shown:
-                                                console.print_thinking_start()
-                                                thinking_shown = True
-                                        elif end_idx != -1:
-                                            current_thinking += remaining[:end_idx]
-                                            remaining = remaining[end_idx + 8:]
-                                            think_tag_closed = True
-                                            stop_loading()
-                                            if not thinking_shown and current_thinking:
-                                                console.print_thinking_start()
-                                                thinking_shown = True
-                                        else:
-                                            current_thinking += remaining
-                                            if not thinking_shown:
-                                                console.print_thinking_start()
-                                                thinking_shown = True
-                                            remaining = ""
-
-                    # Capture token usage when model completes
-                    elif event_type == "on_chat_model_end":
-                        output = event.get("data", {}).get("output")
-                        if output:
-                            if hasattr(output, "response_metadata"):
-                                meta = output.response_metadata
-                                model_name = meta.get("model", "") or meta.get("model_name", "")
-
-                            if hasattr(output, "usage_metadata") and output.usage_metadata:
-                                usage = output.usage_metadata
-                                last_input_tokens = usage.get("input_tokens", 0)
-                                last_output_tokens = usage.get("output_tokens", 0)
-                                cumulative_output_tokens += last_output_tokens
-                                # Cache counts live under input_token_details in
-                                # LangChain's usage_metadata (the flat
-                                # cache_*_input_tokens keys are raw-Anthropic and
-                                # never appear here, so reading them yields 0).
-                                details = usage.get("input_token_details") or {}
-                                last_cache_read_tokens = details.get("cache_read", 0)
-                                last_cache_creation_tokens = details.get("cache_creation", 0)
-
-                            elif hasattr(output, "response_metadata"):
-                                meta = output.response_metadata
-                                usage = meta.get("usage", {})
-                                if usage:
-                                    last_input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
-                                    last_output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
-                                    cumulative_output_tokens += last_output_tokens
-
-                                if not usage and "token_usage" in meta:
-                                    usage = meta.get("token_usage", {})
-                                    last_input_tokens = usage.get("prompt_tokens", 0)
-                                    last_output_tokens = usage.get("completion_tokens", 0)
-                                    cumulative_output_tokens += last_output_tokens
-
-                                if not usage:
-                                    last_input_tokens = meta.get("prompt_tokens", 0)
-                                    last_output_tokens = meta.get("completion_tokens", 0)
-                                    cumulative_output_tokens += last_output_tokens
-
-        except CommandRejectedError as e:
-            stop_loading()
-            rich_console.print(f"\n[bold yellow]Operation cancelled:[/bold yellow] {e}")
-            return StreamResult(
-                response="",
-                input_tokens=last_input_tokens,
-                output_tokens=last_output_tokens,
-                cache_read_tokens=last_cache_read_tokens,
-                cache_creation_tokens=last_cache_creation_tokens,
-                model_name=model_name,
-                summarization_occurred=summarization_detected,
-            )
-
-        except GraphRecursionError:
-            # The agent looped past the per-turn step budget without finishing.
-            # End the turn gracefully (preserving any partial text) instead of
-            # crashing; the user can nudge it to continue or raise
-            # context.max_agent_steps. Any tool_use left dangling by the aborted
-            # turn is repaired by _heal_orphaned_tool_calls on the next turn.
-            stop_loading()
-            tool_handler.finalize_live()
-            limit = settings.context.max_agent_steps
-            rich_console.print(
-                f"\n[bold yellow]*WHIRR*[/bold yellow] Hit the step limit "
-                f"({limit} steps) without finishing. Stopping here so you can "
-                f"steer. Say 'continue' to resume, or raise "
-                f"[cyan]context.max_agent_steps[/cyan] in config for longer runs."
-            )
-            return StreamResult(
-                response=current_response,
-                input_tokens=last_input_tokens,
-                output_tokens=last_output_tokens,
-                cache_read_tokens=last_cache_read_tokens,
-                cache_creation_tokens=last_cache_creation_tokens,
-                model_name=model_name,
-                summarization_occurred=summarization_detected,
-            )
-
-        except (KeyboardInterrupt, asyncio.CancelledError):
-            stop_loading()
-            rich_console.print("\n[bold yellow]*BZZZT*[/bold yellow] Agent halted. Control returned to you. [bold yellow]*CLANK*[/bold yellow]")
-            return StreamResult(
-                response=current_response,
-                input_tokens=last_input_tokens,
-                output_tokens=last_output_tokens,
-                cache_read_tokens=last_cache_read_tokens,
-                cache_creation_tokens=last_cache_creation_tokens,
-                model_name=model_name,
-                summarization_occurred=summarization_detected,
-            )
-
-        except Exception as exc:  # noqa: BLE001
-            # A context-length / payload-too-large rejection (e.g. HTTP 413 from a
-            # proxy whose body-byte limit the token-based summarization trigger
-            # never catches). Re-raise anything else so cli.py's generic handler
-            # still logs genuine bugs. KeyboardInterrupt/CancelledError are
-            # BaseException and handled above, so this never swallows them.
-            from clanker.context import is_context_length_error
-
-            if not is_context_length_error(exc):
-                raise
-
-            stop_loading()
-            tool_handler.finalize_live()
-            get_logger("streaming").warning(
-                "Model call rejected as too large (context/payload): %s", exc
-            )
-            # Unwedge the persisted state so the next turn isn't stuck re-sending
-            # the same oversized history.
-            await _compact_oversized_tool_call_args(graph, config, settings)
-            rich_console.print(
-                "\n[bold yellow]*CLANK*[/bold yellow] That request was too large "
-                "for the model endpoint. I've trimmed the bulky bits from history "
-                "(large file contents are safe on disk) — try again or rephrase."
-            )
-            return StreamResult(
-                response=current_response,
-                input_tokens=last_input_tokens,
-                output_tokens=last_output_tokens,
-                cache_read_tokens=last_cache_read_tokens,
-                cache_creation_tokens=last_cache_creation_tokens,
-                model_name=model_name,
-                summarization_occurred=summarization_detected,
-            )
-
-        finally:
-            _teardown_live_displays(rich_console, stop_loading, tool_handler)
-            set_notify_callback(None)
-            set_ask_callback(None)
-            set_approval_callback(None)
-
-        # If we buffered thinking but never saw </think>, treat it as response
-        if current_thinking and not think_tag_closed and not current_response:
-            current_response = current_thinking
-            current_thinking = ""
-
-        # Print final response
-        if current_response.strip():
-            console.print_assistant_message(current_response)
-
-        # Show thinking summary if present
-        if current_thinking:
-            console.print_thinking(current_thinking)
-
-        return StreamResult(
-            response=current_response,
-            input_tokens=last_input_tokens,
-            output_tokens=last_output_tokens,
-            cache_read_tokens=last_cache_read_tokens,
-            cache_creation_tokens=last_cache_creation_tokens,
-            model_name=model_name,
-            summarization_occurred=summarization_detected,
-        )
-
-    # Run the async function using persistent loop with proper signal handling
     global _current_streaming_task, _interrupted
     _interrupted = False
 
@@ -770,9 +828,16 @@ def stream_agent_response_sync(
 
     loop = _get_or_create_loop()
 
+    if mid_turn_listener is not None:
+        mid_turn_listener.on_cancel = _cancel_streaming_task
+
     try:
         signal.signal(signal.SIGINT, _sigint_handler)
-        _current_streaming_task = loop.create_task(_stream_async())
+        _current_streaming_task = loop.create_task(
+            stream_agent_response_async(
+                settings, checkpointer, state, config, console, mid_turn_listener
+            )
+        )
         return loop.run_until_complete(_current_streaming_task)
     except asyncio.CancelledError:
         # Task was cancelled via signal handler
@@ -784,4 +849,5 @@ def stream_agent_response_sync(
     finally:
         _current_streaming_task = None
         signal.signal(signal.SIGINT, original_handler)
-
+        if mid_turn_listener is not None:
+            mid_turn_listener.finalize()
