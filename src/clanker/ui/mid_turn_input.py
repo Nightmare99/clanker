@@ -2,7 +2,7 @@
 
 Provides a unified terminal dashboard:
 - Top: Scrollable conversation history and agent streaming output.
-- Middle: Agent status bar (e.g. "Ready", "Thinking...", "Running tool...").
+- Middle: Agent status bar (e.g. "Ready", "Working...", "Running tool...").
 - Bottom: Input field showing `❯` (when idle) and `✎` (when running) for commands and prompts.
 """
 
@@ -488,7 +488,7 @@ class REPLApplication:
 
         # 2. It's a new conversation turn! Run the agent graph.
         try:
-            self.update_status("Thinking...")
+            self.update_status("Working...")
 
             from langchain_core.messages import HumanMessage
             user_msg = HumanMessage(content=text)
