@@ -54,7 +54,7 @@ ALL_TOOLS = [
     web_search,
     web_read,
     # Subagent tools
-    spawn_subagent,
+    # spawn_subagent, # TODO: Enable subagent tool once tested and stable
 ]
 
 
