@@ -1,5 +1,6 @@
 """Command-line interface for Clanker."""
 
+import asyncio
 import os
 import sys
 import time
@@ -34,7 +35,6 @@ from clanker.memory.memories import get_memory_store
 from clanker.ui.console import Console
 from clanker.ui.streaming import StreamResult, stream_agent_response_sync, cleanup_event_loop
 from clanker.ui.token_tracking import SessionTokenTracker
-from clanker.ui.mid_turn_input import REPLApplication
 from clanker.runtime import (
     set_yolo_mode,
 )
@@ -558,7 +558,7 @@ class CommandCompleter(Completer):
 
 
 def run_interactive(console: Console, settings: Settings, resume_session: str | None = None) -> None:
-    """Run the interactive REPL loop in fullscreen dashboard mode.
+    """Run the interactive REPL loop.
 
     Args:
         console: Console instance for output.
@@ -577,6 +577,7 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
         if messages:
             session_manager.resume_session(resume_session)
             resumed_messages = messages
+            console.print_info(f"Resuming session {resume_session} with {len(messages)} messages")
         else:
             console.print_warning(f"Session {resume_session} not found, starting new session")
 
@@ -599,6 +600,29 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
         console.print_info("Run 'clanker' to run the setup wizard.")
         sys.exit(1)
 
+    # Setup prompt history
+    history_path = settings.memory.storage_path / "history"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_session: PromptSession = PromptSession(
+        history=FileHistory(str(history_path)),
+        completer=CommandCompleter(),
+        complete_while_typing=True,
+    )
+
+    from clanker.agent.prompts import load_user_instructions
+    _has_user_instructions = bool(load_user_instructions())
+
+    console.print_welcome(user_instructions_loaded=_has_user_instructions)
+
+    # Check for updates (non-blocking, silent on failure)
+    try:
+        from clanker.update import get_update_message
+        update_msg = get_update_message()
+        if update_msg:
+            console.print_update_available(update_msg)
+    except Exception:
+        pass  # Silently ignore update check failures
+
     working_dir = os.getcwd()
 
     # Track messages for saving
@@ -614,7 +638,9 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
         conversation_messages = list(resumed_messages)
         pending_restore_messages = list(resumed_messages)
 
-    # Token tracking
+    # Token tracking. The context window comes solely from the user's model
+    # config (max_input_tokens); None means it's unset and the usage line will
+    # omit the context percentage.
     current_model = get_default_model()
     tracker_model_name = current_model.name if current_model else "unknown"
     token_tracker = SessionTokenTracker(
@@ -622,26 +648,162 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
         context_window=current_model.max_input_tokens if current_model else None,
     )
 
-    # Initialize REPLApplication (which is the fullscreen dashboard UI)
-    app = REPLApplication(
-        console=console,
-        settings=settings,
-        session_manager=session_manager,
-        token_tracker=token_tracker,
-        conversation_messages=conversation_messages,
-        pending_restore_messages=pending_restore_messages,
-        working_dir=working_dir,
-    )
+    while True:
+        try:
+            # Get user input
+            user_input = prompt_session.prompt("❯ ").strip()
 
-    import asyncio
-    # Start the fullscreen event loop
-    asyncio.run(app.run_async())
+            if not user_input:
+                continue
 
-    # Save final conversation snapshot on exit
-    if conversation_messages:
-        session_manager.save_conversation_snapshot(conversation_messages)
+            # Handle commands
+            if user_input.startswith("/"):
+                result = handle_command(user_input, console, session_manager, conversation_messages)
+                if result == "exit":
+                    # Save conversation before exiting
+                    if conversation_messages:
+                        session_manager.save_conversation_snapshot(conversation_messages)
+                    # Cleanup the persistent event loop
+                    cleanup_event_loop()
+                    break
+                elif result and result.startswith("restore:"):
+                    # Restore a session
+                    session_id = result.split(":", 1)[1]
+                    messages = session_manager.get_session_messages(session_id)
+                    if messages:
+                        # Save current conversation first
+                        if conversation_messages:
+                            session_manager.save_conversation_snapshot(conversation_messages)
+                        # Switch to restored session
+                        session_manager.resume_session(session_id)
+                        conversation_messages = list(messages)
+                        # Inject restored history into the next turn's graph state
+                        # so the agent actually remembers the conversation (the
+                        # new thread_id has no checkpoint until we seed it).
+                        pending_restore_messages = list(messages)
+                        console.print_info(f"Restored session {session_id} with {len(messages)} messages")
+                        # Show last few messages as context
+                        console.print_info("Recent messages:")
+                        for msg in messages[-4:]:
+                            role = "You" if hasattr(msg, "type") and msg.type == "human" else "Assistant"
+                            content = msg.content[:100] + "..." if len(msg.content) > 100 else msg.content
+                            console.print(f"  [{role}] {content}")
+                    else:
+                        console.print_warning(f"Session {session_id} not found")
+                    continue
+                elif result and result.startswith("workflow:"):
+                    # Execute workflow: treat content as user input
+                    user_input = result.split(":", 1)[1]
+                elif result and result.startswith("skill:"):
+                    # Execute skill: treat loaded instructions as user input
+                    user_input = result.split(":", 1)[1]
+                else:
+                    continue
 
-    cleanup_event_loop()
+            # Add user message to tracking
+            user_msg = HumanMessage(content=user_input)
+            conversation_messages.append(user_msg)
+
+            # Prepare state - the graph handles summarization automatically via SummarizationNode.
+            # On the first turn after a restore, prepend the restored history so it gets
+            # written into the checkpointer under the (new) thread_id; subsequent turns
+            # then resume normally from the checkpointer.
+            if pending_restore_messages:
+                turn_messages = [*pending_restore_messages, user_msg]
+                pending_restore_messages = []
+            else:
+                turn_messages = [user_msg]
+            state = {
+                "messages": turn_messages,
+                "working_directory": working_dir,
+            }
+
+            # Run agent
+            logger.info("Processing user message: %s", user_input[:100] + "..." if len(user_input) > 100 else user_input)
+            console.rule()
+            try:
+                result = stream_agent_response_sync(
+                    settings,
+                    session_manager.checkpointer,
+                    state,
+                    session_manager.get_config(),
+                    console,
+                )
+
+                # Track tokens
+                if result.input_tokens > 0 or result.output_tokens > 0:
+                    # Re-resolve the window from config so a mid-session
+                    # `/model <name>` switch is reflected in the usage line.
+                    cm = get_default_model()
+                    token_tracker.context_window = cm.max_input_tokens if cm else None
+                    # Compute cost for this turn (None when pricing not configured)
+                    turn_cost = cm.compute_cost(
+                        result.input_tokens,
+                        result.output_tokens,
+                        result.cache_read_tokens,
+                        result.cache_creation_tokens,
+                    ) if cm else None
+                    token_tracker.add_turn(
+                        result.input_tokens,
+                        result.output_tokens,
+                        result.cache_read_tokens,
+                        result.cache_creation_tokens,
+                        turn_cost,
+                    )
+
+                # Track AI response
+                if result.response:
+                    from langchain_core.messages import AIMessage
+                    conversation_messages.append(AIMessage(content=result.response))
+                    # Auto-save after each exchange
+                    session_manager.save_conversation_snapshot(conversation_messages)
+                else:
+                    # Dropped turn: the agent produced no response text, so nothing
+                    # is appended to history and the snapshot won't record this turn.
+                    # This is a prime suspect for "lost context" — log it loudly,
+                    # flagging when it coincides with a summarization (worst case:
+                    # history was compacted but the replacement turn was lost).
+                    logger.warning(
+                        "Empty agent response — turn produced no text (dropped turn). "
+                        "summarization_occurred=%s input_tokens=%d output_tokens=%d "
+                        "thread_id=%s history_len=%d",
+                        getattr(result, "summarization_occurred", "?"),
+                        result.input_tokens,
+                        result.output_tokens,
+                        session_manager.session_id,
+                        len(conversation_messages),
+                    )
+
+                # Show token usage
+                if (result.input_tokens > 0 or result.output_tokens > 0) and settings.output.show_token_usage:
+                    last_turn = token_tracker.turns[-1] if token_tracker.turns else None
+                    console.print_token_usage(
+                        result.input_tokens,
+                        result.output_tokens,
+                        token_tracker.context_used_percent,
+                        result.cache_read_tokens,
+                        result.cache_creation_tokens,
+                        cost_usd=last_turn.cost_usd if last_turn else None,
+                        session_cost_usd=token_tracker.total_cost_usd,
+                    )
+
+                logger.debug("Agent response completed successfully")
+            except Exception as e:
+                logger.exception("Agent error occurred: %s", e)
+                console.print_error(f"Agent error: {e}")
+
+            console.rule()
+
+        except KeyboardInterrupt:
+            console.print()
+            continue
+
+        except EOFError:
+            # Save conversation before exiting
+            if conversation_messages:
+                session_manager.save_conversation_snapshot(conversation_messages)
+            console.print("\n[bold cyan]*BZZZT*[/bold cyan] Signal lost. Powering down. [bold cyan]*click*[/bold cyan]")
+            break
 
 
 

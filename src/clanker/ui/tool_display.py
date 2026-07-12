@@ -291,7 +291,10 @@ class ToolDisplayHandler:
         """Update or create the Live display for pending tools."""
         if not self._pending_calls:
             if self._live:
-                self._live.stop()
+                try:
+                    self._live.stop()
+                except Exception:
+                    pass
                 self._live = None
             return
 
@@ -366,7 +369,10 @@ class ToolDisplayHandler:
 
         # Stop Live display before printing
         if self._live:
-            self._live.stop()
+            try:
+                self._live.stop()
+            except Exception:
+                pass
             self._live = None
 
         # Print header + result together (permanent output)
@@ -412,7 +418,10 @@ class ToolDisplayHandler:
         Call this at the end of a response to ensure no stale displays remain.
         """
         if self._live:
-            self._live.stop()
+            try:
+                self._live.stop()
+            except Exception:
+                pass
             self._live = None
         self._pending_calls.clear()
         self._pending_order.clear()

@@ -251,35 +251,36 @@ class Console:
     def _tool_summary_arg(self, tool_name: str, args: dict) -> str:
         """Return a short human-readable argument string for a tool call."""
         if tool_name in ("read_file", "write_file", "append_file", "edit_file"):
-            return args.get("file_path", "")
+            return str(args.get("file_path", ""))
         elif tool_name == "execute_shell":
-            return self._truncate(args.get("command", ""), 60)
+            return self._truncate(str(args.get("command", "")), 60)
         elif tool_name == "bash_background":
-            name = (args.get("name") or "").strip()
-            cmd = self._truncate(args.get("command", ""), 50)
+            name_val = args.get("name")
+            name = str(name_val).strip() if name_val is not None else ""
+            cmd = self._truncate(str(args.get("command", "")), 50)
             return f"[{name}] {cmd}" if name else cmd
         elif tool_name in ("bash_status", "bash_output", "bash_wait", "bash_kill"):
-            return _job_label(args.get("job_id", "all"))
+            return _job_label(str(args.get("job_id", "all")))
         elif tool_name == "glob_search":
-            pat = args.get("pattern", "*")
-            path = args.get("path", "")
+            pat = str(args.get("pattern", "*"))
+            path = str(args.get("path", ""))
             return f"{pat} in {path}" if path and path != "." else pat
         elif tool_name == "grep_search":
-            pat = self._truncate(args.get("pattern", ""), 40)
-            path = args.get("path", "")
+            pat = self._truncate(str(args.get("pattern", "")), 40)
+            path = str(args.get("path", ""))
             return f"{pat} in {path}" if path and path != "." else pat
         elif tool_name == "list_directory":
-            return args.get("path", ".")
+            return str(args.get("path", "."))
         elif tool_name == "web_search":
-            return self._truncate(args.get("query", ""), 60)
+            return self._truncate(str(args.get("query", "")), 60)
         elif tool_name == "web_read":
-            return self._truncate(args.get("url", ""), 70)
+            return self._truncate(str(args.get("url", "")), 70)
         elif tool_name == "load_skill":
-            return args.get("name", "")
+            return str(args.get("name", ""))
         elif tool_name in ("remember", "recall"):
-            return self._truncate(args.get("topic", "") or args.get("query", ""), 40)
+            return self._truncate(str(args.get("topic", "") or args.get("query", "")), 40)
         elif tool_name == "notify":
-            return self._truncate(args.get("message", ""), 40)
+            return self._truncate(str(args.get("message", "")), 40)
         else:
             # MCP tools or unknown
             if "__" in tool_name:

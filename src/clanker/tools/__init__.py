@@ -22,6 +22,7 @@ from clanker.tools.notify_tools import notify
 from clanker.tools.search_tools import glob_search, grep_search
 from clanker.tools.skill_tools import load_skill
 from clanker.tools.web_tools import web_read, web_search
+from clanker.tools.subagent import spawn_subagent
 
 # All available tools
 ALL_TOOLS = [
@@ -52,6 +53,8 @@ ALL_TOOLS = [
     # Web tools
     web_search,
     web_read,
+    # Subagent tools
+    spawn_subagent,
 ]
 
 
@@ -94,4 +97,5 @@ __all__ = [
     "list_memories",
     "web_search",
     "web_read",
+    "spawn_subagent",
 ]

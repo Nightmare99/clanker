@@ -4,6 +4,7 @@ import asyncio
 import os
 import signal
 import sys
+import threading
 from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -13,13 +14,23 @@ from rich.spinner import Spinner
 from rich.text import Text
 
 from clanker.config import Settings
+
+_local_state = threading.local()
+
+
+def get_active_console():
+    """Get the currently active Console wrapper instance, or a default one."""
+    if getattr(_local_state, "active_console", None) is not None:
+        return _local_state.active_console
+    from clanker.ui.console import Console
+    return Console()
+
 from clanker.logging import get_logger
-from clanker.tools.bash_tools import CommandRejectedError, set_approval_callback
-from clanker.tools.notify_tools import set_notify_callback
-from clanker.tools.ask_tools import set_ask_callback
+from clanker.tools.bash_tools import CommandRejectedError, set_approval_callback, get_approval_callback
+from clanker.tools.notify_tools import set_notify_callback, get_notify_callback
+from clanker.tools.ask_tools import set_ask_callback, get_ask_callback
 from clanker.runtime import is_yolo_mode
 from clanker.ui.tool_display import ToolDisplayHandler, normalize_tool_output
-from clanker.ui.mid_turn_input import MidTurnInputListener
 
 # Persistent event loop for the streaming session
 _persistent_loop: asyncio.AbstractEventLoop | None = None
@@ -266,7 +277,9 @@ async def stream_agent_response_async(
     state: dict,
     config: dict,
     console,
-    mid_turn_listener: MidTurnInputListener | None = None,
+    tools: list | None = None,
+    middleware: list | None = None,
+    system_prompt: str | None = None,
 ) -> StreamResult:
     """Async handler for streaming agent response."""
     import asyncio
@@ -274,10 +287,20 @@ async def stream_agent_response_async(
     from langchain_core.messages import HumanMessage
     from clanker.agent import create_agent_graph_async
 
+    # Track active console and callbacks to allow nesting/subagents
+    old_console = getattr(_local_state, "active_console", None)
+    _local_state.active_console = console
+
+    old_notify = get_notify_callback()
+    old_ask = get_ask_callback()
+    old_approval = get_approval_callback()
+
     loop = asyncio.get_running_loop()
 
     # Create graph inside async context so MCP client is in same event loop
-    graph, mcp_client = await create_agent_graph_async(settings, checkpointer)
+    graph, mcp_client = await create_agent_graph_async(
+        settings, checkpointer, tools=tools, middleware=middleware, system_prompt=system_prompt
+    )
     current_response = ""  # Buffer for current model run
     current_thinking = ""  # Buffer for thinking content
     shown_tool_calls: set[str] = set()
@@ -329,7 +352,10 @@ async def stream_agent_response_async(
         global _current_loading_live
         nonlocal loading_live
         if loading_live is not None:
-            loading_live.stop()
+            try:
+                loading_live.stop()
+            except Exception:
+                pass
             loading_live = None
             _current_loading_live = None
 
@@ -364,8 +390,6 @@ async def stream_agent_response_async(
             tool_handler.finalize_live()
         except Exception:
             pass
-        if mid_turn_listener is not None:
-            asyncio.run_coroutine_threadsafe(mid_turn_listener.suspend_async(), loop).result()
         try:
             return select_options(
                 question,
@@ -375,8 +399,6 @@ async def stream_agent_response_async(
                 allow_cancel=allow_cancel,
             )
         finally:
-            if mid_turn_listener is not None:
-                asyncio.run_coroutine_threadsafe(mid_turn_listener.resume_async(), loop).result()
             start_loading()
 
     set_ask_callback(_ask_callback)
@@ -391,8 +413,6 @@ async def stream_agent_response_async(
             tool_handler.finalize_live()
         except Exception:
             pass
-        if mid_turn_listener is not None:
-            asyncio.run_coroutine_threadsafe(mid_turn_listener.suspend_async(), loop).result()
         try:
             return select_options(
                 question,
@@ -402,8 +422,6 @@ async def stream_agent_response_async(
                 preface=preface,
             )
         finally:
-            if mid_turn_listener is not None:
-                asyncio.run_coroutine_threadsafe(mid_turn_listener.resume_async(), loop).result()
             start_loading()
 
     set_approval_callback(_approval_callback)
@@ -411,10 +429,6 @@ async def stream_agent_response_async(
     try:
         # Start loading spinner
         start_loading()
-
-        # Start mid-turn input listener if provided
-        if mid_turn_listener is not None:
-            mid_turn_listener.start_async()
 
         # Add recursion limit to config (default 100 is too low for complex tasks).
         # Configurable so large multi-file lint/test loops don't hit it prematurely.
@@ -456,37 +470,11 @@ async def stream_agent_response_async(
                 if event_type == "on_tool_start":
                     tools_started = True
 
-                    # --- Mid-turn injection point ---
-                    # Between tool calls is the safest place to inject user
-                    # messages: the model has just issued a tool call, the
-                    # tool hasn't run yet, so history is in a clean state.
-                    if mid_turn_listener and mid_turn_listener.has_messages():
-                        queued = mid_turn_listener.drain()
-                        for user_text in queued:
-                            try:
-                                stop_loading()
-                                tool_handler.finalize_live()
-                                await graph.aupdate_state(
-                                    config,
-                                    {"messages": [HumanMessage(content=user_text)]},
-                                    as_node="tools",
-                                )
-                                get_logger("streaming").info(
-                                    "Mid-turn message injected: %s", user_text[:80]
-                                )
-                                start_loading("Processing your message...")
-                            except Exception as exc:  # noqa: BLE001
-                                get_logger("streaming").warning(
-                                    "Failed to inject mid-turn message: %s", exc
-                                )
-
                     if settings.output.show_tool_calls:
                         run_id = event.get("run_id", "")
                         if run_id and run_id not in shown_tool_calls:
                             shown_tool_calls.add(run_id)
                             tool_name = event.get("name", "unknown")
-                            if mid_turn_listener is not None:
-                                mid_turn_listener.update_status(f"Running tool {tool_name}...")
                             tool_input = event.get("data", {}).get("input", {})
                             # Skip run display when approval is needed
                             if tool_name == "run" and not is_yolo_mode():
@@ -499,9 +487,6 @@ async def stream_agent_response_async(
                             # printed together with header when tool ends
                             tool_handler.handle_tool_start(tool_name, tool_input)
                     else:
-                        if mid_turn_listener is not None:
-                            tool_name = event.get("name", "unknown")
-                            mid_turn_listener.update_status(f"Running tool {tool_name}...")
                         stop_loading()
 
                 # Show tool result
@@ -522,8 +507,6 @@ async def stream_agent_response_async(
 
                 # Track model calls to detect summarization
                 elif event_type == "on_chat_model_start":
-                    if mid_turn_listener is not None:
-                        mid_turn_listener.update_status("Thinking...")
                     run_id = event.get("run_id", "")
                     if run_id != current_model_run:
                         model_call_count += 1
@@ -763,11 +746,10 @@ async def stream_agent_response_async(
 
     finally:
         _teardown_live_displays(rich_console, stop_loading, tool_handler)
-        set_notify_callback(None)
-        set_ask_callback(None)
-        set_approval_callback(None)
-        if mid_turn_listener is not None:
-            await mid_turn_listener.stop_async()
+        set_notify_callback(old_notify)
+        set_ask_callback(old_ask)
+        set_approval_callback(old_approval)
+        _local_state.active_console = old_console
 
     # If we buffered thinking but never saw </think>, treat it as response
     if current_thinking and not think_tag_closed and not current_response:
@@ -799,7 +781,9 @@ def stream_agent_response_sync(
     state: dict,
     config: dict,
     console,
-    mid_turn_listener: MidTurnInputListener | None = None,
+    tools: list | None = None,
+    middleware: list | None = None,
+    system_prompt: str | None = None,
 ) -> StreamResult:
     """Synchronous wrapper for async stream_agent_response.
 
@@ -818,24 +802,83 @@ def stream_agent_response_sync(
     """
     global _current_streaming_task, _interrupted
     _interrupted = False
+    import threading
 
-    # Install signal handler to cancel task on Ctrl+C
-    original_handler = signal.getsignal(signal.SIGINT)
-
-    def _sigint_handler(signum, frame):
-        """Handle SIGINT by cancelling the streaming task."""
-        _cancel_streaming_task()
-
-    loop = _get_or_create_loop()
-
-    if mid_turn_listener is not None:
-        mid_turn_listener.on_cancel = _cancel_streaming_task
+    # Install signal handler to cancel task on Ctrl+C if in main thread
+    original_handler = None
+    try:
+        original_handler = signal.getsignal(signal.SIGINT)
+        def _sigint_handler(signum, frame):
+            """Handle SIGINT by cancelling the streaming task."""
+            _cancel_streaming_task()
+        signal.signal(signal.SIGINT, _sigint_handler)
+    except ValueError:
+        # Not in main thread, ignore signal handling
+        pass
 
     try:
-        signal.signal(signal.SIGINT, _sigint_handler)
+        # If we are in a non-main thread, there might be an active loop in the main thread.
+        # Check if the main loop is already running.
+        try:
+            active_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            active_loop = None
+
+        import threading
+        is_main_thread = threading.current_thread() is threading.main_thread()
+
+        if active_loop is not None and active_loop.is_running():
+            # If the loop is running and we are not in the loop's thread (or in a background thread),
+            # we can run it threadsafe.
+            # Otherwise, if we are in the same thread as the running loop, we shouldn't call future.result()
+            # or run_until_complete because it will block and deadlock.
+            # In that case, we can run it via a helper thread to bypass the block.
+            coro = stream_agent_response_async(
+                settings, checkpointer, state, config, console,
+                tools=tools, middleware=middleware, system_prompt=system_prompt
+            )
+
+            # Use run_coroutine_threadsafe but retrieve result safely.
+            # If we are in the main thread (same thread as active_loop), future.result() would deadlock.
+            # But wait, if we are in the main thread, how did we get here?
+            # Orchestrator runs in the main thread under create_task.
+            # To prevent deadlock, if we are in the main thread, we must run the coroutine in a new thread
+            # with its own loop, OR run it safely.
+            # Actually, the simplest way is: if active_loop.is_running() and is_main_thread:
+            # We run it in a separate thread with a new loop to completely isolate it!
+            if is_main_thread:
+                res_container = []
+                def run_isolated():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        res = new_loop.run_until_complete(
+                            stream_agent_response_async(
+                                settings, checkpointer, state, config, console,
+                                tools=tools, middleware=middleware, system_prompt=system_prompt
+                            )
+                        )
+                        res_container.append(res)
+                    except Exception as e:
+                        res_container.append(e)
+                    finally:
+                        new_loop.close()
+                t = threading.Thread(target=run_isolated)
+                t.start()
+                t.join()
+                if res_container and isinstance(res_container[0], Exception):
+                    raise res_container[0]
+                return res_container[0] if res_container else StreamResult(response="")
+            else:
+                future = asyncio.run_coroutine_threadsafe(coro, active_loop)
+                return future.result()
+
+        # Otherwise, fall back to our persistent loop
+        loop = _get_or_create_loop()
         _current_streaming_task = loop.create_task(
             stream_agent_response_async(
-                settings, checkpointer, state, config, console, mid_turn_listener
+                settings, checkpointer, state, config, console,
+                tools=tools, middleware=middleware, system_prompt=system_prompt
             )
         )
         return loop.run_until_complete(_current_streaming_task)
@@ -848,6 +891,8 @@ def stream_agent_response_sync(
         return StreamResult(response="")
     finally:
         _current_streaming_task = None
-        signal.signal(signal.SIGINT, original_handler)
-        if mid_turn_listener is not None:
-            mid_turn_listener.finalize()
+        if original_handler is not None:
+            try:
+                signal.signal(signal.SIGINT, original_handler)
+            except ValueError:
+                pass

@@ -71,12 +71,18 @@ def create_model(settings: Settings = None):
 def create_agent_graph(
     settings: Settings | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
+    tools: list | None = None,
+    middleware: list | None = None,
+    system_prompt: str | None = None,
 ):
     """Create an agent with SummarizationMiddleware.
 
     Args:
         settings: Optional settings override.
         checkpointer: Optional checkpointer for persistence.
+        tools: Optional list of tools override.
+        middleware: Optional list of middleware override.
+        system_prompt: Optional system prompt override.
 
     Returns:
         Compiled agent with automatic summarization.
@@ -84,7 +90,7 @@ def create_agent_graph(
     settings = settings or get_settings()
 
     # Get all tools (built-in + MCP)
-    all_tools = _get_all_tools(settings)
+    all_tools = tools if tools is not None else _get_all_tools(settings)
 
     # Create model
     model = create_model(settings)
@@ -93,41 +99,38 @@ def create_agent_graph(
     trigger_fraction = settings.context.summarization_threshold / 100.0
     logger.info("Summarization trigger: %.0f%% of context window", settings.context.summarization_threshold)
 
-    # Create summarization middleware using the same model
-    # Uses fraction-based trigger which automatically uses model's context window
-    summarization = RobustSummarizationMiddleware(
-        model=model,
-        trigger=("fraction", trigger_fraction),
-        keep=("messages", settings.context.keep_recent_turns * 2),
-    )
+    if middleware is None:
+        # Create summarization middleware using the same model
+        # Uses fraction-based trigger which automatically uses model's context window
+        summarization = RobustSummarizationMiddleware(
+            model=model,
+            trigger=("fraction", trigger_fraction),
+            keep=("messages", settings.context.keep_recent_turns * 2),
+        )
 
-    # Cap oversized tool results at the tool boundary so a single large result
-    # cannot overflow the context window even within summarization's kept window.
-    tool_truncation = ToolResultTruncationMiddleware(
-        max_tokens=settings.context.max_tool_result_tokens,
-    )
+        # Cap oversized tool results at the tool boundary so a single large result
+        # cannot overflow the context window even within summarization's kept window.
+        tool_truncation = ToolResultTruncationMiddleware(
+            max_tokens=settings.context.max_tool_result_tokens,
+        )
 
-    # Cap oversized tool-call ARGUMENTS on the request path so accumulated large
-    # writes/edits cannot bloat the request past a proxy's HTTP body-byte limit
-    # (a common cause of 413 that the token-based summarization trigger misses).
-    tool_call_arg_truncation = ToolCallArgTruncationMiddleware(
-        max_tokens=settings.context.max_tool_call_arg_tokens,
-    )
+        # Cap oversized tool-call ARGUMENTS on the request path so accumulated large
+        # writes/edits cannot bloat the request past a proxy's HTTP body-byte limit
+        # (a common cause of 413 that the token-based summarization trigger misses).
+        tool_call_arg_truncation = ToolCallArgTruncationMiddleware(
+            max_tokens=settings.context.max_tool_call_arg_tokens,
+        )
+
+        middleware = [tool_truncation, multimodal_tool_results, summarization, tool_call_arg_truncation]
 
     # Create agent with middleware
     # Order matters: first = outermost, last = innermost on the request path.
-    # - tool_truncation: bounds any single tool RESULT (tool path)
-    # - multimodal_tool_results: converts tool results with images to multimodal ToolMessages
-    # - summarization: handles context window management (before_model node)
-    # - tool_call_arg_truncation: bounds oversized tool-call ARGS last, so it
-    #   trims exactly the messages that hit the wire after summarization selects
-    #   its kept window
     agent = create_agent(
         model=model,
         tools=all_tools,
-        middleware=[tool_truncation, multimodal_tool_results, summarization, tool_call_arg_truncation],
+        middleware=middleware,
         checkpointer=checkpointer,
-        system_prompt=get_system_prompt(),
+        system_prompt=system_prompt if system_prompt is not None else get_system_prompt(),
     )
 
     return agent
@@ -136,33 +139,43 @@ def create_agent_graph(
 async def create_agent_graph_async(
     settings: Settings | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
+    tools: list | None = None,
+    middleware: list | None = None,
+    system_prompt: str | None = None,
 ):
     """Create an agent with async MCP tool loading and SummarizationMiddleware.
 
     Args:
         settings: Optional settings override.
         checkpointer: Optional checkpointer for persistence.
+        tools: Optional list of tools override.
+        middleware: Optional list of middleware override.
+        system_prompt: Optional system prompt override.
 
     Returns:
         Tuple of (agent, mcp_client). Keep mcp_client alive while using agent.
     """
     settings = settings or get_settings()
 
-    # Get built-in tools
-    tools = get_tools()
-    logger.debug("Loaded %d built-in tools", len(tools))
-
-    # Load MCP tools asynchronously
+    # Get tools
     mcp_client = None
-    if settings.mcp.enabled:
-        try:
-            mcp_client, mcp_tools = await load_mcp_tools_async(settings)
-            tools.extend(mcp_tools)
-            logger.info("Loaded %d MCP tools", len(mcp_tools))
-        except Exception as e:
-            logger.warning("Failed to load MCP tools: %s", e)
+    if tools is not None:
+        all_tools = tools
+    else:
+        # Get built-in tools
+        all_tools = get_tools()
+        logger.debug("Loaded %d built-in tools", len(all_tools))
 
-    logger.debug("Total tools available: %d", len(tools))
+        # Load MCP tools asynchronously
+        if settings.mcp.enabled:
+            try:
+                mcp_client, mcp_tools = await load_mcp_tools_async(settings)
+                all_tools.extend(mcp_tools)
+                logger.info("Loaded %d MCP tools", len(mcp_tools))
+            except Exception as e:
+                logger.warning("Failed to load MCP tools: %s", e)
+
+    logger.debug("Total tools available: %d", len(all_tools))
 
     # Create model
     model = create_model(settings)
@@ -171,41 +184,38 @@ async def create_agent_graph_async(
     trigger_fraction = settings.context.summarization_threshold / 100.0
     logger.info("Summarization trigger: %.0f%% of context window", settings.context.summarization_threshold)
 
-    # Create summarization middleware using the same model
-    # Uses fraction-based trigger which automatically uses model's context window
-    summarization = RobustSummarizationMiddleware(
-        model=model,
-        trigger=("fraction", trigger_fraction),
-        keep=("messages", settings.context.keep_recent_turns * 2),
-    )
+    if middleware is None:
+        # Create summarization middleware using the same model
+        # Uses fraction-based trigger which automatically uses model's context window
+        summarization = RobustSummarizationMiddleware(
+            model=model,
+            trigger=("fraction", trigger_fraction),
+            keep=("messages", settings.context.keep_recent_turns * 2),
+        )
 
-    # Cap oversized tool results at the tool boundary so a single large result
-    # cannot overflow the context window even within summarization's kept window.
-    tool_truncation = ToolResultTruncationMiddleware(
-        max_tokens=settings.context.max_tool_result_tokens,
-    )
+        # Cap oversized tool results at the tool boundary so a single large result
+        # cannot overflow the context window even within summarization's kept window.
+        tool_truncation = ToolResultTruncationMiddleware(
+            max_tokens=settings.context.max_tool_result_tokens,
+        )
 
-    # Cap oversized tool-call ARGUMENTS on the request path so accumulated large
-    # writes/edits cannot bloat the request past a proxy's HTTP body-byte limit
-    # (a common cause of 413 that the token-based summarization trigger misses).
-    tool_call_arg_truncation = ToolCallArgTruncationMiddleware(
-        max_tokens=settings.context.max_tool_call_arg_tokens,
-    )
+        # Cap oversized tool-call ARGUMENTS on the request path so accumulated large
+        # writes/edits cannot bloat the request past a proxy's HTTP body-byte limit
+        # (a common cause of 413 that the token-based summarization trigger misses).
+        tool_call_arg_truncation = ToolCallArgTruncationMiddleware(
+            max_tokens=settings.context.max_tool_call_arg_tokens,
+        )
+
+        middleware = [tool_truncation, multimodal_tool_results, summarization, tool_call_arg_truncation]
 
     # Create agent with middleware
     # Order matters: first = outermost, last = innermost on the request path.
-    # - tool_truncation: bounds any single tool RESULT (tool path)
-    # - multimodal_tool_results: converts tool results with images to multimodal ToolMessages
-    # - summarization: handles context window management (before_model node)
-    # - tool_call_arg_truncation: bounds oversized tool-call ARGS last, so it
-    #   trims exactly the messages that hit the wire after summarization selects
-    #   its kept window
     agent = create_agent(
         model=model,
-        tools=tools,
-        middleware=[tool_truncation, multimodal_tool_results, summarization, tool_call_arg_truncation],
+        tools=all_tools,
+        middleware=middleware,
         checkpointer=checkpointer,
-        system_prompt=get_system_prompt(),
+        system_prompt=system_prompt if system_prompt is not None else get_system_prompt(),
     )
 
     return agent, mcp_client
