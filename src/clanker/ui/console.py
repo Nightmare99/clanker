@@ -434,6 +434,18 @@ class Console:
                 return str(parsed.get("error", "not found"))[:max_chars]
             return None
 
+        if tool_name == "load_agent":
+            if parsed and parsed.get("ok"):
+                name = parsed.get("name", "?")
+                desc = parsed.get("description", "")
+                summary = f"loaded {name}"
+                if desc:
+                    summary += f"  — {desc[:max_chars - len(summary) - 3]}"
+                return summary[:max_chars]
+            if parsed and not parsed.get("ok"):
+                return str(parsed.get("error", "not found"))[:max_chars]
+            return None
+
         if tool_name in ("bash", "execute_shell"):
             # Failure: result starts with "Command exited with code N\n{output}".
             # Summarize as the exit-code line so the red ✗ has a clear message.
@@ -594,6 +606,29 @@ class Console:
             elif parsed and not parsed.get("ok"):
                 available = parsed.get("available", [])
                 msg = str(parsed.get("error", "Skill not found"))
+                if available:
+                    msg += f" Available: {', '.join(available)}"
+                self._print_dim(msg[:max_chars])
+            return
+
+        if tool_name == "load_agent":
+            if parsed and parsed.get("ok"):
+                name = parsed.get("name", "")
+                desc = parsed.get("description", "")
+                tools = parsed.get("tools", "")
+                if isinstance(tools, list):
+                    tools_str = ", ".join(tools) if tools else "(all default tools)"
+                else:
+                    tools_str = str(tools)
+                msg = f"Loaded agent {name}"
+                if desc:
+                    msg += f"  — {desc[:50]}"
+                if tools_str and tools_str != "(all default tools)":
+                    msg += f"  [tools: {tools_str}]"
+                self._print_dim(msg)
+            elif parsed and not parsed.get("ok"):
+                available = parsed.get("available", [])
+                msg = str(parsed.get("error", "Agent not found"))
                 if available:
                     msg += f" Available: {', '.join(available)}"
                 self._print_dim(msg[:max_chars])

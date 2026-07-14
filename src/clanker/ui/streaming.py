@@ -479,9 +479,9 @@ async def stream_agent_response_async(
                             # Skip run display when approval is needed
                             if tool_name == "run" and not is_yolo_mode():
                                 continue
-                            # Skip display-only tools (notify, ask_user) -
+                            # Skip display-only tools (notify, ask_user, spawn_subagent) -
                             # they render their own output.
-                            if tool_name.lower() in ("notify", "ask_user"):
+                            if tool_name.lower() in ("notify", "ask_user", "spawn_subagent"):
                                 continue
                             # Queue tool with spinner - result will be
                             # printed together with header when tool ends
@@ -492,7 +492,7 @@ async def stream_agent_response_async(
                 # Show tool result
                 elif event_type == "on_tool_end":
                     tool_name_end = event.get("name", "")
-                    if tool_name_end.lower() in ("notify", "ask_user"):
+                    if tool_name_end.lower() in ("notify", "ask_user", "spawn_subagent"):
                         start_loading()
                         continue
                     # Show tool header + output together

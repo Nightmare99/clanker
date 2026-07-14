@@ -50,6 +50,8 @@ The agent has access to the following first-party tools:
 | `grep_search` | Search file contents using regex |
 | `execute_shell` | Execute shell commands (sandboxed) |
 | `notify` | Send an immediate status update to the user mid-execution |
+| `load_agent` | Load configuration for a configured agent |
+| `spawn_subagent` | Spawn a configured agent to handle a subtask |
 
 Additional tools may be exposed via **MCP servers**.
 
@@ -72,6 +74,7 @@ Agents MUST respect the following constraints:
 clanker/
 ├── src/clanker/
 │   ├── agent/       # LangGraph agent logic
+│   ├── agents.py    # Configurable agents discovery/loading
 │   ├── tools/       # Tool implementations
 │   ├── memory/      # Session persistence
 │   ├── ui/          # CLI, streaming output

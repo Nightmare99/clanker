@@ -19,46 +19,88 @@ from clanker.tools.bash_tools import get_approval_callback, set_approval_callbac
 
 @pytest.mark.asyncio
 async def test_spawn_subagent_success() -> None:
-    """spawn_subagent successfully runs stream_agent_response_async and returns a dictionary."""
+    """spawn_subagent runs stream_agent_response_async in a dedicated thread and returns a dictionary."""
     mock_result = StreamResult(
         response="Subagent output task complete",
         input_tokens=15,
         output_tokens=10,
     )
 
+    mock_agent = MagicMock()
+    mock_agent.name = "test-agent"
+    mock_agent.system_prompt = "You are a test helper agent"
+    mock_agent.tools = []
+
     with patch(
+        "clanker.tools.subagent.load_agent_config",
+        return_value=mock_agent,
+    ), patch(
         "clanker.ui.streaming.stream_agent_response_async",
         new_callable=AsyncMock,
         return_value=mock_result,
-    ) as mock_stream:
+    ) as mock_stream, patch(
+        "clanker.ui.streaming.get_active_console",
+    ):
         res = await spawn_subagent.ainvoke(
-            {"prompt": "Run a test", "system_prompt": "You are a test helper"}
+            {"agent_name": "test-agent", "prompt": "Run a test"}
         )
 
         assert res["success"] is True
-        assert res["response"] == "Subagent output task complete"
+        assert res["agent"] == "test-agent"
+        assert "summary" in res
+        assert "Subagent output task complete" in res["summary"]
         assert res["input_tokens"] == 15
         assert res["output_tokens"] == 10
 
-        # Verify stream_agent_response_async is called with proper args
         mock_stream.assert_called_once()
         kwargs = mock_stream.call_args[1]
         assert kwargs["checkpointer"] is None
-        assert kwargs["system_prompt"] == "You are a test helper"
+        assert kwargs["system_prompt"] == "You are a test helper agent"
         assert len(kwargs["state"]["messages"]) == 1
         assert isinstance(kwargs["state"]["messages"][0], HumanMessage)
         assert kwargs["state"]["messages"][0].content == "Run a test"
 
 
 @pytest.mark.asyncio
-async def test_spawn_subagent_failure() -> None:
-    """spawn_subagent handles exceptions raised inside stream_agent_response_async and returns error dictionary."""
+async def test_spawn_subagent_agent_not_found() -> None:
+    """spawn_subagent returns error when agent config is not found."""
     with patch(
+        "clanker.tools.subagent.load_agent_config",
+        return_value=None,
+    ), patch(
+        "clanker.agents.list_agents",
+        return_value={"code-reviewer": MagicMock(), "tester": MagicMock()},
+    ):
+        res = await spawn_subagent.ainvoke(
+            {"agent_name": "nonexistent", "prompt": "Run a test"}
+        )
+
+        assert res["success"] is False
+        assert "error" in res
+        assert "nonexistent" in res["error"]
+
+
+@pytest.mark.asyncio
+async def test_spawn_subagent_failure() -> None:
+    """spawn_subagent handles exceptions raised inside stream_agent_response_async."""
+    mock_agent = MagicMock()
+    mock_agent.name = "test-agent"
+    mock_agent.system_prompt = "You are a test helper agent"
+    mock_agent.tools = []
+
+    with patch(
+        "clanker.tools.subagent.load_agent_config",
+        return_value=mock_agent,
+    ), patch(
         "clanker.ui.streaming.stream_agent_response_async",
         new_callable=AsyncMock,
         side_effect=ValueError("LLM API quota exceeded"),
+    ), patch(
+        "clanker.ui.streaming.get_active_console",
     ):
-        res = await spawn_subagent.ainvoke({"prompt": "Run another test"})
+        res = await spawn_subagent.ainvoke(
+            {"agent_name": "test-agent", "prompt": "Run another test"}
+        )
 
         assert res["success"] is False
         assert "error" in res
@@ -75,7 +117,6 @@ async def test_callback_preservation() -> None:
     parent_ask = MagicMock()
     parent_approval = MagicMock()
 
-    # Pre-register parent callbacks
     set_notify_callback(parent_notify)
     set_ask_callback(parent_ask)
     set_approval_callback(parent_approval)
@@ -83,69 +124,40 @@ async def test_callback_preservation() -> None:
 
     mock_result = StreamResult(response="Done")
 
-    # We mock the inner graph execution to check that callbacks are set during execution
-    # but restored when the execution exits.
-    async def fake_stream(*args, **kwargs) -> StreamResult:
-        # Inside execution, callbacks should match what is passed, but wait!
-        # stream_agent_response_async registers new local callbacks
+    async def empty_generator(*args, **kwargs):
         assert get_notify_callback() is not parent_notify
         assert get_ask_callback() is not parent_ask
         assert get_approval_callback() is not parent_approval
         assert get_active_console() is child_console
-        return mock_result
+        for x in []:
+            yield x
 
-    # Let's mock create_agent_graph_async to avoid actual LangGraph construction
-    # and just mock the graph execution loop to test the outer try/finally wrapper
+    mock_graph = MagicMock()
+    mock_graph.astream_events = empty_generator
+
     with patch(
         "clanker.agent.create_agent_graph_async",
         new_callable=AsyncMock,
-        return_value=(MagicMock(), MagicMock()),
+        return_value=(mock_graph, MagicMock()),
     ), patch(
         "clanker.ui.streaming._teardown_live_displays"
     ), patch(
         "clanker.ui.streaming._heal_orphaned_tool_calls",
         new_callable=AsyncMock,
     ):
-        # We need to run stream_agent_response_async to see if it sets and restores
-        # active console and callbacks.
-        # Let's mock the event stream loop or let it exit early.
-        # Actually, let's patch the async generator astream_events to return an empty generator.
-        async def empty_generator(*args, **kwargs):
-            # Assert inside execution context
-            assert get_notify_callback() is not parent_notify
-            assert get_ask_callback() is not parent_ask
-            assert get_approval_callback() is not parent_approval
-            assert get_active_console() is child_console
-            for x in []:
-                yield x
+        await stream_agent_response_async(
+            settings=MagicMock(),
+            checkpointer=None,
+            state={"messages": []},
+            config={"configurable": {"thread_id": "test"}},
+            console=child_console,
+        )
 
-        with patch(
-            "langgraph.prebuilt.chat_agent_executor.create_react_agent",  # or mock graph
-            return_value=MagicMock(),
-        ) as mock_create:
-            mock_graph = MagicMock()
-            mock_graph.astream_events = empty_generator
-
-            with patch(
-                "clanker.agent.create_agent_graph_async",
-                new_callable=AsyncMock,
-                return_value=(mock_graph, MagicMock()),
-            ):
-                await stream_agent_response_async(
-                    settings=MagicMock(),
-                    checkpointer=None,
-                    state={"messages": []},
-                    config={"configurable": {"thread_id": "test"}},
-                    console=child_console,
-                )
-
-    # After execution exits, parent callbacks and console must be restored
     assert get_notify_callback() is parent_notify
     assert get_ask_callback() is parent_ask
     assert get_approval_callback() is parent_approval
     assert get_active_console() is parent_console
 
-    # Cleanup
     set_notify_callback(None)
     set_ask_callback(None)
     set_approval_callback(None)

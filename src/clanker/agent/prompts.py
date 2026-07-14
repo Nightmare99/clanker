@@ -56,6 +56,26 @@ def load_skills_catalog(working_directory: str | None = None) -> str:
         return ""
 
 
+def load_agents_catalog(working_directory: str | None = None) -> str:
+    """Load the always-on agents catalog for injection into the system prompt.
+
+    Returns a formatted list of available agents (name + description), or an
+    empty string if none exist.
+
+    Args:
+        working_directory: Workspace root. Defaults to current directory.
+
+    Returns:
+        Catalog string, or empty string if no agents / on error.
+    """
+    try:
+        from clanker.agents import get_agents_catalog
+
+        return get_agents_catalog(working_directory)
+    except Exception:
+        return ""
+
+
 SYSTEM_PROMPT = """\
 You are CLANKER, an expert software engineer with deep knowledge across the entire stack. You write clean, maintainable code and solve problems efficiently.
 
@@ -150,6 +170,15 @@ Prefer `bash_background` for tests, builds, installs, dev servers, long greps, o
 - `load_skill(name)` - Load full instructions for a skill listed in AVAILABLE SKILLS.
 - When a request matches a skill's description, call `load_skill` FIRST, then follow the returned steps. Skills may bundle scripts/templates - read them with `read_file`, run them with `execute_shell`.
 
+## Agents
+- `load_agent(name)` - Load configuration for an agent listed in AVAILABLE AGENTS.
+- `spawn_subagent(agent_name, prompt)` - Spawn a configured subagent to handle a subtask.
+  The subagent streams its full output live to the user terminal. The return value
+  contains a `summary` key with a brief recap. **The subagent's output is already
+  complete — do NOT continue, repeat, or re-summarize it.** Simply acknowledge what
+  was found and move on to the next step.
+- When a task is better suited to a specialized agent, call `load_agent` to see its configuration, then `spawn_subagent` with the agent's name and a detailed prompt.
+
 # CODE QUALITY
 
 Write code as if the next person to read it is a mass murderer who knows where you live:
@@ -213,6 +242,21 @@ When a user request matches a skill, call `load_skill("<name>")` FIRST to retrie
 instructions, then follow them. Do not guess a skill's steps from its description alone.
 
 {skills_catalog}
+
+"""
+
+    # Inject available agents catalog from .clanker/agents/ (project + personal)
+    agents_catalog = load_agents_catalog(working_directory)
+    if agents_catalog:
+        prompt += f"""
+# AVAILABLE AGENTS
+
+You have access to specialized agents. Each agent below shows its name and when to use it.
+When a task is better handled by a specialized agent, call `spawn_subagent(agent_name="<name>", prompt="...")`
+to delegate the subtask. The agent runs independently with its own system prompt and streams
+its full output live to the user. The return value is only a brief summary — do not repeat it.
+
+{agents_catalog}
 
 """
 

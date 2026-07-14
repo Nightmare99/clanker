@@ -1,5 +1,6 @@
 """Tool definitions for Clanker agent."""
 
+from clanker.tools.agent_tools import load_agent
 from clanker.tools.ask_tools import ask_user
 from clanker.tools.background import (
     bash_background,
@@ -21,8 +22,8 @@ from clanker.tools.memory_tools import forget, list_memories, recall, remember
 from clanker.tools.notify_tools import notify
 from clanker.tools.search_tools import glob_search, grep_search
 from clanker.tools.skill_tools import load_skill
-from clanker.tools.web_tools import web_read, web_search
 from clanker.tools.subagent import spawn_subagent
+from clanker.tools.web_tools import web_read, web_search
 
 # All available tools
 ALL_TOOLS = [
@@ -45,6 +46,8 @@ ALL_TOOLS = [
     ask_user,
     # Skill tools
     load_skill,
+    # Agent tools
+    load_agent,
     # Memory tools
     remember,
     recall,
@@ -54,7 +57,7 @@ ALL_TOOLS = [
     web_search,
     web_read,
     # Subagent tools
-    # spawn_subagent, # TODO: Enable subagent tool once tested and stable
+    spawn_subagent,
 ]
 
 
@@ -91,6 +94,7 @@ __all__ = [
     "notify",
     "ask_user",
     "load_skill",
+    "load_agent",
     "remember",
     "recall",
     "forget",
