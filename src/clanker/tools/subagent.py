@@ -98,7 +98,7 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
     # Create a separate Console for the subagent that writes to the same
     # terminal file descriptor. This gives the subagent its own Rich console
     # so its Live/spinner doesn't conflict with the parent's.
-    sub_console = Console()
+    sub_console = Console(agent_label=agent_name)
     sub_console._console.file = parent_console._console.file
 
     # Resolve tools for this agent

@@ -158,10 +158,23 @@ _LEFT_BORDER_BOX = box.Box(
 class Console:
     """Rich console wrapper for Clanker output."""
 
-    def __init__(self):
-        """Initialize the console."""
+    def __init__(self, agent_label: str | None = None):
+        """Initialize the console.
+
+        Args:
+            agent_label: Optional agent name shown as a prefix on tool rows and
+                output lines so the user can tell which agent is acting.
+                ``None`` means the main Clanker agent.
+        """
         self._console = RichConsole(theme=CLANKER_THEME)
         self._settings = get_settings()
+        self._agent_label = agent_label
+
+    def _agent_prefix(self) -> str:
+        """Return a styled agent prefix string for display."""
+        if self._agent_label:
+            return f"[{self._agent_label}] "
+        return ""
 
     @property
     def width(self) -> int:
@@ -313,6 +326,9 @@ class Console:
         text = Text()
         # Teal badge: [ tool_name ]
         text.append(" ", style="dim")
+        agent_prefix = self._agent_prefix()
+        if agent_prefix:
+            text.append(agent_prefix, style="dim cyan")
         text.append(f" {display_name} ", style="tool.badge")
         text.append(" ", style="dim")
         if mcp_prefix:
@@ -349,12 +365,15 @@ class Console:
     def _print_dim(self, text_str: str) -> None:
         """Print dim/muted text with consistent indent on all lines."""
         indent = "    "
+        agent_prefix = self._agent_prefix()
         # Replace tabs with spaces for consistent alignment
         text_str = text_str.replace("\t", "  ")
         lines = text_str.split("\n")
         for line in lines:
             text = Text()
             text.append(indent, style="dim")
+            if agent_prefix:
+                text.append(agent_prefix, style="dim cyan")
             text.append(line, style="dim")
             self._console.print(text)
 
