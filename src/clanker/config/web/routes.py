@@ -516,7 +516,7 @@ async def test_model_config(name: str) -> MessageResponse:
             }
             if model_config.model:
                 kwargs["model"] = model_config.model
-            llm = ChatOpenAI(**kwargs)
+            llm = ChatOpenAI(use_responses_api=True, **kwargs)
 
         else:
             raise ValueError(f"Unsupported provider: {provider}")

@@ -455,6 +455,7 @@ def create_llm_from_config(model_config: ModelConfig):
         return ChatOpenAI(
             api_key=get_valid_copilot_token,
             stream_usage=True,
+            use_responses_api=True,
             **kwargs,
         )
 
