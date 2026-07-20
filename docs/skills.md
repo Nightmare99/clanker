@@ -132,19 +132,21 @@ Loaded skill 'changelog' from /path/to/.clanker/skills/changelog
 
 `/skill` supports tab completion for skill names.
 
-## Skills vs. workflows
+## Skills vs. workflows vs. agents
 
-| | Workflows | Skills |
-|---|-----------|--------|
-| **Triggered by** | You, via `/workflow <name>` | The agent, automatically (or `/skill`) |
-| **Format** | A single `.md` file (raw prompt) | A directory with `SKILL.md` + optional files |
-| **In context** | Whole file injected when you run it | Only name + description, until loaded |
-| **Bundled files** | No | Yes (scripts, templates, data) |
-| **Best for** | Repeatable prompts you invoke on demand | Capabilities the agent should reach for itself |
+| | Workflows | Skills | Agents |
+|---|-----------|--------|--------|
+| **Triggered by** | You, via `/workflow <name>` | The agent, automatically | The agent, automatically |
+| **Format** | A single `.md` file | A directory with `SKILL.md` + files | A single `.md` file with frontmatter |
+| **Execution** | Prompt injected into main agent | Main agent follows instructions | Independent subagent with own prompt |
+| **In context** | Whole file injected | Only name + description, until loaded | Only name + description, until spawned |
+| **Output** | Main agent responds | Main agent responds | Subagent streams live, parent gets summary |
+| **Best for** | Repeatable prompts you invoke | Procedures the agent follows | Delegating subtasks to a specialist |
 
 Use a **workflow** when you want a canned prompt you fire deliberately. Use a
 **skill** when you want the agent to recognize a situation and apply a procedure
-on its own.
+on its own. Use an **[agent](agents.md)** when you want to delegate a subtask to
+an independent specialist with its own system prompt.
 
 ## Mode support
 

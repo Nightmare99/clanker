@@ -209,6 +209,34 @@ web_search:
   enabled: true
 ```
 
+## Tool Feature Flags
+
+You can enable or disable tool categories individually. Core tools (file
+operations, shell commands, search) are always on. All other categories can be
+toggled off. When a category is disabled, its tools are removed from the agent's
+tool list and their documentation is stripped from the system prompt, saving
+context window tokens.
+
+```yaml
+tools:
+  web_browsing: true   # web_search, web_read
+  memory: true         # remember, recall, forget, list_memories
+  skills: true         # load_skill
+  subagents: true      # load_agent, spawn_subagent
+  communication: true  # notify, ask_user
+```
+
+| Flag | Tools Affected | Description |
+|------|---------------|-------------|
+| `web_browsing` | `web_search`, `web_read` | Web search and page reading |
+| `memory` | `remember`, `recall`, `forget`, `list_memories` | Cross-session memory persistence |
+| `skills` | `load_skill` | On-demand skill loading |
+| `subagents` | `load_agent`, `spawn_subagent` | Delegating subtasks to specialized agents |
+| `communication` | `notify`, `ask_user` | Mid-task status updates and user questions |
+
+Changes take effect on the next conversation turn. You can also toggle these
+from the **Tools** tab in the web configuration UI (`clanker config`).
+
 ## Command Blacklist
 
 On top of the built-in sandbox (which blocks `rm -rf /`, fork bombs, and similar),
@@ -276,6 +304,7 @@ The web UI provides:
 - **MCP Server Management**: Add, edit, delete, and test MCP server connections
 - **Output Settings**: Toggle tool call display, token usage, and syntax highlighting
 - **Safety Settings**: Configure confirmation prompts and command sandboxing
+- **Tools**: Enable or disable tool categories (web browsing, memory, skills, subagents, communication)
 - **Logging Configuration**: Set log levels, file rotation, and console output
 
 Models are saved to `~/.clanker/models.json`, other settings to `~/.clanker/config.yaml`.

@@ -2,19 +2,55 @@
 
 The agent has access to these built-in tools:
 
-| Tool | Description |
-|------|-------------|
-| `read_file` | Read file contents with line numbers |
-| `write_file` | Create or overwrite files |
-| `append_file` | Append content to files |
-| `edit_file` | Make targeted string replacements |
-| `list_directory` | List directory contents |
-| `execute_shell` | Execute shell commands |
-| `glob_search` | Find files by pattern |
-| `grep_search` | Search file contents with regex |
-| `web_search` | Search the web via DuckDuckGo |
-| `web_read` | Extract clean content from a web page |
-| `ask_user` | Ask the user a multiple-choice question mid-task |
+| Tool | Category | Description |
+|------|----------|-------------|
+| `read_file` | Core | Read file contents with line numbers |
+| `write_file` | Core | Create or overwrite files |
+| `append_file` | Core | Append content to files |
+| `edit_file` | Core | Make targeted string replacements |
+| `list_directory` | Core | List directory contents |
+| `execute_shell` | Core | Execute shell commands |
+| `bash_background` | Core | Launch a long-running command in the background |
+| `bash_status` | Core | Inspect background job state |
+| `bash_output` | Core | Read captured background job output |
+| `bash_wait` | Core | Block until a background job finishes |
+| `bash_kill` | Core | Terminate a background job |
+| `glob_search` | Core | Find files by pattern |
+| `grep_search` | Core | Search file contents with regex |
+| `web_search` | Web Browsing | Search the web via DuckDuckGo |
+| `web_read` | Web Browsing | Extract clean content from a web page |
+| `remember` | Memory | Store info for future sessions |
+| `recall` | Memory | Retrieve relevant memories |
+| `forget` | Memory | Delete a stored memory |
+| `list_memories` | Memory | List all stored memories |
+| `load_skill` | Skills | Load instructions for a skill |
+| `load_agent` | Subagents | Load configuration for an agent |
+| `spawn_subagent` | Subagents | Spawn a configured subagent to handle a subtask |
+| `notify` | Communication | Send an immediate status update to the user |
+| `ask_user` | Communication | Ask the user a multiple-choice question mid-task |
+
+## Tool Categories
+
+Tools are grouped into categories that can be individually enabled or disabled
+via the `tools` section in `~/.clanker/config.yaml` or the **Tools** tab in the
+web configuration UI (`clanker config`).
+
+| Category | Flag | Tools | Default |
+|----------|------|-------|---------|
+| Core | — | `read_file`, `write_file`, `edit_file`, `append_file`, `list_directory`, `execute_shell`, `bash_background`, `bash_status`, `bash_output`, `bash_wait`, `bash_kill`, `glob_search`, `grep_search` | Always on |
+| Web Browsing | `web_browsing` | `web_search`, `web_read` | Enabled |
+| Memory | `memory` | `remember`, `recall`, `forget`, `list_memories` | Enabled |
+| Skills | `skills` | `load_skill` | Enabled |
+| Subagents | `subagents` | `load_agent`, `spawn_subagent` | Enabled |
+| Communication | `communication` | `notify`, `ask_user` | Enabled |
+
+**Core tools** cannot be disabled — the agent requires them to function. All other
+categories can be toggled off. When a category is disabled, its tools are removed
+from the agent's tool list and their documentation is stripped from the system
+prompt, saving context window tokens.
+
+See [Configuration → Tool Feature Flags](configuration.md#tool-feature-flags) for
+details on how to disable categories.
 
 ## Tool Details
 
@@ -121,6 +157,59 @@ answer.
 deploy to, which of several ambiguous scopes to take, or a choice between
 materially different approaches. It won't use it for decisions it can make itself
 or for routine bash confirmations (those have their own approval prompt).
+
+## Background Shell Jobs
+
+For long-running commands (tests, builds, dev servers), the agent can launch
+them in the background and keep working:
+
+- **`bash_background(command, name, timeout)`** — Launch a command in the
+  background; returns a job id immediately. Always pass a short `name`
+  (e.g. "pytest suite", "vite dev") so jobs are distinguishable.
+- **`bash_status(job_id)`** — Inspect a job's state, return code, runtime,
+  and output size. Without `job_id`, lists all jobs.
+- **`bash_output(job_id, tail, since_byte)`** — Read captured output. Use
+  `since_byte` from a previous read to poll incrementally.
+- **`bash_wait(job_id, timeout)`** — Block until a job finishes; returns
+  final status and output. Use when your next step depends on the result.
+- **`bash_kill(job_id)`** — Terminate a background job.
+
+## Subagents
+
+Subagents let the agent delegate subtasks to specialized agents with their own
+system prompts. See [Agents](agents.md) for how to create and configure agents.
+
+### load_agent
+
+Load the configuration for an available agent by name. Returns the agent's
+system prompt, tool restrictions, and metadata. Call this before spawning the
+agent with `spawn_subagent`.
+
+**Parameters:**
+- `name` — Agent name exactly as shown in the AVAILABLE AGENTS catalog.
+
+**Returns:** A dict with `system_prompt`, `tools`, `description`, and `source`.
+
+### spawn_subagent
+
+Spawn a configured subagent to handle a subtask in a separate thread. The
+subagent runs with its own event loop, its own streaming output, and its own
+tool set. Its full output is streamed live to the user terminal. The return
+value contains only a brief summary.
+
+**Parameters:**
+- `agent_name` — Name of the agent to spawn.
+- `prompt` — Detailed instructions for the subagent.
+
+**Returns:** A dict with `summary`, `input_tokens`, and `output_tokens`.
+
+**Example workflow:**
+```
+load_agent("code-explorer")           → get agent config
+spawn_subagent("code-explorer",       → subagent runs, streams output live
+  "Explain how authentication works")
+→ parent agent reads summary, moves on
+```
 
 ## MCP Tools
 

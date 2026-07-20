@@ -78,6 +78,7 @@ The `/workflow` command supports tab completion. Type `/workflow ` and press Tab
 - Workflows can reference files, run commands, and use all agent capabilities
 - Combine with MCP tools for powerful automation (e.g., GitHub workflows)
 - Workflow names support hyphens and underscores (any valid filename works)
+- For agent-discovered capabilities, consider [skills](skills.md) or [agents](agents.md)
 
 ## File Structure
 

@@ -10,6 +10,7 @@ import usage from '../../docs/usage.md?raw'
 import configuration from '../../docs/configuration.md?raw'
 import tools from '../../docs/tools.md?raw'
 import skills from '../../docs/skills.md?raw'
+import agents from '../../docs/agents.md?raw'
 import workflows from '../../docs/workflows.md?raw'
 import mcp from '../../docs/mcp.md?raw'
 import logging from '../../docs/logging.md?raw'
@@ -75,6 +76,12 @@ export const docGroups: DocGroup[] = [
         title: 'Skills',
         blurb: 'Capabilities the agent discovers and loads on its own.',
         body: skills,
+      },
+      {
+        slug: 'agents',
+        title: 'Agents',
+        blurb: 'Specialized subagents with custom system prompts for delegating subtasks.',
+        body: agents,
       },
       {
         slug: 'workflows',
