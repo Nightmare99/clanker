@@ -213,20 +213,39 @@ class TestWebToolsIntegration:
 
     def test_tools_in_registry(self) -> None:
         """Test that web tools appear in get_tools()."""
-        from clanker.tools import get_tools
+        mock_settings = MagicMock()
+        mock_settings.tools.web_browsing = True
+        mock_settings.tools.memory = True
+        mock_settings.tools.skills = True
+        mock_settings.tools.subagents = True
+        mock_settings.tools.communication = True
 
-        tools = get_tools()
-        tool_names = [t.name for t in tools]
+        with patch("clanker.config.settings.get_settings", return_value=mock_settings):
+            # Force re-import so patched settings take effect
+            import importlib
+            import clanker.tools
+            importlib.reload(clanker.tools)
+            from clanker.tools import get_tools
 
-        assert "web_search" in tool_names
-        assert "web_read" in tool_names
+            tools = get_tools()
+            tool_names = [t.name for t in tools]
+
+            assert "web_search" in tool_names
+            assert "web_read" in tool_names
 
     def test_tools_excluded_when_disabled(self) -> None:
         """Test that web tools are excluded when disabled in config."""
         mock_settings = MagicMock()
-        mock_settings.web_search.enabled = False
+        mock_settings.tools.web_browsing = False
+        mock_settings.tools.memory = True
+        mock_settings.tools.skills = True
+        mock_settings.tools.subagents = True
+        mock_settings.tools.communication = True
 
         with patch("clanker.config.settings.get_settings", return_value=mock_settings):
+            import importlib
+            import clanker.tools
+            importlib.reload(clanker.tools)
             from clanker.tools import get_tools
 
             tools = get_tools()
