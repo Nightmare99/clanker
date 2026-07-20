@@ -68,21 +68,31 @@ class TestSystemPromptContent:
         assert "confirmation" in SYSTEM_PROMPT.lower()
 
     def test_system_prompt_mentions_memory_tools(self) -> None:
-        """System prompt should document memory tools."""
+        """System prompt should include memory tools marker or section."""
         SYSTEM_PROMPT = _get_system_prompt()
-        assert "remember" in SYSTEM_PROMPT
-        assert "recall" in SYSTEM_PROMPT
+        # The raw prompt uses __MEMORY_TOOLS__ marker, resolved via get_system_prompt
+        mod = _load_prompts_module()
+        assert "__MEMORY_TOOLS__" in SYSTEM_PROMPT
+        assert "remember" in mod.MEMORY_TOOLS_SECTION
+        assert "recall" in mod.MEMORY_TOOLS_SECTION
 
 
 class TestGetSystemPrompt:
     """Tests for get_system_prompt function."""
 
     def test_get_system_prompt_no_args(self) -> None:
-        """get_system_prompt without args returns base prompt."""
+        """get_system_prompt without args returns base prompt with resolved markers."""
         get_system_prompt = _get_system_prompt_fn()
-        SYSTEM_PROMPT = _get_system_prompt()
         prompt = get_system_prompt()
-        assert SYSTEM_PROMPT in prompt
+        # Core principles always present
+        assert "ACT, DON'T DISCUSS" in prompt
+        assert "SURGICAL PRECISION" in prompt
+        # Markers are resolved (not present as raw markers)
+        assert "__WEB_TOOLS__" not in prompt
+        assert "__MEMORY_TOOLS__" not in prompt
+        assert "__SKILLS_TOOLS__" not in prompt
+        assert "__AGENTS_TOOLS__" not in prompt
+        assert "__COMMUNICATION_TOOLS__" not in prompt
 
     def test_get_system_prompt_with_working_directory(self) -> None:
         """get_system_prompt with working_directory adds environment section."""

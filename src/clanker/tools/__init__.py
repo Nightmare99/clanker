@@ -64,13 +64,25 @@ ALL_TOOLS = [
 def get_tools() -> list:
     """Get active tools based on configuration.
 
-    Returns all tools, excluding web tools if web_search is disabled in config.
+    Returns all tools, filtering out categories disabled in the ``tools``
+    settings section.
     """
     from clanker.config.settings import get_settings
 
     settings = get_settings()
-    if not settings.web_search.enabled:
-        return [t for t in ALL_TOOLS if t not in (web_search, web_read)]
+    excluded: list = []
+    if not settings.tools.web_browsing:
+        excluded.extend([web_search, web_read])
+    if not settings.tools.memory:
+        excluded.extend([remember, recall, forget, list_memories])
+    if not settings.tools.skills:
+        excluded.append(load_skill)
+    if not settings.tools.subagents:
+        excluded.extend([load_agent, spawn_subagent])
+    if not settings.tools.communication:
+        excluded.extend([notify, ask_user])
+    if excluded:
+        return [t for t in ALL_TOOLS if t not in excluded]
     return list(ALL_TOOLS)
 
 

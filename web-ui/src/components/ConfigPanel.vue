@@ -82,6 +82,13 @@ interface Config {
     console_output: boolean
     detailed_format: boolean
   }
+  tools: {
+    web_browsing: boolean
+    memory: boolean
+    skills: boolean
+    subagents: boolean
+    communication: boolean
+  }
 }
 
 interface ModelConfig {
@@ -171,6 +178,7 @@ const menuOptions: MenuOption[] = [
   { label: 'Models', key: 'model', icon: () => h(NIcon, null, { default: () => h(HardwareChipOutline) }) },
   { label: 'Context', key: 'context', icon: () => h(NIcon, null, { default: () => h(ColorPaletteOutline) }) },
   { label: 'Safety', key: 'safety', icon: () => h(NIcon, null, { default: () => h(ShieldCheckmarkOutline) }) },
+  { label: 'Tools', key: 'tools', icon: () => h(NIcon, null, { default: () => h(CreateOutline) }) },
   { label: 'MCP Servers', key: 'mcp', icon: () => h(NIcon, null, { default: () => h(ExtensionPuzzleOutline) }) },
   { label: 'Logging', key: 'logging', icon: () => h(NIcon, null, { default: () => h(DocumentTextOutline) }) },
 ]
@@ -1247,6 +1255,72 @@ onUnmounted(() => {
           </NCard>
 
           <!-- Memory tab removed (all toggles were dead, storage_path is read-only) -->
+
+          <!-- Tools Settings -->
+          <NCard v-if="activeKey === 'tools'" class="settings-card">
+            <NAlert type="info" style="margin-bottom: 16px">
+              <strong>Tool Categories:</strong> Enable or disable tool categories. Changes take effect on the next conversation turn.
+              Disabled tools are excluded from the agent's tool list and their prompt sections are removed.
+            </NAlert>
+
+            <NForm label-placement="left" label-width="180">
+              <NFormItem label="Web Browsing">
+                <NSwitch
+                  v-model:value="config.tools.web_browsing"
+                  @update:value="markChanged"
+                />
+              </NFormItem>
+              <div class="form-hint">
+                Allows the agent to fetch and analyze web content using the
+                <code>webfetch</code> tool.
+              </div>
+
+              <NFormItem label="Memory">
+                <NSwitch
+                  v-model:value="config.tools.memory"
+                  @update:value="markChanged"
+                />
+              </NFormItem>
+              <div class="form-hint">
+                Enables session persistence and chat history tools for
+                remembering context across turns.
+              </div>
+
+              <NFormItem label="Skills">
+                <NSwitch
+                  v-model:value="config.tools.skills"
+                  @update:value="markChanged"
+                />
+              </NFormItem>
+              <div class="form-hint">
+                Allows the agent to load specialized skill instructions for
+                domain-specific tasks.
+              </div>
+
+              <NFormItem label="Subagents">
+                <NSwitch
+                  v-model:value="config.tools.subagents"
+                  @update:value="markChanged"
+                />
+              </NFormItem>
+              <div class="form-hint">
+                Enables spawning configured subagents to handle parallel or
+                delegated subtasks via <code>spawn_subagent</code> and
+                <code>load_agent</code>.
+              </div>
+
+              <NFormItem label="Communication">
+                <NSwitch
+                  v-model:value="config.tools.communication"
+                  @update:value="markChanged"
+                />
+              </NFormItem>
+              <div class="form-hint">
+                Provides the <code>notify</code> tool for immediate status
+                updates to the user mid-execution.
+              </div>
+            </NForm>
+          </NCard>
 
           <!-- MCP Settings -->
           <NCard v-if="activeKey === 'mcp'" class="settings-card">

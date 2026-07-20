@@ -128,8 +128,7 @@ At conversation start, call `read_project_instructions` to load AGENTS.md. These
 ## Search
 - `glob_search(pattern, path)` - Find files: `**/*.py`, `src/**/*.ts`
 - `grep_search(pattern, path)` - Search content with regex.
-- `web_search(query, max_results)` - Search the web via DuckDuckGo. Use for docs, errors, libraries.
-- `web_read(url, max_length)` - Extract clean text content from a web page. If a webpage gives HTTP errors, try one or two more other pages from the search results. If not possible, mention what error occured.
+__WEB_TOOLS__
 
 ## Execution
 - `execute_shell(command)` - Run shell commands. Timeout: 120s. If a command runs longer than ~30s it is auto-promoted to a background job and you get a job id back instead of output — poll it with `bash_status`/`bash_output`.
@@ -141,43 +140,13 @@ At conversation start, call `read_project_instructions` to load AGENTS.md. These
 
 Prefer `bash_background` for tests, builds, installs, dev servers, long greps, or anything you expect to take more than a few seconds. After launching, do other useful work, then come back with `bash_status` / `bash_output`.
 
-## Communication
-- `notify(message, level, title)` - Send an immediate status update to the user mid-task. Levels: `info`, `success`, `warning`, `error` — always shown via a colored border, so severity is conveyed even without a title. `title` is optional: a short (2-4 word) heading shown above the message, e.g. `title="Found the bug"`. Use it for updates worth calling out at a glance; omit it for quick, self-explanatory notes — it's not required on every call.
-- **Narrate your work as you go — keep up a running commentary.** Send a steady stream of short updates so the user always knows what you're doing *right now*, the way a pair-programmer thinks out loud. Long silent stretches are the failure mode: whenever you're about to do something, say what and why in a quick notify first. When in doubt, notify — err on the side of more updates, not fewer.
-- **Write each notify in light Markdown** — they render as formatted panels. Use `**bold**` for the key action or noun and backticks for code, paths, commands, and identifiers, e.g. `notify("Patching the **auth handler** in `auth.py:42`...")`. Keep it to one short sentence; an occasional two lines or a short bulleted list is fine when it genuinely helps, but never paragraphs.
-- Fire a notify whenever you:
-  - Start working, and as you move between steps: `notify("Plan: 1) read `config.py`, 2) patch the handler, 3) run tests", title="Plan")`, then `notify("Step 1 done — **patching the handler** now...")`.
-  - Kick off any background job or longer command: `notify("Started **pytest** in the background as `pytest suite` (bg_xxxxx)")`.
-  - Switch phases or change approach: `notify("Implementation done, **running tests** now...")`.
-  - Discover something important: `notify("Found a null deref in `auth.py:42`, fixing", level="warning", title="Found the bug")`.
-  - Hit a milestone or finish a chunk of work: `notify("**All 229 tests passing**", level="success")`.
-  - Run into an error before you change tack: `notify("Switching to the fallback approach", level="error", title="Build failed")`.
-  - Begin any step likely to take more than a moment, or after several tool calls without a word to the user.
-- The only thing to avoid is mechanically narrating every single trivial action in a tight burst (e.g. a notify per line of a quick three-line edit) — otherwise, lean toward notifying.
+__COMMUNICATION_TOOLS__
 
-## Asking the User
-- `ask_user(question, options, multi_select=False, allow_other=True, allow_cancel=True)` - Pause and ask the user a multiple-choice question mid-task, then continue with their answer. Returns `{selected: [...], cancelled: bool}`.
-- Use it ONLY at genuine forks you cannot resolve yourself: which environment/target to act on, which of several ambiguous scopes to take, or a choice between materially different approaches.
-- Do NOT use it for decisions you can make, for trivial confirmations (bash commands already prompt for approval), or to offload work you were asked to do. Default to acting; ask only when a wrong guess would be costly and the user's intent is genuinely unknowable.
-- If the user cancels, do not re-ask the same question — pick a sensible default or explain what you need.
+__MEMORY_TOOLS__
 
-## Memory
-- `remember(content, tags)` - Store useful info for future sessions.
-- `recall(query, tags)` - Retrieve relevant memories.
-- Proactively remember: conventions, preferences, architecture decisions, gotchas.
+__SKILLS_TOOLS__
 
-## Skills
-- `load_skill(name)` - Load full instructions for a skill listed in AVAILABLE SKILLS.
-- When a request matches a skill's description, call `load_skill` FIRST, then follow the returned steps. Skills may bundle scripts/templates - read them with `read_file`, run them with `execute_shell`.
-
-## Agents
-- `load_agent(name)` - Load configuration for an agent listed in AVAILABLE AGENTS.
-- `spawn_subagent(agent_name, prompt)` - Spawn a configured subagent to handle a subtask.
-  The subagent streams its full output live to the user terminal. The return value
-  contains a `summary` key with a brief recap. **The subagent's output is already
-  complete — do NOT continue, repeat, or re-summarize it.** Simply acknowledge what
-  was found and move on to the next step.
-- When a task is better suited to a specialized agent, call `load_agent` to see its configuration, then `spawn_subagent` with the agent's name and a detailed prompt.
+__AGENTS_TOOLS__
 
 # CODE QUALITY
 
@@ -206,6 +175,75 @@ Reference specific locations: `file.py:123`
 Format your responses using beautiful, clean Markdown (including headers, lists, bold/italic text, and syntax-highlighted code blocks where appropriate).
 """
 
+# Conditionally-injected prompt sections. Each section is inserted in place of
+# a __SECTION_NAME__ marker in SYSTEM_PROMPT when the corresponding tool flag
+# is enabled. When disabled, the marker is simply stripped from the prompt.
+
+WEB_TOOLS_SECTION = """\
+- `web_search(query, max_results)` - Search the web via DuckDuckGo. Use for docs, errors, libraries.
+- `web_read(url, max_length)` - Extract clean text content from a web page. If a webpage gives HTTP errors, try one or two more other pages from the search results. If not possible, mention what error occured.
+
+"""
+
+COMMUNICATION_TOOLS_SECTION = """\
+## Communication
+- `notify(message, level, title)` - Send an immediate status update to the user mid-task. Levels: `info`, `success`, `warning`, `error` — always shown via a colored border, so severity is conveyed even without a title. `title` is optional: a short (2-4 word) heading shown above the message, e.g. `title="Found the bug"`. Use it for updates worth calling out at a glance; omit it for quick, self-explanatory notes — it's not required on every call.
+- **Narrate your work as you go — keep up a running commentary.** Send a steady stream of short updates so the user always knows what you're doing *right now*, the way a pair-programmer thinks out loud. Long silent stretches are the failure mode: whenever you're about to do something, say what and why in a quick notify first. When in doubt, notify — err on the side of more updates, not fewer.
+- **Write each notify in light Markdown** — they render as formatted panels. Use `**bold**` for the key action or noun and backticks for code, paths, commands, and identifiers, e.g. `notify("Patching the **auth handler** in `auth.py:42`...")`. Keep it to one short sentence; an occasional two lines or a short bulleted list is fine when it genuinely helps, but never paragraphs.
+- Fire a notify whenever you:
+  - Start working, and as you move between steps: `notify("Plan: 1) read `config.py`, 2) patch the handler, 3) run tests", title="Plan")`, then `notify("Step 1 done — **patching the handler** now...")`.
+  - Kick off any background job or longer command: `notify("Started **pytest** in the background as `pytest suite` (bg_xxxxx)")`.
+  - Switch phases or change approach: `notify("Implementation done, **running tests** now...")`.
+  - Discover something important: `notify("Found a null deref in `auth.py:42`, fixing", level="warning", title="Found the bug")`.
+  - Hit a milestone or finish a chunk of work: `notify("**All 229 tests passing**", level="success")`.
+  - Run into an error before you change tack: `notify("Switching to the fallback approach", level="error", title="Build failed")`.
+  - Begin any step likely to take more than a moment, or after several tool calls without a word to the user.
+- The only thing to avoid is mechanically narrating every single trivial action in a tight burst (e.g. a notify per line of a quick three-line edit) — otherwise, lean toward notifying.
+
+## Asking the User
+- `ask_user(question, options, multi_select=False, allow_other=True, allow_cancel=True)` - Pause and ask the user a multiple-choice question mid-task, then continue with their answer. Returns `{selected: [...], cancelled: bool}`.
+- Use it ONLY at genuine forks you cannot resolve yourself: which environment/target to act on, which of several ambiguous scopes to take, or a choice between materially different approaches.
+- Do NOT use it for decisions you can make, for trivial confirmations (bash commands already prompt for approval), or to offload work you were asked to do. Default to acting; ask only when a wrong guess would be costly and the user's intent is genuinely unknowable.
+- If the user cancels, do not re-ask the same question — pick a sensible default or explain what you need.
+
+"""
+
+MEMORY_TOOLS_SECTION = """\
+## Memory
+- `remember(content, tags)` - Store useful info for future sessions.
+- `recall(query, tags)` - Retrieve relevant memories.
+- Proactively remember: conventions, preferences, architecture decisions, gotchas.
+
+"""
+
+SKILLS_TOOLS_SECTION = """\
+## Skills
+- `load_skill(name)` - Load full instructions for a skill listed in AVAILABLE SKILLS.
+- When a request matches a skill's description, call `load_skill` FIRST, then follow the returned steps. Skills may bundle scripts/templates - read them with `read_file`, run them with `execute_shell`.
+
+"""
+
+AGENTS_TOOLS_SECTION = """\
+## Agents
+- `load_agent(name)` - Load configuration for an agent listed in AVAILABLE AGENTS.
+- `spawn_subagent(agent_name, prompt)` - Spawn a configured subagent to handle a subtask.
+  The subagent streams its full output live to the user terminal. The return value
+  contains a `summary` key with a brief recap. **The subagent's output is already
+  complete — do NOT continue, repeat, or re-summarize it.** Simply acknowledge what
+  was found and move on to the next step.
+- When a task is better suited to a specialized agent, call `load_agent` to see its configuration, then `spawn_subagent` with the agent's name and a detailed prompt.
+
+"""
+
+# Mapping of marker -> (section_content, settings_flag_attribute)
+_PROMPT_SECTIONS = {
+    "__WEB_TOOLS__": (WEB_TOOLS_SECTION, "tools.web_browsing"),
+    "__COMMUNICATION_TOOLS__": (COMMUNICATION_TOOLS_SECTION, "tools.communication"),
+    "__MEMORY_TOOLS__": (MEMORY_TOOLS_SECTION, "tools.memory"),
+    "__SKILLS_TOOLS__": (SKILLS_TOOLS_SECTION, "tools.skills"),
+    "__AGENTS_TOOLS__": (AGENTS_TOOLS_SECTION, "tools.subagents"),
+}
+
 
 def get_system_prompt(working_directory: str | None = None, user_query: str | None = None) -> str:
     """Get the system prompt with optional context.
@@ -217,7 +255,25 @@ def get_system_prompt(working_directory: str | None = None, user_query: str | No
     Returns:
         Complete system prompt string.
     """
+    from clanker.config import get_settings
+
     prompt = SYSTEM_PROMPT
+    settings = get_settings()
+
+    # Resolve conditional sections: replace __MARKER__ with the section content
+    # when the flag is enabled, or strip the marker line when disabled.
+    def _resolve_flag(attr_path: str) -> bool:
+        obj = settings
+        for part in attr_path.split("."):
+            obj = getattr(obj, part, None)
+        return bool(obj)
+
+    for marker, (section_content, flag_path) in _PROMPT_SECTIONS.items():
+        if _resolve_flag(flag_path):
+            prompt = prompt.replace(marker, section_content, 1)
+        else:
+            # Strip the marker and its trailing newline
+            prompt = prompt.replace(marker + "\n", "", 1)
 
     # Inject user instructions from .clanker/instructions.md
     user_instructions = load_user_instructions(working_directory)
@@ -233,7 +289,7 @@ The user has provided the following custom instructions. Follow them in addition
 
     # Inject available skills catalog from .clanker/skills/ (project + personal)
     skills_catalog = load_skills_catalog(working_directory)
-    if skills_catalog:
+    if skills_catalog and settings.tools.skills:
         prompt += f"""
 # AVAILABLE SKILLS
 
@@ -246,8 +302,9 @@ instructions, then follow them. Do not guess a skill's steps from its descriptio
 """
 
     # Inject available agents catalog from .clanker/agents/ (project + personal)
+    # Only when subagents are enabled in settings.
     agents_catalog = load_agents_catalog(working_directory)
-    if agents_catalog:
+    if agents_catalog and settings.tools.subagents:
         prompt += f"""
 # AVAILABLE AGENTS
 

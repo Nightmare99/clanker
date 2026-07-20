@@ -114,6 +114,30 @@ class AgentSettings(BaseModel):
     name: str = "Clanker"
 
 
+class ToolSettings(BaseModel):
+    """Per-category tool feature flags.
+
+    Each flag controls whether a group of tools is available to the agent.
+    When disabled, the tools are removed from the toolset and their
+    documentation is omitted from the system prompt. Changes take effect
+    on the next turn (or after reloading settings).
+
+    Core tools (file operations, shell commands, glob/grep search) cannot
+    be disabled as the agent requires them to function.
+    """
+
+    # Web browsing (web_search, web_read)
+    web_browsing: bool = True
+    # Memory persistence across sessions (remember, recall, forget, list_memories)
+    memory: bool = True
+    # Skills system (load_skill)
+    skills: bool = True
+    # Subagent spawning (load_agent, spawn_subagent)
+    subagents: bool = True
+    # Communication tools (notify, ask_user)
+    communication: bool = True
+
+
 class Settings(BaseSettings):
     """Main application settings."""
 
@@ -125,6 +149,7 @@ class Settings(BaseSettings):
 
     # Nested settings
     agent: AgentSettings = Field(default_factory=AgentSettings)
+    tools: ToolSettings = Field(default_factory=ToolSettings)
     safety: SafetySettings = Field(default_factory=SafetySettings)
     output: OutputSettings = Field(default_factory=OutputSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
@@ -191,6 +216,15 @@ class Settings(BaseSettings):
 agent:
   # Name used by the assistant across sessions
   name: Clanker
+
+# Tool feature flags — disable categories you don't want the agent to use.
+# Core tools (file ops, shell, glob/grep) are always on.
+tools:
+  web_browsing: true   # web_search, web_read
+  memory: true         # remember, recall, forget, list_memories
+  skills: true         # load_skill
+  subagents: true      # load_agent, spawn_subagent
+  communication: true  # notify, ask_user
 
 safety:
   require_confirmation: true
