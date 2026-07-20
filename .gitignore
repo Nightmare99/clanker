@@ -97,6 +97,8 @@ dmypy.json
 Thumbs.db
 
 # Project specific
+.claude/
+.agents/
 .clanker/
 .remember/
 
