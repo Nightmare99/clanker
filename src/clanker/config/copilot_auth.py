@@ -262,22 +262,43 @@ def poll_for_github_token(session: DeviceFlowSession) -> str | None:
     return None
 
 
-def exchange_for_copilot_token(github_token: str) -> tuple[str, int]:
+def exchange_for_copilot_token(
+    github_token: str,
+    *,
+    max_retries: int = 2,
+) -> tuple[str, int]:
     """Exchange a GitHub token for a short-lived Copilot bearer token.
+
+    Retries transient server errors (5xx) up to ``max_retries`` times with a
+    short back-off, matching copilot-bridge's tolerance for GitHub's internal
+    endpoint instability.
 
     Returns ``(copilot_token, refresh_in_seconds)``.
     """
-    status, payload = _http_json(
-        f"{GITHUB_API_BASE_URL}/copilot_internal/v2/token",
-        method="GET",
-        headers={**_github_headers(), "Authorization": f"token {github_token}"},
-    )
-    if status != 200 or not payload or not payload.get("token"):
-        raise CopilotAuthError(
+    import time as _time
+
+    last_exc = None
+    for attempt in range(1 + max_retries):
+        status, payload = _http_json(
+            f"{GITHUB_API_BASE_URL}/copilot_internal/v2/token",
+            method="GET",
+            headers={**_github_headers(), "Authorization": f"token {github_token}"},
+        )
+        if status == 200 and payload and payload.get("token"):
+            return payload["token"], int(payload.get("refresh_in", 1500))
+
+        last_exc = CopilotAuthError(
             f"Failed to get a Copilot token (HTTP {status}). "
             "Your GitHub account may not have an active Copilot subscription."
         )
-    return payload["token"], int(payload.get("refresh_in", 1500))
+
+        # Only retry on transient server errors (5xx).
+        if status < 500 or attempt >= max_retries:
+            break
+
+        _time.sleep(min(2 ** attempt, 5))
+
+    raise last_exc  # type: ignore[misc]
 
 
 def complete_login(github_token: str) -> None:
@@ -316,7 +337,22 @@ def get_valid_copilot_token() -> str:
         return copilot_token
 
     logger.info("Copilot token expired or missing -- refreshing.")
-    copilot_token, refresh_in = exchange_for_copilot_token(github_token)
+    try:
+        copilot_token, refresh_in = exchange_for_copilot_token(github_token)
+    except CopilotAuthError:
+        # The cached GitHub token is likely stale/revoked. Clear it so the
+        # user gets a clear "not connected" prompt rather than a cryptic
+        # 502 on every subsequent attempt. Matches copilot-bridge's behaviour
+        # of re-running device auth when the cached token can't exchange.
+        logger.warning(
+            "Copilot token exchange failed -- GitHub token may be stale. "
+            "Clearing cache; re-run 'clanker copilot-login' to reconnect."
+        )
+        disconnect()
+        raise CopilotAuthError(
+            "Copilot session expired. Run 'clanker copilot-login' or "
+            "connect via the web config UI (clanker config)."
+        )
     cache["copilot_token"] = copilot_token
     cache["copilot_token_expires_at"] = time.time() + refresh_in
     _save_token_cache(cache)
