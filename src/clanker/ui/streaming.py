@@ -124,7 +124,7 @@ async def _heal_orphaned_tool_calls(graph, config) -> None:
         stubs = make_tool_result_stubs(orphan_ids)
         await graph.aupdate_state(config, {"messages": stubs}, as_node="tools")
     except Exception as exc:  # noqa: BLE001
-        heal_logger.warning("Failed to heal orphaned tool calls: %s", exc)
+        heal_logger.debug("Failed to heal orphaned tool calls: %s", exc)
 
 
 async def _compact_oversized_tool_call_args(graph, config, settings) -> None:
@@ -165,6 +165,10 @@ class StreamResult:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    cumulative_input_tokens: int = 0
+    cumulative_output_tokens: int = 0
+    cumulative_cache_read_tokens: int = 0
+    cumulative_cache_creation_tokens: int = 0
     model_name: str = ""
     summarization_occurred: bool = False
 
@@ -242,6 +246,7 @@ async def stream_agent_response_async(
     tools: list | None = None,
     middleware: list | None = None,
     system_prompt: str | None = None,
+    progress_callback=None,
 ) -> StreamResult:
     """Async handler for streaming agent response."""
     from langgraph.errors import GraphRecursionError
@@ -306,9 +311,12 @@ async def stream_agent_response_async(
     # Token tracking
     last_input_tokens = 0
     last_output_tokens = 0
+    cumulative_input_tokens = 0
     cumulative_output_tokens = 0
     last_cache_read_tokens = 0
     last_cache_creation_tokens = 0
+    cumulative_cache_read_tokens = 0
+    cumulative_cache_creation_tokens = 0
     model_name = ""
 
     def _update_loading(message: str) -> None:
@@ -435,6 +443,10 @@ async def stream_agent_response_async(
                         output_tokens=last_output_tokens,
                         cache_read_tokens=last_cache_read_tokens,
                         cache_creation_tokens=last_cache_creation_tokens,
+                        cumulative_input_tokens=cumulative_input_tokens,
+                        cumulative_output_tokens=cumulative_output_tokens,
+                        cumulative_cache_read_tokens=cumulative_cache_read_tokens,
+                        cumulative_cache_creation_tokens=cumulative_cache_creation_tokens,
                         model_name=model_name,
                         summarization_occurred=summarization_detected,
                     )
@@ -454,6 +466,13 @@ async def stream_agent_response_async(
                                 continue
 
                             arg_str = _get_tool_arg_summary(tool_name_ev, tool_input)
+
+                            # Fire progress callback for subagent tracking
+                            if progress_callback:
+                                try:
+                                    progress_callback("start", tool_name_ev, arg_str)
+                                except Exception:
+                                    pass
 
                             if textual_app:
                                 try:
@@ -477,9 +496,9 @@ async def stream_agent_response_async(
 
                 elif event_type == "on_tool_end":
                     tool_name_end = event.get("name", "")
-                    if tool_name_end.lower() in ("notify", "ask_user", "spawn_subagent"):
+                    if tool_name_end.lower() == "notify":
                         # Render notify output in TUI chat log from tool result
-                        if tool_name_end.lower() == "notify" and textual_app:
+                        if textual_app:
                             try:
                                 data = event.get("data", {})
                                 raw_output = data.get("output", {})
@@ -500,11 +519,25 @@ async def stream_agent_response_async(
                                 pass
                         _start_loading()
                         continue
+                    elif tool_name_end.lower() == "spawn_subagent":
+                        # Rendering handled by spawn_subagent tool itself
+                        _start_loading()
+                        continue
+                    elif tool_name_end.lower() == "ask_user":
+                        _start_loading()
+                        continue
 
                     if settings.output.show_tool_calls:
                         data = event.get("data", {})
                         tool_output = normalize_tool_output(data.get("output"))
                         tool_handler.handle_tool_end(tool_name_end, tool_output)
+
+                        # Fire progress callback for subagent tracking
+                        if progress_callback:
+                            try:
+                                progress_callback("end", tool_name_end, "", tool_output)
+                            except Exception:
+                                pass
 
                         if textual_app:
                             try:
@@ -667,10 +700,13 @@ async def stream_agent_response_async(
                             usage = output.usage_metadata
                             last_input_tokens = usage.get("input_tokens", 0)
                             last_output_tokens = usage.get("output_tokens", 0)
+                            cumulative_input_tokens += last_input_tokens
                             cumulative_output_tokens += last_output_tokens
                             details = usage.get("input_token_details") or {}
                             last_cache_read_tokens = details.get("cache_read", 0)
                             last_cache_creation_tokens = details.get("cache_creation", 0)
+                            cumulative_cache_read_tokens += last_cache_read_tokens
+                            cumulative_cache_creation_tokens += last_cache_creation_tokens
 
                         elif hasattr(output, "response_metadata"):
                             meta = output.response_metadata
@@ -678,17 +714,20 @@ async def stream_agent_response_async(
                             if usage:
                                 last_input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
                                 last_output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+                                cumulative_input_tokens += last_input_tokens
                                 cumulative_output_tokens += last_output_tokens
 
                             if not usage and "token_usage" in meta:
                                 usage = meta.get("token_usage", {})
                                 last_input_tokens = usage.get("prompt_tokens", 0)
                                 last_output_tokens = usage.get("completion_tokens", 0)
+                                cumulative_input_tokens += last_input_tokens
                                 cumulative_output_tokens += last_output_tokens
 
                             if not usage:
                                 last_input_tokens = meta.get("prompt_tokens", 0)
                                 last_output_tokens = meta.get("completion_tokens", 0)
+                                cumulative_input_tokens += last_input_tokens
                                 cumulative_output_tokens += last_output_tokens
 
     except CommandRejectedError as e:
@@ -704,6 +743,10 @@ async def stream_agent_response_async(
             output_tokens=last_output_tokens,
             cache_read_tokens=last_cache_read_tokens,
             cache_creation_tokens=last_cache_creation_tokens,
+            cumulative_input_tokens=cumulative_input_tokens,
+            cumulative_output_tokens=cumulative_output_tokens,
+            cumulative_cache_read_tokens=cumulative_cache_read_tokens,
+            cumulative_cache_creation_tokens=cumulative_cache_creation_tokens,
             model_name=model_name,
             summarization_occurred=summarization_detected,
         )
@@ -725,6 +768,10 @@ async def stream_agent_response_async(
             output_tokens=last_output_tokens,
             cache_read_tokens=last_cache_read_tokens,
             cache_creation_tokens=last_cache_creation_tokens,
+            cumulative_input_tokens=cumulative_input_tokens,
+            cumulative_output_tokens=cumulative_output_tokens,
+            cumulative_cache_read_tokens=cumulative_cache_read_tokens,
+            cumulative_cache_creation_tokens=cumulative_cache_creation_tokens,
             model_name=model_name,
             summarization_occurred=summarization_detected,
         )
@@ -742,6 +789,10 @@ async def stream_agent_response_async(
             output_tokens=last_output_tokens,
             cache_read_tokens=last_cache_read_tokens,
             cache_creation_tokens=last_cache_creation_tokens,
+            cumulative_input_tokens=cumulative_input_tokens,
+            cumulative_output_tokens=cumulative_output_tokens,
+            cumulative_cache_read_tokens=cumulative_cache_read_tokens,
+            cumulative_cache_creation_tokens=cumulative_cache_creation_tokens,
             model_name=model_name,
             summarization_occurred=summarization_detected,
         )
@@ -767,6 +818,10 @@ async def stream_agent_response_async(
             output_tokens=last_output_tokens,
             cache_read_tokens=last_cache_read_tokens,
             cache_creation_tokens=last_cache_creation_tokens,
+            cumulative_input_tokens=cumulative_input_tokens,
+            cumulative_output_tokens=cumulative_output_tokens,
+            cumulative_cache_read_tokens=cumulative_cache_read_tokens,
+            cumulative_cache_creation_tokens=cumulative_cache_creation_tokens,
             model_name=model_name,
             summarization_occurred=summarization_detected,
         )
@@ -805,6 +860,10 @@ async def stream_agent_response_async(
         output_tokens=last_output_tokens,
         cache_read_tokens=last_cache_read_tokens,
         cache_creation_tokens=last_cache_creation_tokens,
+        cumulative_input_tokens=cumulative_input_tokens,
+        cumulative_output_tokens=cumulative_output_tokens,
+        cumulative_cache_read_tokens=cumulative_cache_read_tokens,
+        cumulative_cache_creation_tokens=cumulative_cache_creation_tokens,
         model_name=model_name,
         summarization_occurred=summarization_detected,
     )

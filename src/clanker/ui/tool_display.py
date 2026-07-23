@@ -482,6 +482,51 @@ def normalize_tool_output(output) -> str:
 
     # Handle dict results - preserve full JSON for tool result handlers
     if isinstance(output, dict):
+        # load_agent success
+        if output.get("ok") and "name" in output and "description" in output:
+            name = output["name"]
+            desc = output["description"]
+            tools = output.get("tools", "")
+            source = output.get("source", "")
+            lines = [f"Agent: {name}", f"Description: {desc}"]
+            if tools:
+                lines.append(f"Tools: {tools}")
+            if source:
+                lines.append(f"Source: {source}")
+            prompt = output.get("system_prompt", "")
+            if prompt:
+                prompt_lines = prompt.strip().split("\n")
+                snippet = "\n".join(prompt_lines[:10])
+                if len(prompt_lines) > 10:
+                    snippet += f"\n... ({len(prompt_lines) - 10} more lines)"
+                lines.append("")
+                lines.append("System Prompt:")
+                lines.append(snippet)
+            return "\n".join(lines)
+
+        # load_agent failure
+        if not output.get("ok") and "error" in output and "available" in output:
+            avail = output.get("available", [])
+            return f"{output['error']}\nAvailable agents: {', '.join(avail)}"
+
+        # spawn_subagent success
+        if output.get("success") and "agent" in output:
+            agent = output["agent"]
+            summary = output.get("summary", "")
+            in_tok = output.get("input_tokens", 0)
+            out_tok = output.get("output_tokens", 0)
+            lines = [f"Agent '{agent}' completed.", ""]
+            if summary:
+                lines.append(summary)
+            lines.append("")
+            lines.append(f"Tokens: {in_tok} in / {out_tok} out")
+            return "\n".join(lines)
+
+        # spawn_subagent failure
+        if not output.get("success", True) and "error" in output:
+            agent = output.get("agent", "unknown")
+            return f"Agent '{agent}' failed: {output['error']}"
+
         # Check for error first
         if not output.get('ok', True) and 'error' in output:
             return f"Error: {output['error']}"

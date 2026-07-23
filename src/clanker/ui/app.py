@@ -351,6 +351,40 @@ class ClankerApp(App):
         self.interrupt_requested = False
         self._interrupt_event.clear()
 
+    def add_subagent_tokens(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int = 0,
+        cache_creation_tokens: int = 0,
+    ) -> None:
+        """Accumulate subagent cost into the session tracker only.
+
+        Subagent has its own context window, so tokens do not affect the
+        parent's context remaining. Only the monetary cost carries over.
+        """
+        try:
+            from clanker.config import get_default_model
+
+            token_tracker = self._token_tracker
+            cm = get_default_model()
+            if cm:
+                turn_cost = cm.compute_cost(
+                    input_tokens,
+                    output_tokens,
+                    cache_read_tokens,
+                    cache_creation_tokens,
+                )
+            else:
+                turn_cost = None
+            # Only accumulate cost, don't touch context tracking
+            if turn_cost is not None:
+                token_tracker.total_cost_usd = (
+                    (token_tracker.total_cost_usd or 0.0) + turn_cost
+                )
+        except Exception:
+            pass
+
     # --- Input handling ---
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
