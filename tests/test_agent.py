@@ -14,11 +14,7 @@ import pytest
 
 def _langchain_available() -> bool:
     """Check if langchain is available."""
-    try:
-        import langchain_core
-        return True
-    except ImportError:
-        return False
+    return importlib.util.find_spec("langchain_core") is not None
 
 
 def _load_state_module():
@@ -51,7 +47,7 @@ class TestAgentState:
 
     def test_state_has_required_fields(self) -> None:
         """AgentState includes required fields."""
-        module = _load_state_module()
+        _load_state_module()
         state = {
             "messages": [],
             "working_directory": "/home/test",
@@ -61,12 +57,12 @@ class TestAgentState:
 
     def test_state_accepts_messages(self, langchain_messages) -> None:
         """AgentState can hold message objects."""
-        HumanMessage = langchain_messages["HumanMessage"]
-        AIMessage = langchain_messages["AIMessage"]
+        human_msg_cls = langchain_messages["HumanMessage"]
+        ai_msg_cls = langchain_messages["AIMessage"]
         state = {
             "messages": [
-                HumanMessage(content="hello"),
-                AIMessage(content="hi there"),
+                human_msg_cls(content="hello"),
+                ai_msg_cls(content="hi there"),
             ],
             "working_directory": "/test",
         }

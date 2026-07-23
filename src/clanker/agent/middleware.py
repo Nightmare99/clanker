@@ -1,7 +1,8 @@
 """Custom middleware for LangChain agents."""
 
 import json
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.messages import AIMessage, AnyMessage, ToolMessage

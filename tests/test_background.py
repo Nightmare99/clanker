@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 import pytest
 
@@ -42,10 +43,8 @@ def _fresh_manager(monkeypatch, tmp_path):
     if mgr is not None:
         for job in list(mgr.all()):
             if job.state == "running":
-                try:
+                with contextlib.suppress(Exception):
                     asyncio.get_event_loop().run_until_complete(mgr._terminate(job))
-                except Exception:
-                    pass
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +228,7 @@ class TestOutput:
 
         out = await bash_output.ainvoke({"job_id": jid, "tail": 2})
         # Header + last 2 lines.
-        body_lines = [l for l in out.splitlines()[1:] if l.strip()]
+        body_lines = [line for line in out.splitlines()[1:] if line.strip()]
         assert body_lines == ["line4", "line5"]
 
     async def test_output_since_byte_incremental(self):
@@ -498,7 +497,7 @@ class TestNamedJobs:
         assert '"echo b"' in out  # command used as default name
 
     async def test_status_detail_shows_name_field(self):
-        msg = await bash_background.ainvoke(
+        await bash_background.ainvoke(
             {"command": "echo named", "name": "demo job"}
         )
         job = bg.get_job_manager().all()[0]

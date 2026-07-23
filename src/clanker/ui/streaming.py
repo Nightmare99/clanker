@@ -1,19 +1,29 @@
-"""Streaming output handler for real-time responses."""
+"""Streaming output handler for real-time responses.
+
+Coordinates the async agent stream with the Textual TUI. The streaming logic
+(orchestration, token tracking, interrupt handling) is unchanged -- only the
+rendering layer now pushes into Textual widgets instead of Rich Live displays.
+"""
 
 import asyncio
 import os
 import signal
 import sys
 import threading
-from collections import deque
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 
-from rich.live import Live
-from rich.spinner import Spinner
-from rich.text import Text
-
 from clanker.config import Settings
+from clanker.logging import get_logger
+from clanker.runtime import is_yolo_mode
+from clanker.tools.ask_tools import get_ask_callback, set_ask_callback
+from clanker.tools.bash_tools import (
+    CommandRejectedError,
+    get_approval_callback,
+    set_approval_callback,
+)
+from clanker.tools.notify_tools import get_notify_callback, set_notify_callback
+from clanker.ui.tool_display import ToolDisplayHandler, normalize_tool_output
 
 _local_state = threading.local()
 
@@ -25,76 +35,42 @@ def get_active_console():
     from clanker.ui.console import Console
     return Console()
 
-from clanker.logging import get_logger
-from clanker.tools.bash_tools import CommandRejectedError, set_approval_callback, get_approval_callback
-from clanker.tools.notify_tools import set_notify_callback, get_notify_callback
-from clanker.tools.ask_tools import set_ask_callback, get_ask_callback
-from clanker.runtime import is_yolo_mode
-from clanker.ui.tool_display import ToolDisplayHandler, normalize_tool_output
-
 # Persistent event loop for the streaming session
 _persistent_loop: asyncio.AbstractEventLoop | None = None
 
 # Track the currently running streaming task for signal-based cancellation
 _current_streaming_task: asyncio.Task | None = None
 _interrupted: bool = False
-_current_loading_live = None  # Reference to current loading spinner for interrupt updates
+
+# Backward-compatible stub: Textual TUI no longer uses Rich Live spinner.
+# Kept so subagent.py and tests that reference it don't break.
+_current_loading_live = None
 
 
 def _cancel_streaming_task() -> None:
-    """Signal that the current streaming task should stop.
-
-    Called by signal handler when Ctrl+C is pressed. Sets the interrupt flag
-    and updates the spinner. Does NOT cancel the task - the task checks the
-    flag and calls session.abort() gracefully to preserve the session.
-    """
-    global _interrupted, _current_loading_live
+    """Signal that the current streaming task should stop."""
+    global _interrupted
     _interrupted = True
-
-    # Update spinner to show stopping message immediately
-    if _current_loading_live is not None:
-        try:
-            spinner = Spinner("dots", text=Text(" Stopping...", style="bold red"))
-            _current_loading_live.update(spinner)
-        except Exception:
-            pass
-    # NOTE: We intentionally do NOT cancel the task here.
-    # Cancelling would interrupt session.abort() and corrupt the session.
-    # Instead, the streaming code checks _interrupted and aborts gracefully.
 
 
 def _asyncio_exception_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
-    """Custom exception handler to suppress expected cleanup errors.
-
-    When Ctrl+C is pressed, in-flight asyncio callbacks may try to set exceptions
-    on already-done Futures. This is expected and should not pollute the console.
-    """
+    """Custom exception handler to suppress expected cleanup errors."""
     exception = context.get("exception")
     message = context.get("message", "")
 
-    # Suppress InvalidStateError during cleanup (Future already done/cancelled)
     if isinstance(exception, asyncio.InvalidStateError):
         return
-
-    # Suppress CancelledError (expected on Ctrl+C)
     if isinstance(exception, asyncio.CancelledError):
         return
-
-    # Suppress ProcessExited with code 0 (clean exit)
     if "ProcessExited" in message and "code 0" in message:
         return
-
-    # Suppress "Task exception was never retrieved" for our streaming tasks
     if "Task exception was never retrieved" in message:
-        # Check if it's from our streaming code
         future = context.get("future")
         if future and hasattr(future, "get_coro"):
             coro = future.get_coro()
             coro_name = getattr(coro, "__qualname__", "")
             if "_stream_async" in coro_name:
                 return
-
-    # For other exceptions, use default handling
     loop.default_exception_handler(context)
 
 
@@ -117,48 +93,17 @@ def cleanup_event_loop() -> None:
 
 
 def _teardown_live_displays(rich_console, stop_loading, tool_handler) -> None:
-    """Tear down every Rich Live owner so none leak past the turn.
-
-    Two independent owners (the loading spinner and the ToolDisplayHandler) share
-    one Rich console, and Rich permits only one active Live at a time. If an
-    exception propagates mid-stream and leaves either Live active, the console's
-    ``_live`` stays set -- which makes the guarded ``start_loading`` no-op for the
-    rest of the session (the spinner silently dies). Call this from the streaming
-    ``finally`` blocks.
-
-    Each step is isolated so a failure in one can't prevent the others, and a
-    final ``clear_live()`` force-resets the console as a last resort.
-    """
-    try:
+    """Backward-compatible stub. Textual TUI no longer uses Rich Live displays."""
+    with suppress(Exception):
         stop_loading()
-    except Exception:
-        pass
-    try:
+    with suppress(Exception):
         tool_handler.finalize_live()
-    except Exception:
-        pass
-    # Last-resort hard reset: even if the steps above partially failed, ensure the
-    # console no longer believes a Live is active so the next turn can start one.
-    try:
+    with suppress(Exception):
         rich_console.clear_live()
-    except Exception:
-        pass
 
 
 async def _heal_orphaned_tool_calls(graph, config) -> None:
-    """Repair orphaned tool_use blocks left in the checkpoint.
-
-    When a turn ends after the model emits an ``AIMessage`` with ``tool_calls``
-    but before the tool node writes the matching ``ToolMessage`` -- e.g. the user
-    interrupted (Ctrl+C) or rejected a command approval, which raises out of the
-    tool node -- the persisted state holds tool_use ids with no tool_result.
-    Anthropic-family APIs then reject every subsequent turn with a 400. This reads
-    the committed state, detects such orphans, and appends stub ToolMessage
-    results so history is valid again.
-
-    Self-healing and idempotent: runs each turn, no-ops when already valid.
-    Never raises -- a repair failure must not break the turn.
-    """
+    """Repair orphaned tool_use blocks left in the checkpoint."""
     heal_logger = get_logger("streaming")
     try:
         from clanker.context import find_orphaned_tool_call_ids, make_tool_result_stubs
@@ -177,28 +122,13 @@ async def _heal_orphaned_tool_calls(graph, config) -> None:
             len(orphan_ids), orphan_ids,
         )
         stubs = make_tool_result_stubs(orphan_ids)
-        # as_node="tools" attributes the stub ToolMessages to the tool node so the
-        # graph resumes at the model node. Without it, aupdate_state raises
-        # KeyError('model') on the create_agent graph and the orphan is never fixed.
         await graph.aupdate_state(config, {"messages": stubs}, as_node="tools")
-    except Exception as exc:  # noqa: BLE001 - repair must never break the turn
+    except Exception as exc:  # noqa: BLE001
         heal_logger.warning("Failed to heal orphaned tool calls: %s", exc)
 
 
 async def _compact_oversized_tool_call_args(graph, config, settings) -> None:
-    """Shrink oversized tool-call args in the committed checkpoint after a 413.
-
-    Structural twin of :func:`_heal_orphaned_tool_calls`, but for payload size: a
-    proxy/gateway can reject a turn with ``413 Request Entity Too Large`` when
-    accumulated large tool-call arguments (e.g. ``write_file`` content) bloat the
-    request. This rewrites those args in the persisted state so the *next* turn is
-    not stuck re-sending the same oversized history.
-
-    Uses the same ``_truncate_tool_call_args`` helper the request-path middleware
-    uses, and relies on ``add_messages`` upsert-by-id (``model_copy`` preserves the
-    message ``id``) so trimmed AIMessages REPLACE the originals in place -- no
-    reordering, no tool_use/tool_result pairing change. Best-effort; never raises.
-    """
+    """Shrink oversized tool-call args in the committed checkpoint after a 413."""
     heal_logger = get_logger("streaming")
     try:
         from clanker.agent.middleware import _truncate_tool_call_args
@@ -221,11 +151,8 @@ async def _compact_oversized_tool_call_args(graph, config, settings) -> None:
             "Compacting %d oversized tool-call message(s) after a too-large error",
             len(rewritten),
         )
-        # as_node="tools" attributes the update to the tool node so the graph
-        # resumes at the model node (mirrors _heal_orphaned_tool_calls; without it
-        # aupdate_state raises KeyError('model') on the create_agent graph).
         await graph.aupdate_state(config, {"messages": rewritten}, as_node="tools")
-    except Exception as exc:  # noqa: BLE001 - unwedge must never break the turn
+    except Exception as exc:  # noqa: BLE001
         heal_logger.warning("Failed to compact oversized tool-call args: %s", exc)
 
 
@@ -248,7 +175,7 @@ class StreamResult:
 
 @contextmanager
 def _suppress_subprocess_stderr():
-    """Suppress stderr from subprocesses (like MCP servers) at fd level."""
+    """Suppress stderr from subprocesses at fd level."""
     saved_stderr_fd: int | None = None
     original_stderr_fd: int | None = None
     redirecting = False
@@ -260,7 +187,6 @@ def _suppress_subprocess_stderr():
         os.close(devnull)
         redirecting = True
     except (OSError, ValueError):
-        # If we can't redirect (e.g., no real stderr), just continue.
         pass
 
     try:
@@ -269,6 +195,42 @@ def _suppress_subprocess_stderr():
         if redirecting and saved_stderr_fd is not None and original_stderr_fd is not None:
             os.dup2(saved_stderr_fd, original_stderr_fd)
             os.close(saved_stderr_fd)
+
+
+def _get_tool_arg_summary(tool_name: str, tool_input: dict) -> str:
+    """Get a short argument summary for a tool call."""
+    args = tool_input or {}
+    if tool_name in ("read_file", "write_file", "edit_file", "append_file"):
+        return str(args.get("file_path", ""))
+    elif tool_name == "execute_shell":
+        cmd = str(args.get("command", ""))
+        return cmd[:60] if cmd else ""
+    elif tool_name == "bash_background":
+        name_val = args.get("name")
+        name = str(name_val).strip() if name_val is not None else ""
+        cmd = str(args.get("command", ""))[:50]
+        return f"[{name}] {cmd}" if name else cmd
+    elif tool_name in ("bash_status", "bash_output", "bash_wait", "bash_kill"):
+        return str(args.get("job_id", "all"))
+    elif tool_name == "glob_search":
+        return str(args.get("pattern", "*"))
+    elif tool_name == "grep_search":
+        pat = str(args.get("pattern", ""))
+        return pat[:40] if pat else ""
+    elif tool_name == "list_directory":
+        return str(args.get("path", "."))
+    elif tool_name == "web_search":
+        return str(args.get("query", ""))[:60]
+    elif tool_name == "web_read":
+        return str(args.get("url", ""))[:80]
+    elif tool_name == "load_skill":
+        return str(args.get("name", ""))
+    else:
+        for key in ["query", "path", "url", "input", "text", "command", "name"]:
+            if key in args:
+                val = str(args[key])
+                return val[:40]
+        return ""
 
 
 async def stream_agent_response_async(
@@ -282,12 +244,12 @@ async def stream_agent_response_async(
     system_prompt: str | None = None,
 ) -> StreamResult:
     """Async handler for streaming agent response."""
-    import asyncio
     from langgraph.errors import GraphRecursionError
-    from langchain_core.messages import HumanMessage
-    from clanker.agent import create_agent_graph_async
 
-    # Track active console and callbacks to allow nesting/subagents
+    from clanker.agent import create_agent_graph_async
+    from clanker.ui.chat_log import MessageType
+
+    # Track active console and callbacks
     old_console = getattr(_local_state, "active_console", None)
     _local_state.active_console = console
 
@@ -295,37 +257,53 @@ async def stream_agent_response_async(
     old_ask = get_ask_callback()
     old_approval = get_approval_callback()
 
-    loop = asyncio.get_running_loop()
+    # Get Textual app reference if available
+    textual_app = getattr(console, "_textual_app", None)
 
-    # Create graph inside async context so MCP client is in same event loop
+    # Create graph inside async context
     graph, mcp_client = await create_agent_graph_async(
         settings, checkpointer, tools=tools, middleware=middleware, system_prompt=system_prompt
     )
-    current_response = ""  # Buffer for current model run
-    current_thinking = ""  # Buffer for thinking content
+
+    current_response = ""
+    current_thinking = ""
     shown_tool_calls: set[str] = set()
-    current_model_run: str | None = None  # Track current model run_id
+    current_model_run: str | None = None
     thinking_shown = False
-    in_think_tag = False  # Track if we're inside <think>...</think> tags
-    think_tag_closed = False  # Track if </think> has been seen
-    rich_console = console._console
+    in_think_tag = False
+    think_tag_closed = False
+
+    # Track TUI tool state per run_id for debounced loading indicators
+    from clanker.ui.chat_log import ToolEntry
+    _tui_tool_pending: dict[str, dict] = {}  # run_id -> {name, args}
+    _tui_tool_entries: dict[str, ToolEntry] = {}  # run_id -> mounted entry (after debounce fires)
+    _tui_debounce_tasks: dict[str, asyncio.Task] = {}  # run_id -> debounce task
 
     # Loading state
-    loading_live: Live | None = None
     first_content_received = False
 
     # Summarization detection
-    # Track model calls before any tools run - if we see 2+ model starts
-    # before the first tool, the first was likely summarization
     model_call_count = 0
     tools_started = False
     summarization_detected = False
     summarization_spinner_shown = False
 
+    # Debounced tool loader: mounts LoadingIndicator after delay if tool still running
+    async def _tool_debounce(run_id: str, tool_name: str, args: str) -> None:
+        await asyncio.sleep(0.2)
+        if run_id in _tui_tool_pending and run_id not in _tui_tool_entries:
+            # Tool still running after 200ms — show loader
+            try:
+                chat_log = textual_app.get_chat_log()
+                entry = chat_log.add_tool_start(tool_name, args)
+                _tui_tool_entries[run_id] = entry
+            except Exception:
+                pass
+            finally:
+                _tui_tool_pending.pop(run_id, None)
+                _tui_debounce_tasks.pop(run_id, None)
+
     # Token tracking
-    # input_tokens: overwritten each call (last call re-sends full history)
-    # output_tokens: overwritten each call (last input already encodes prior outputs)
-    # cumulative_output_tokens: summed across all calls (for cost accounting)
     last_input_tokens = 0
     last_output_tokens = 0
     cumulative_output_tokens = 0
@@ -333,63 +311,55 @@ async def stream_agent_response_async(
     last_cache_creation_tokens = 0
     model_name = ""
 
-    def start_loading(message: str | None = None):
-        """Start the loading spinner."""
-        global _current_loading_live
-        nonlocal loading_live
-        # Guard against a second Live: the ToolDisplayHandler owns a separate
-        # Live on the same console, and Rich allows only one active at a time.
-        # Starting another would raise LiveError ("Only one live display...").
-        if loading_live is None and getattr(rich_console, "_live", None) is None:
-            msg = message or console.get_loading_message()
-            spinner = Spinner("dots", text=Text(f" {msg}", style="cyan"))
-            loading_live = Live(spinner, console=rich_console, refresh_per_second=10, transient=True)
-            loading_live.start()
-            _current_loading_live = loading_live
-
-    def stop_loading():
-        """Stop the loading spinner."""
-        global _current_loading_live
-        nonlocal loading_live
-        if loading_live is not None:
+    def _update_loading(message: str) -> None:
+        """Update loading indicator in TUI."""
+        if textual_app:
             try:
-                loading_live.stop()
+                status_bar = textual_app.get_status_bar()
+                status_bar.set_loading(message)
             except Exception:
                 pass
-            loading_live = None
-            _current_loading_live = None
 
-    def update_loading(message: str):
-        """Update the loading spinner message."""
-        nonlocal loading_live
-        if loading_live is not None:
-            spinner = Spinner("dots", text=Text(f" {message}", style="cyan"))
-            loading_live.update(spinner)
+    def _stop_loading() -> None:
+        """Stop loading indicator."""
+        if textual_app:
+            try:
+                status_bar = textual_app.get_status_bar()
+                status_bar.clear()
+            except Exception:
+                pass
 
-    # Unified tool display handler for all providers
+    def _start_loading(message: str | None = None) -> None:
+        """Start loading indicator."""
+        if textual_app:
+            msg = message or console.get_loading_message()
+            _update_loading(msg)
+
+    # Unified tool display handler
     tool_handler = ToolDisplayHandler(
         console=console,
         show_tool_calls=settings.output.show_tool_calls,
-        on_tool_start=stop_loading,
-        on_tool_end=start_loading,
+        on_tool_start=_stop_loading,
+        on_tool_end=_start_loading,
     )
 
-    # Register the notify callback
+    # Register notify callback
+    _pending_notifies: list[tuple[str, str, str | None]] = []
+
     def _notify_callback(message: str, level: str, title: str | None = None) -> None:
         console.print_notify(message, level, title)
+        # Buffer notify messages — flush on next event loop iteration
+        _pending_notifies.append((message, level, title))
 
     set_notify_callback(_notify_callback)
 
-    # Register the interactive asker (ask_user tool). Pause the spinner and
-    # any tool Live while the selection prompt owns the terminal, then resume.
+    # Register ask callback
     def _ask_callback(question, options, *, multi_select, allow_other, allow_cancel):
         from clanker.ui.prompts import select_options
 
-        stop_loading()
-        try:
+        _stop_loading()
+        with suppress(Exception):
             tool_handler.finalize_live()
-        except Exception:
-            pass
         try:
             return select_options(
                 question,
@@ -399,20 +369,17 @@ async def stream_agent_response_async(
                 allow_cancel=allow_cancel,
             )
         finally:
-            start_loading()
+            _start_loading()
 
     set_ask_callback(_ask_callback)
 
-    # Register the interactive bash-approval prompter. Same spinner/Live
-    # coordination as the asker so the arrow-key menu owns the terminal.
+    # Register approval callback
     def _approval_callback(question, options, *, preface=None):
         from clanker.ui.prompts import select_options
 
-        stop_loading()
-        try:
+        _stop_loading()
+        with suppress(Exception):
             tool_handler.finalize_live()
-        except Exception:
-            pass
         try:
             return select_options(
                 question,
@@ -422,40 +389,46 @@ async def stream_agent_response_async(
                 preface=preface,
             )
         finally:
-            start_loading()
+            _start_loading()
 
     set_approval_callback(_approval_callback)
 
     try:
-        # Start loading spinner
-        start_loading()
+        _start_loading()
 
-        # Add recursion limit to config (default 100 is too low for complex tasks).
-        # Configurable so large multi-file lint/test loops don't hit it prematurely.
         stream_config = {**config, "recursion_limit": settings.context.max_agent_steps}
 
-        # Heal any orphaned tool_use left in the checkpoint by a prior
-        # interrupted turn, otherwise the API rejects this turn with a 400
-        # ("tool_use ids without tool_result"). Self-healing: runs every turn,
-        # no-ops when the history is already valid.
         await _heal_orphaned_tool_calls(graph, config)
 
         with _suppress_subprocess_stderr():
             async for event in graph.astream_events(
                 state, config=stream_config, version="v2"
             ):
+                # Flush buffered notify messages from callback
+                if _pending_notifies and textual_app:
+                    try:
+                        chat_log = textual_app.get_chat_log()
+                        for msg, level, title in _pending_notifies:
+                            if msg:
+                                chat_log.add_message(msg, MessageType.NOTIFY, title=level)
+                    except Exception:
+                        pass
+                    _pending_notifies.clear()
+
                 event_type = event.get("event", "")
 
-                # Check for interrupt flag (set by the SIGINT handler on Ctrl+C).
-                # The handler intentionally does NOT cancel the task, so we must
-                # break out of the event loop ourselves to return control.
                 if _interrupted:
-                    stop_loading()
+                    _stop_loading()
                     tool_handler.finalize_live()
-                    rich_console.print(
-                        "\n[bold yellow]*BZZZT*[/bold yellow] Agent halted. "
-                        "Control returned to you. [bold yellow]*CLANK*[/bold yellow]"
-                    )
+                    if textual_app:
+                        try:
+                            chat_log = textual_app.get_chat_log()
+                            chat_log.add_message(
+                                "*BZZZT* Agent halted. Control returned to you. *CLANK*",
+                                MessageType.WARNING,
+                            )
+                        except Exception:
+                            pass
                     return StreamResult(
                         response=current_response,
                         input_tokens=last_input_tokens,
@@ -466,7 +439,6 @@ async def stream_agent_response_async(
                         summarization_occurred=summarization_detected,
                     )
 
-                # Show tool calls immediately (don't batch)
                 if event_type == "on_tool_start":
                     tools_started = True
 
@@ -474,56 +446,128 @@ async def stream_agent_response_async(
                         run_id = event.get("run_id", "")
                         if run_id and run_id not in shown_tool_calls:
                             shown_tool_calls.add(run_id)
-                            tool_name = event.get("name", "unknown")
+                            tool_name_ev = event.get("name", "unknown")
                             tool_input = event.get("data", {}).get("input", {})
-                            # Skip run display when approval is needed
-                            if tool_name == "run" and not is_yolo_mode():
+                            if tool_name_ev == "run" and not is_yolo_mode():
                                 continue
-                            # Skip display-only tools (notify, ask_user, spawn_subagent) -
-                            # they render their own output.
-                            if tool_name.lower() in ("notify", "ask_user", "spawn_subagent"):
+                            if tool_name_ev.lower() in ("notify", "ask_user", "spawn_subagent"):
                                 continue
-                            # Queue tool with spinner - result will be
-                            # printed together with header when tool ends
-                            tool_handler.handle_tool_start(tool_name, tool_input)
-                    else:
-                        stop_loading()
 
-                # Show tool result
+                            arg_str = _get_tool_arg_summary(tool_name_ev, tool_input)
+
+                            if textual_app:
+                                try:
+                                    # Store pending tool info — debounce timer will
+                                    # mount the LoadingIndicator if the tool takes >200ms
+                                    _tui_tool_pending[run_id] = {
+                                        "name": tool_name_ev,
+                                        "args": arg_str,
+                                    }
+                                    # Schedule debounce: show loader after 200ms if still running
+                                    task = asyncio.create_task(
+                                        _tool_debounce(run_id, tool_name_ev, arg_str)
+                                    )
+                                    _tui_debounce_tasks[run_id] = task
+                                except Exception:
+                                    pass
+
+                            tool_handler.handle_tool_start(tool_name_ev, tool_input)
+                    else:
+                        _stop_loading()
+
                 elif event_type == "on_tool_end":
                     tool_name_end = event.get("name", "")
                     if tool_name_end.lower() in ("notify", "ask_user", "spawn_subagent"):
-                        start_loading()
+                        # Render notify output in TUI chat log from tool result
+                        if tool_name_end.lower() == "notify" and textual_app:
+                            try:
+                                data = event.get("data", {})
+                                raw_output = data.get("output", {})
+                                if isinstance(raw_output, dict):
+                                    msg = raw_output.get("message", "")
+                                    level = raw_output.get("level", "info")
+                                elif isinstance(raw_output, str):
+                                    import json as _json
+                                    parsed = _json.loads(raw_output) if raw_output.strip() else {}
+                                    msg = parsed.get("message", "") if isinstance(parsed, dict) else raw_output
+                                    level = parsed.get("level", "info") if isinstance(parsed, dict) else "info"
+                                else:
+                                    msg, level = "", "info"
+                                if msg:
+                                    chat_log = textual_app.get_chat_log()
+                                    chat_log.add_message(msg, MessageType.NOTIFY, title=level)
+                            except Exception:
+                                pass
+                        _start_loading()
                         continue
-                    # Show tool header + output together
+
                     if settings.output.show_tool_calls:
                         data = event.get("data", {})
                         tool_output = normalize_tool_output(data.get("output"))
                         tool_handler.handle_tool_end(tool_name_end, tool_output)
-                    else:
-                        # Clear tracking so tool can be called again
-                        tool_handler.clear_tool_tracking(tool_name_end)
-                        start_loading()
 
-                # Track model calls to detect summarization
+                        if textual_app:
+                            try:
+                                chat_log = textual_app.get_chat_log()
+                                is_error = console._is_failed_tool_result(
+                                    tool_output, tool_name_end,
+                                    tool_handler._pending_inputs[0][2] if tool_handler._pending_inputs else None
+                                ) if tool_handler._pending_inputs else False
+
+                                run_id_end = event.get("run_id", "")
+
+                                # Cancel debounce task if tool finished before it fired
+                                debounce_task = _tui_debounce_tasks.pop(run_id_end, None)
+                                if debounce_task is not None and not debounce_task.done():
+                                    debounce_task.cancel()
+                                    # Suppress CancelledError — consume it in the next await
+                                    try:
+                                        await debounce_task
+                                    except asyncio.CancelledError:
+                                        pass
+
+                                # Check if debounce timer already mounted a loader
+                                existing_entry = _tui_tool_entries.pop(run_id_end, None)
+                                pending_info = _tui_tool_pending.pop(run_id_end, None)
+
+                                if existing_entry is not None:
+                                    # Loader was already showing — replace with result
+                                    chat_log.update_tool_end(
+                                        existing_entry, tool_output, success=not is_error
+                                    )
+                                elif pending_info is not None:
+                                    # Tool finished before debounce fired — show as instant complete
+                                    chat_log.add_tool_complete(
+                                        pending_info["name"],
+                                        pending_info["args"],
+                                        tool_output,
+                                        success=not is_error,
+                                    )
+                                else:
+                                    # Fallback: no tracking info available
+                                    tool_input_end = event.get("data", {}).get("input", {})
+                                    arg_str_end = _get_tool_arg_summary(tool_name_end, tool_input_end)
+                                    chat_log.add_tool_complete(
+                                        tool_name_end, arg_str_end, tool_output,
+                                        success=not is_error,
+                                    )
+                            except Exception:
+                                pass
+                    else:
+                        tool_handler.clear_tool_tracking(tool_name_end)
+                        _start_loading()
+
                 elif event_type == "on_chat_model_start":
                     run_id = event.get("run_id", "")
                     if run_id != current_model_run:
                         model_call_count += 1
 
-                        # If this is the 2nd+ model call before tools started,
-                        # the previous call was likely summarization
-                        if model_call_count == 1 and not tools_started:
-                            # First model call - could be summarization, show special message
-                            # We'll know for sure if we see another model start
-                            pass
-                        elif model_call_count == 2 and not tools_started and not summarization_spinner_shown:
-                            # Second model call before tools = first was summarization!
+                        if model_call_count == 2 and not tools_started and not summarization_spinner_shown:
                             summarization_detected = True
                             summarization_spinner_shown = True
-                            stop_loading()
+                            _stop_loading()
                             console.print_info("*WHIRR* Compressing memory banks...")
-                            start_loading()
+                            _start_loading()
 
                         if tool_handler.has_pending_tools():
                             tool_handler.flush_pending_tools()
@@ -535,7 +579,6 @@ async def stream_agent_response_async(
                         think_tag_closed = False
                         current_model_run = run_id
 
-                # Stream text from LLM
                 elif event_type == "on_chat_model_stream":
                     chunk = event.get("data", {}).get("chunk")
                     if chunk:
@@ -543,8 +586,8 @@ async def stream_agent_response_async(
 
                         if content and not first_content_received:
                             first_content_received = True
+                            _stop_loading()
 
-                        # Handle Anthropic list content (with thinking blocks)
                         if isinstance(content, list):
                             for block in content:
                                 if isinstance(block, dict):
@@ -558,7 +601,6 @@ async def stream_agent_response_async(
                                     elif block.get("type") == "text":
                                         text = block.get("text", "")
                                         if text:
-                                            stop_loading()
                                             current_response += text
                                 elif hasattr(block, "type"):
                                     if block.type == "thinking":
@@ -571,15 +613,12 @@ async def stream_agent_response_async(
                                     elif block.type == "text":
                                         text = getattr(block, "text", "")
                                         if text:
-                                            stop_loading()
                                             current_response += text
 
-                        # Handle string content (standard format)
                         elif content and isinstance(content, str):
                             remaining = content
                             while remaining:
                                 if think_tag_closed:
-                                    stop_loading()
                                     current_response += remaining
                                     remaining = ""
                                 elif in_think_tag:
@@ -589,7 +628,6 @@ async def stream_agent_response_async(
                                         remaining = remaining[end_idx + 8:]
                                         in_think_tag = False
                                         think_tag_closed = True
-                                        stop_loading()
                                     else:
                                         current_thinking += remaining
                                         remaining = ""
@@ -608,7 +646,6 @@ async def stream_agent_response_async(
                                         current_thinking += remaining[:end_idx]
                                         remaining = remaining[end_idx + 8:]
                                         think_tag_closed = True
-                                        stop_loading()
                                         if not thinking_shown and current_thinking:
                                             console.print_thinking_start()
                                             thinking_shown = True
@@ -619,7 +656,6 @@ async def stream_agent_response_async(
                                             thinking_shown = True
                                         remaining = ""
 
-                # Capture token usage when model completes
                 elif event_type == "on_chat_model_end":
                     output = event.get("data", {}).get("output")
                     if output:
@@ -632,10 +668,6 @@ async def stream_agent_response_async(
                             last_input_tokens = usage.get("input_tokens", 0)
                             last_output_tokens = usage.get("output_tokens", 0)
                             cumulative_output_tokens += last_output_tokens
-                            # Cache counts live under input_token_details in
-                            # LangChain's usage_metadata (the flat
-                            # cache_*_input_tokens keys are raw-Anthropic and
-                            # never appear here, so reading them yields 0).
                             details = usage.get("input_token_details") or {}
                             last_cache_read_tokens = details.get("cache_read", 0)
                             last_cache_creation_tokens = details.get("cache_creation", 0)
@@ -660,8 +692,12 @@ async def stream_agent_response_async(
                                 cumulative_output_tokens += last_output_tokens
 
     except CommandRejectedError as e:
-        stop_loading()
-        rich_console.print(f"\n[bold yellow]Operation cancelled:[/bold yellow] {e}")
+        _stop_loading()
+        if textual_app:
+            with suppress(Exception):
+                textual_app.get_chat_log().add_message(
+                    f"Operation cancelled: {e}", MessageType.WARNING
+                )
         return StreamResult(
             response="",
             input_tokens=last_input_tokens,
@@ -673,20 +709,16 @@ async def stream_agent_response_async(
         )
 
     except GraphRecursionError:
-        # The agent looped past the per-turn step budget without finishing.
-        # End the turn gracefully (preserving any partial text) instead of
-        # crashing; the user can nudge it to continue or raise
-        # context.max_agent_steps. Any tool_use left dangling by the aborted
-        # turn is repaired by _heal_orphaned_tool_calls on the next turn.
-        stop_loading()
+        _stop_loading()
         tool_handler.finalize_live()
         limit = settings.context.max_agent_steps
-        rich_console.print(
-            f"\n[bold yellow]*WHIRR*[/bold yellow] Hit the step limit "
-            f"({limit} steps) without finishing. Stopping here so you can "
-            f"steer. Say 'continue' to resume, or raise "
-            f"[cyan]context.max_agent_steps[/cyan] in config for longer runs."
-        )
+        if textual_app:
+            with suppress(Exception):
+                textual_app.get_chat_log().add_message(
+                    f"*WHIRR* Hit step limit ({limit} steps). Say 'continue' to resume, "
+                    f"or raise context.max_agent_steps in config.",
+                    MessageType.WARNING,
+                )
         return StreamResult(
             response=current_response,
             input_tokens=last_input_tokens,
@@ -698,8 +730,12 @@ async def stream_agent_response_async(
         )
 
     except (KeyboardInterrupt, asyncio.CancelledError):
-        stop_loading()
-        rich_console.print("\n[bold yellow]*BZZZT*[/bold yellow] Agent halted. Control returned to you. [bold yellow]*CLANK*[/bold yellow]")
+        _stop_loading()
+        if textual_app:
+            with suppress(Exception):
+                textual_app.get_chat_log().add_message(
+                    "*BZZZT* Agent halted. *CLANK*", MessageType.WARNING
+                )
         return StreamResult(
             response=current_response,
             input_tokens=last_input_tokens,
@@ -711,29 +747,20 @@ async def stream_agent_response_async(
         )
 
     except Exception as exc:  # noqa: BLE001
-        # A context-length / payload-too-large rejection (e.g. HTTP 413 from a
-        # proxy whose body-byte limit the token-based summarization trigger
-        # never catches). Re-raise anything else so cli.py's generic handler
-        # still logs genuine bugs. KeyboardInterrupt/CancelledError are
-        # BaseException and handled above, so this never swallows them.
         from clanker.context import is_context_length_error
 
         if not is_context_length_error(exc):
             raise
 
-        stop_loading()
+        _stop_loading()
         tool_handler.finalize_live()
-        get_logger("streaming").warning(
-            "Model call rejected as too large (context/payload): %s", exc
-        )
-        # Unwedge the persisted state so the next turn isn't stuck re-sending
-        # the same oversized history.
         await _compact_oversized_tool_call_args(graph, config, settings)
-        rich_console.print(
-            "\n[bold yellow]*CLANK*[/bold yellow] That request was too large "
-            "for the model endpoint. I've trimmed the bulky bits from history "
-            "(large file contents are safe on disk) — try again or rephrase."
-        )
+        if textual_app:
+            with suppress(Exception):
+                textual_app.get_chat_log().add_message(
+                    "*CLANK* Request too large. Trimmed bulky bits — try again.",
+                    MessageType.ERROR,
+                )
         return StreamResult(
             response=current_response,
             input_tokens=last_input_tokens,
@@ -745,13 +772,12 @@ async def stream_agent_response_async(
         )
 
     finally:
-        _teardown_live_displays(rich_console, stop_loading, tool_handler)
         set_notify_callback(old_notify)
         set_ask_callback(old_ask)
         set_approval_callback(old_approval)
         _local_state.active_console = old_console
 
-    # If we buffered thinking but never saw </think>, treat it as response
+    # If we buffered thinking but never saw </think>, treat as response
     if current_thinking and not think_tag_closed and not current_response:
         current_response = current_thinking
         current_thinking = ""
@@ -759,10 +785,19 @@ async def stream_agent_response_async(
     # Print final response
     if current_response.strip():
         console.print_assistant_message(current_response)
+        if textual_app:
+            with suppress(Exception):
+                textual_app.get_chat_log().add_message(
+                    current_response, MessageType.ASSISTANT
+                )
 
-    # Show thinking summary if present
     if current_thinking:
         console.print_thinking(current_thinking)
+        if textual_app:
+            with suppress(Exception):
+                textual_app.get_chat_log().add_message(
+                    current_thinking, MessageType.THINKING
+                )
 
     return StreamResult(
         response=current_response,
@@ -785,67 +820,33 @@ def stream_agent_response_sync(
     middleware: list | None = None,
     system_prompt: str | None = None,
 ) -> StreamResult:
-    """Synchronous wrapper for async stream_agent_response.
-
-    Creates the agent graph inside the async context to ensure MCP tools
-    are created in the same event loop where they'll be invoked.
-
-    Args:
-        settings: Application settings.
-        checkpointer: Checkpointer for persistence.
-        state: Initial state for the agent.
-        config: Configuration dict with thread_id.
-        console: Console instance for output.
-
-    Returns:
-        StreamResult with response text and token usage.
-    """
+    """Synchronous wrapper for async stream_agent_response."""
     global _current_streaming_task, _interrupted
     _interrupted = False
-    import threading
 
-    # Install signal handler to cancel task on Ctrl+C if in main thread
     original_handler = None
     try:
         original_handler = signal.getsignal(signal.SIGINT)
         def _sigint_handler(signum, frame):
-            """Handle SIGINT by cancelling the streaming task."""
             _cancel_streaming_task()
         signal.signal(signal.SIGINT, _sigint_handler)
     except ValueError:
-        # Not in main thread, ignore signal handling
         pass
 
     try:
-        # If we are in a non-main thread, there might be an active loop in the main thread.
-        # Check if the main loop is already running.
         try:
             active_loop = asyncio.get_running_loop()
         except RuntimeError:
             active_loop = None
 
-        import threading
         is_main_thread = threading.current_thread() is threading.main_thread()
 
         if active_loop is not None and active_loop.is_running():
-            # If the loop is running and we are not in the loop's thread (or in a background thread),
-            # we can run it threadsafe.
-            # Otherwise, if we are in the same thread as the running loop, we shouldn't call future.result()
-            # or run_until_complete because it will block and deadlock.
-            # In that case, we can run it via a helper thread to bypass the block.
             coro = stream_agent_response_async(
                 settings, checkpointer, state, config, console,
                 tools=tools, middleware=middleware, system_prompt=system_prompt
             )
 
-            # Use run_coroutine_threadsafe but retrieve result safely.
-            # If we are in the main thread (same thread as active_loop), future.result() would deadlock.
-            # But wait, if we are in the main thread, how did we get here?
-            # Orchestrator runs in the main thread under create_task.
-            # To prevent deadlock, if we are in the main thread, we must run the coroutine in a new thread
-            # with its own loop, OR run it safely.
-            # Actually, the simplest way is: if active_loop.is_running() and is_main_thread:
-            # We run it in a separate thread with a new loop to completely isolate it!
             if is_main_thread:
                 res_container = []
                 def run_isolated():
@@ -873,7 +874,6 @@ def stream_agent_response_sync(
                 future = asyncio.run_coroutine_threadsafe(coro, active_loop)
                 return future.result()
 
-        # Otherwise, fall back to our persistent loop
         loop = _get_or_create_loop()
         _current_streaming_task = loop.create_task(
             stream_agent_response_async(
@@ -883,16 +883,12 @@ def stream_agent_response_sync(
         )
         return loop.run_until_complete(_current_streaming_task)
     except asyncio.CancelledError:
-        # Task was cancelled via signal handler
         return StreamResult(response="")
     except KeyboardInterrupt:
-        # Fallback if interrupt happens outside async context
         _cancel_streaming_task()
         return StreamResult(response="")
     finally:
         _current_streaming_task = None
         if original_handler is not None:
-            try:
+            with suppress(ValueError):
                 signal.signal(signal.SIGINT, original_handler)
-            except ValueError:
-                pass

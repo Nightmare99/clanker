@@ -1,5 +1,43 @@
 """Configuration management for Clanker."""
 
+from clanker.config.blacklist import (
+    PROJECT_BLACKLIST_FILE,
+    get_effective_blacklist,
+    load_project_blacklist,
+)
+from clanker.config.copilot_auth import (
+    COPILOT_MODEL_NAME_PREFIX,
+    COPILOT_TOKEN_PATH,
+    CopilotAuthError,
+    DeviceFlowSession,
+    complete_login,
+    exchange_for_copilot_token,
+    get_valid_copilot_token,
+    list_copilot_models,
+    poll_for_github_token,
+    start_device_flow,
+    sync_copilot_models,
+)
+from clanker.config.copilot_auth import (
+    disconnect as copilot_disconnect,
+)
+from clanker.config.copilot_auth import (
+    is_connected as is_copilot_connected,
+)
+from clanker.config.models import (
+    MODELS_CONFIG_PATH,
+    ModelConfig,
+    ModelsConfig,
+    add_model,
+    create_llm_from_config,
+    get_default_model,
+    get_model_by_name,
+    get_models_config,
+    list_model_names,
+    remove_model,
+    save_models_config,
+    set_default_model,
+)
 from clanker.config.settings import (
     CONFIG_PATH,
     LoggingSettings,
@@ -8,40 +46,6 @@ from clanker.config.settings import (
     Settings,
     get_settings,
     reload_settings,
-)
-from clanker.config.blacklist import (
-    PROJECT_BLACKLIST_FILE,
-    get_effective_blacklist,
-    load_project_blacklist,
-)
-from clanker.config.models import (
-    ModelConfig,
-    ModelsConfig,
-    MODELS_CONFIG_PATH,
-    get_models_config,
-    save_models_config,
-    get_model_by_name,
-    get_default_model,
-    set_default_model,
-    list_model_names,
-    add_model,
-    remove_model,
-    create_llm_from_config,
-)
-from clanker.config.copilot_auth import (
-    COPILOT_MODEL_NAME_PREFIX,
-    COPILOT_TOKEN_PATH,
-    CopilotAuthError,
-    DeviceFlowSession,
-    complete_login,
-    disconnect as copilot_disconnect,
-    exchange_for_copilot_token,
-    get_valid_copilot_token,
-    is_connected as is_copilot_connected,
-    list_copilot_models,
-    poll_for_github_token,
-    start_device_flow,
-    sync_copilot_models,
 )
 
 __all__ = [

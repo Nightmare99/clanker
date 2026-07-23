@@ -5,8 +5,6 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-import pytest
-
 
 def _load_prompts_module():
     """Load prompts module directly without triggering agent imports."""

@@ -7,7 +7,6 @@ executed via the /workflow command.
 import os
 from pathlib import Path
 
-
 WORKFLOWS_DIR = "workflows"
 MAX_WORKFLOW_CHARS = 1500
 

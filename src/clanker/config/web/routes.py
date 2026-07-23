@@ -8,27 +8,26 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from clanker.config import CONFIG_PATH, Settings, get_settings, reload_settings
-from clanker.config.models import (
-    ModelConfig,
-    ModelsConfig,
-    MODELS_CONFIG_PATH,
-    get_models_config,
-    save_models_config,
-    get_model_by_name,
-    get_default_model,
-    set_default_model,
-    add_model,
-    remove_model,
-)
+from clanker.config import CONFIG_PATH, Settings, reload_settings
 from clanker.config.copilot_auth import (
     CopilotAuthError,
     complete_login,
     copilot_request_headers,
-    is_connected as is_copilot_connected,
     poll_for_github_token,
     start_device_flow,
     sync_copilot_models,
+)
+from clanker.config.copilot_auth import (
+    is_connected as is_copilot_connected,
+)
+from clanker.config.models import (
+    MODELS_CONFIG_PATH,
+    ModelConfig,
+    add_model,
+    get_model_by_name,
+    get_models_config,
+    remove_model,
+    set_default_model,
 )
 
 router = APIRouter(tags=["config"])
@@ -160,7 +159,7 @@ async def update_config(request: ConfigUpdateRequest) -> MessageResponse:
     except Exception as e:
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/config/validate", response_model=MessageResponse)
@@ -171,7 +170,7 @@ async def validate_config(request: ConfigUpdateRequest) -> MessageResponse:
         Settings(**request.config)
         return MessageResponse(message="Configuration is valid", success=True)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/config/reset", response_model=MessageResponse)
@@ -183,7 +182,7 @@ async def reset_config() -> MessageResponse:
         reload_settings()
         return MessageResponse(message="Configuration reset to defaults", success=True)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/env-status")
@@ -196,7 +195,6 @@ async def env_status() -> dict[str, bool]:
 async def test_mcp_server(server_config: dict[str, Any]) -> MessageResponse:
     """Test an MCP server connection."""
     import asyncio
-    from contextlib import asynccontextmanager
 
     transport = server_config.get("transport", "stdio")
 
@@ -210,7 +208,6 @@ async def test_mcp_server(server_config: dict[str, Any]) -> MessageResponse:
                 raise ValueError("Command is required for stdio transport")
 
             # Try to start the process and check if it responds
-            import subprocess
             import shutil
 
             # Check if command exists
@@ -240,7 +237,7 @@ async def test_mcp_server(server_config: dict[str, Any]) -> MessageResponse:
                 proc.terminate()
                 try:
                     await asyncio.wait_for(proc.wait(), timeout=2.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     proc.kill()
 
             return MessageResponse(message="Server started successfully", success=True)
@@ -251,8 +248,8 @@ async def test_mcp_server(server_config: dict[str, Any]) -> MessageResponse:
                 raise ValueError("URL is required for SSE transport")
 
             # Try to connect to the SSE endpoint
-            import urllib.request
             import urllib.error
+            import urllib.request
 
             req = urllib.request.Request(url, method='GET')
             req.add_header('Accept', 'text/event-stream')
@@ -264,20 +261,20 @@ async def test_mcp_server(server_config: dict[str, Any]) -> MessageResponse:
                     else:
                         raise ValueError(f"Server returned status {response.status}")
             except urllib.error.URLError as e:
-                raise ValueError(f"Cannot connect to server: {e.reason}")
+                raise ValueError(f"Cannot connect to server: {e.reason}") from e
         else:
             raise ValueError(f"Unknown transport: {transport}")
 
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/shutdown")
 async def shutdown() -> MessageResponse:
     """Shutdown the config server."""
     import asyncio
-    import signal
     import os
+    import signal
 
     # Schedule shutdown
     asyncio.get_event_loop().call_later(0.5, lambda: os.kill(os.getpid(), signal.SIGTERM))
@@ -384,7 +381,7 @@ async def create_model_config(request: ModelRequest) -> MessageResponse:
         add_model(model)
         return MessageResponse(message=f"Model '{request.name}' saved successfully", success=True)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.put("/models/{name}", response_model=MessageResponse)
@@ -430,7 +427,7 @@ async def update_model_config(name: str, request: ModelRequest) -> MessageRespon
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.delete("/models/{name}", response_model=MessageResponse)
@@ -507,6 +504,7 @@ async def test_model_config(name: str) -> MessageResponse:
 
         elif provider == "GitHubCopilot":
             from langchain_openai import ChatOpenAI
+
             from clanker.config.copilot_auth import COPILOT_BASE_URL, get_valid_copilot_token
             get_valid_copilot_token()  # eager check: clear error if never logged in
             kwargs = {
@@ -522,16 +520,16 @@ async def test_model_config(name: str) -> MessageResponse:
             raise ValueError(f"Unsupported provider: {provider}")
 
         # Make a simple test invocation
-        response = llm.invoke("Say 'ok'")
+        llm.invoke("Say 'ok'")
 
         return MessageResponse(
-            message=f"Connection successful! Model responded.",
+            message="Connection successful! Model responded.",
             success=True
         )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Connection failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Connection failed: {str(e)}") from e
 
 
 # ==================== GitHub Copilot native provider ====================

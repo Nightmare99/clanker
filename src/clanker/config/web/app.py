@@ -1,15 +1,13 @@
 """FastAPI application for Clanker configuration."""
 
-import os
-import signal
 import threading
 import webbrowser
 from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from clanker.config.web.routes import router
 

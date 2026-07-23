@@ -114,11 +114,11 @@ async def load_mcp_tools_async(settings: Settings | None = None) -> tuple[Any, l
         logger.info("Loaded %d MCP tools from %d servers", len(tools), len(configs))
         return client, tools
 
-    except ImportError:
+    except ImportError as e:
         raise ImportError(
             "langchain-mcp-adapters is required for MCP support. "
             "Install it with: pip install langchain-mcp-adapters"
-        )
+        ) from e
     except Exception as e:
         logger.warning("Failed to load MCP tools: %s", e)
         return None, []

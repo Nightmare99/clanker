@@ -34,6 +34,8 @@ a = Analysis(
     datas=[
         # Include static web UI files
         (str(project_root / 'src' / 'clanker' / 'config' / 'web' / 'static'), 'clanker/config/web/static'),
+        # Textual TUI styles
+        (str(project_root / 'src' / 'clanker' / 'ui' / 'styles.tcss'), 'clanker/ui/'),
     ],
     hiddenimports=[
         # LangChain imports
@@ -68,6 +70,11 @@ a = Analysis(
         'yaml',
         'dotenv',
         'rich',
+        'textual',
+        'textual.widgets',
+        'textual.containers',
+        'textual.screen',
+        'textual.app',
         'prompt_toolkit',
         'click',
         # Pygments - rich.syntax / rich.markdown depend on lazy lexer lookup.

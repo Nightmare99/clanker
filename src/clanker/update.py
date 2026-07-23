@@ -1,8 +1,7 @@
 """Update checker for Clanker."""
 
-import urllib.request
 import json
-from typing import Optional, Tuple
+import urllib.request
 
 from clanker import __version__
 
@@ -10,7 +9,7 @@ REPO = "Nightmare99/clanker"
 RELEASES_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 
 
-def parse_version(version: str) -> Tuple[int, ...]:
+def parse_version(version: str) -> tuple[int, ...]:
     """Parse version string to tuple for comparison."""
     # Remove 'v' prefix if present
     v = version.lstrip("v")
@@ -28,7 +27,7 @@ def parse_version(version: str) -> Tuple[int, ...]:
     return tuple(parts)
 
 
-def get_latest_version() -> Optional[str]:
+def get_latest_version() -> str | None:
     """Fetch the latest release version from GitHub."""
     try:
         req = urllib.request.Request(
@@ -42,7 +41,7 @@ def get_latest_version() -> Optional[str]:
         return None
 
 
-def check_for_update() -> Tuple[bool, Optional[str], str]:
+def check_for_update() -> tuple[bool, str | None, str]:
     """
     Check if an update is available.
 
@@ -64,7 +63,7 @@ def check_for_update() -> Tuple[bool, Optional[str], str]:
         return False, latest, current
 
 
-def get_update_message() -> Optional[str]:
+def get_update_message() -> str | None:
     """Get a message if an update is available, otherwise None."""
     update_available, latest, current = check_for_update()
 

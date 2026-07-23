@@ -9,7 +9,6 @@ outside of streaming text rendering.
 from __future__ import annotations
 
 import re
-from typing import List, Tuple
 
 # ```lang\ncode``` (lang optional)
 CODE_FENCE_RE = re.compile(r"```(\w+)?\n(.*?)```", re.DOTALL)
@@ -24,7 +23,7 @@ LIST_RE = re.compile(r"^\s*[-*]\s+(.*)", re.MULTILINE)
 HR_RE = re.compile(r"^-{3,}$", re.MULTILINE)  # Horizontal rules (---, ----, etc.)
 
 
-def extract_code_blocks(text: str) -> Tuple[str, List[tuple[str, str]]]:
+def extract_code_blocks(text: str) -> tuple[str, list[tuple[str, str]]]:
     """
     Extract fenced code blocks from text.
 
@@ -32,7 +31,7 @@ def extract_code_blocks(text: str) -> Tuple[str, List[tuple[str, str]]]:
         cleaned_text: text with code blocks removed
         code_blocks: list of (language, code)
     """
-    code_blocks: List[tuple[str, str]] = []
+    code_blocks: list[tuple[str, str]] = []
 
     def _repl(match: re.Match) -> str:
         lang = match.group(1) or "text"

@@ -20,7 +20,7 @@ def _load_console_module():
 
 def test_memory_save_result_prefers_message_over_raw_json() -> None:
     module = _load_console_module()
-    Console = module.Console
+    console_cls = module.Console
 
     rendered: list[str] = []
 
@@ -43,7 +43,7 @@ def test_memory_save_result_prefers_message_over_raw_json() -> None:
         }
     )
 
-    Console.print_tool_result(dummy, payload, tool_name="unknown", tool_input=None)
+    console_cls.print_tool_result(dummy, payload, tool_name="unknown", tool_input=None)
 
     assert rendered == ["Stored in memory: # Plan Mode Implementation..."]
 

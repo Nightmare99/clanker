@@ -5,8 +5,6 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-import pytest
-
 
 def _load_workflows_module():
     """Load workflows module directly without triggering heavy imports."""

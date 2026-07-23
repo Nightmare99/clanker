@@ -5,8 +5,8 @@ import time
 
 import click
 
+from clanker.config.models import MODELS_CONFIG_PATH, ModelConfig, add_model
 from clanker.config.settings import CONFIG_PATH, Settings
-from clanker.config.models import ModelConfig, add_model, MODELS_CONFIG_PATH
 
 
 def _print_banner():
@@ -207,7 +207,7 @@ def run_setup_wizard() -> Settings:
     if azure_endpoint:
         click.echo(f"    Endpoint: {azure_endpoint}")
     if thinking_enabled:
-        click.echo(f"    Extended thinking: enabled")
+        click.echo("    Extended thinking: enabled")
 
     click.echo()
 

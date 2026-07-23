@@ -50,9 +50,9 @@ def _get_ssl_context():
 
 def _fetch_with_browser_headers(url: str, timeout: int = 15) -> str | None:
     """Fetch a URL using browser-like headers to avoid bot detection."""
-    import urllib.request
-    import urllib.error
     import gzip
+    import urllib.error
+    import urllib.request
     import zlib
 
     req = urllib.request.Request(url, headers=_BROWSER_HEADERS)

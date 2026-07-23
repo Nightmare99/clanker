@@ -1,10 +1,8 @@
 """File operation tools for reading, writing, and editing files."""
 
 import base64
-import io
 from itertools import islice
 from pathlib import Path
-from typing import Optional
 
 from langchain.tools import tool
 
@@ -134,7 +132,6 @@ def _resize_image_if_needed(data: bytes, mime_type: str) -> bytes:
     Returns original data if resizing isn't possible or not needed.
     """
     try:
-        from io import BytesIO
 
         try:
             import fitz  # pymupdf - can handle image resizing
@@ -201,7 +198,7 @@ def _parse_page_range(pages: str, total_pages: int) -> list[int]:
     return sorted(set(result))
 
 
-def _read_pdf(path: Path, pages: Optional[str] = None, include_images: bool = False) -> dict:
+def _read_pdf(path: Path, pages: str | None = None, include_images: bool = False) -> dict:
     """Read text content and optionally images from a PDF file.
 
     Args:
@@ -297,7 +294,7 @@ def read_file(
     file_path: str,
     offset: int = 0,
     limit: int = MAX_LINES_DEFAULT,
-    pages: Optional[str] = None,
+    pages: str | None = None,
     include_images: bool = False,
 ) -> dict:
     """Read contents of a file with line numbers.

@@ -10,7 +10,7 @@ from clanker.agent.middleware import (
 )
 from clanker.agent.prompts import get_system_prompt
 from clanker.agent.summarization import RobustSummarizationMiddleware
-from clanker.config import Settings, get_settings, get_default_model, create_llm_from_config
+from clanker.config import Settings, create_llm_from_config, get_default_model, get_settings
 from clanker.logging import get_logger
 from clanker.mcp import load_mcp_tools, load_mcp_tools_async
 from clanker.tools import get_tools

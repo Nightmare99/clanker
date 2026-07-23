@@ -116,13 +116,11 @@ def is_path_safe(path: str | Path, for_write: bool = False) -> tuple[bool, str]:
     # Check protected paths for write operations
     if for_write:
         for protected in PROTECTED_PATHS:
-            if path_str == protected or path_str.startswith(protected + "/"):
-                # Allow paths in user-writable subdirectories
-                if not any(
-                    path_str.startswith(p)
-                    for p in ["/var/tmp", "/var/log"]
-                ):
-                    return False, f"Cannot write to protected path: {protected}"
+            if (
+                (path_str == protected or path_str.startswith(protected + "/"))
+                and not any(path_str.startswith(p) for p in ["/var/tmp", "/var/log"])
+            ):
+                return False, f"Cannot write to protected path: {protected}"
 
     # Check for path traversal attempts
     if ".." in str(path):

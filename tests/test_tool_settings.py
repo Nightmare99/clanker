@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
 from clanker.config.settings import Settings, ToolSettings
 
 

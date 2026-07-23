@@ -7,14 +7,14 @@ Memories persist across conversations and are retrieved based on tags and keywor
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 from clanker.memory.workspace import get_workspace_storage
 
 
-class MemorySource(str, Enum):
+class MemorySource(StrEnum):
     """Source of a memory."""
 
     USER = "user"  # User explicitly asked to remember

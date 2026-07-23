@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from clanker.tools.web_tools import web_read, web_search
 
 
@@ -223,6 +221,7 @@ class TestWebToolsIntegration:
         with patch("clanker.config.settings.get_settings", return_value=mock_settings):
             # Force re-import so patched settings take effect
             import importlib
+
             import clanker.tools
             importlib.reload(clanker.tools)
             from clanker.tools import get_tools
@@ -244,6 +243,7 @@ class TestWebToolsIntegration:
 
         with patch("clanker.config.settings.get_settings", return_value=mock_settings):
             import importlib
+
             import clanker.tools
             importlib.reload(clanker.tools)
             from clanker.tools import get_tools

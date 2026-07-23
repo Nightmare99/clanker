@@ -1,18 +1,14 @@
 """Unit tests for the agents module and load_agent tool."""
 
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from clanker.agents import (
-    Agent,
+    _load_agent_from_file,
+    get_agents_catalog,
     list_agents,
     load_agent,
-    get_agents_catalog,
     parse_agent_md,
-    _load_agent_from_file,
 )
 from clanker.tools.agent_tools import load_agent as load_agent_tool
 

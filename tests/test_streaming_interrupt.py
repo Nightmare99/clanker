@@ -295,7 +295,7 @@ class TestSignalHandling:
         """Signal handler is installed during streaming and restored after."""
         module = _load_streaming_module()
 
-        original_handler = signal.getsignal(signal.SIGINT)
+        signal.getsignal(signal.SIGINT)
 
         # We can't easily test the full streaming flow without mocking everything,
         # but we can verify the pattern works by checking the module has the function
@@ -332,7 +332,6 @@ class TestSuppressSubprocessStderr:
         """_suppress_subprocess_stderr restores stderr on exit."""
         module = _load_streaming_module()
         import sys
-        import os
 
         # Get original stderr fd
         try:

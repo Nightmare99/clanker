@@ -1,10 +1,10 @@
 """Agent state definitions."""
 
-from typing import Annotated
+from typing import Annotated, NotRequired
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 
 class AgentState(TypedDict):

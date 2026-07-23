@@ -1,19 +1,18 @@
 """Bash command execution tools."""
 
 import asyncio
+import contextlib
 import os
-import shlex
 import signal
 import subprocess
 import time
-from typing import Any
 
 from langchain.tools import tool
 
 from clanker.config import get_effective_blacklist, get_settings
 from clanker.logging import get_logger
 from clanker.runtime import is_yolo_mode
-from clanker.utils.sandbox import is_command_safe, requires_confirmation
+from clanker.utils.sandbox import is_command_safe
 
 # Module logger
 logger = get_logger("tools.bash")
@@ -337,16 +336,14 @@ async def _run_foreground_with_promotion(
     soft_deadline = min(promote_after, timeout_seconds)
     try:
         await asyncio.wait_for(process.wait(), timeout=soft_deadline)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         # Hit promotion threshold but process is still alive.
         if promote_after < timeout_seconds:
             # We're already on the JobManager's loop — use the internal
             # coroutine directly to avoid a re-submit deadlock.
             drain_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await drain_task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
             mgr = get_job_manager()
             job = await mgr._adopt_coro(
                 command=command,
@@ -361,26 +358,20 @@ async def _run_foreground_with_promotion(
                 f"check progress, or bash_kill('{job.id}') to stop it."
             )
         # Otherwise, promote_after >= timeout_seconds: this is a hard timeout.
-        try:
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
             os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
         try:
             await asyncio.wait_for(process.wait(), timeout=2.0)
-        except asyncio.TimeoutError:
-            try:
+        except TimeoutError:
+            with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
                 os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
             await process.wait()
         drain_task.cancel()
         return f"Error: Command timed out after {timeout_seconds} seconds"
 
     # Process completed within the soft deadline; let the drainer finish.
-    try:
+    with contextlib.suppress(asyncio.CancelledError):
         await drain_task
-    except asyncio.CancelledError:
-        pass
 
     output = bytes(buffer).decode("utf-8", errors="replace")
     if len(output) > MAX_OUTPUT_SIZE:
@@ -450,7 +441,7 @@ async def bash_async(command: str, timeout: int | None = None) -> str:
 
         return output if output else "(no output)"
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return f"Error: Command timed out after {timeout_seconds} seconds"
     except OSError as e:
         return f"Error executing command: {e}"

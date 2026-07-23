@@ -5,16 +5,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langchain_core.messages import HumanMessage
 
+from clanker.tools.ask_tools import get_ask_callback, set_ask_callback
+from clanker.tools.bash_tools import get_approval_callback, set_approval_callback
+from clanker.tools.notify_tools import get_notify_callback, set_notify_callback
 from clanker.tools.subagent import spawn_subagent
 from clanker.ui.streaming import (
     StreamResult,
+    _local_state,
     get_active_console,
     stream_agent_response_async,
-    _local_state,
 )
-from clanker.tools.notify_tools import get_notify_callback, set_notify_callback
-from clanker.tools.ask_tools import get_ask_callback, set_ask_callback
-from clanker.tools.bash_tools import get_approval_callback, set_approval_callback
 
 
 @pytest.mark.asyncio
@@ -122,7 +122,7 @@ async def test_callback_preservation() -> None:
     set_approval_callback(parent_approval)
     _local_state.active_console = parent_console
 
-    mock_result = StreamResult(response="Done")
+    StreamResult(response="Done")
 
     async def empty_generator(*args, **kwargs):
         assert get_notify_callback() is not parent_notify

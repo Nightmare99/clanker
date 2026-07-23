@@ -1,11 +1,13 @@
 """Subagent spawning tool that uses configured agents from .clanker/agents/."""
 
 import asyncio
+import contextlib
 import os
 import threading
 import uuid
-from langchain_core.tools import tool
+
 from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
 
 from clanker.agents import load_agent as load_agent_config
 from clanker.config import get_settings
@@ -59,12 +61,12 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
     """
     logger.info("Spawning subagent '%s' with prompt: %s...", agent_name, prompt[:80])
 
-    from clanker.ui.streaming import (
-        stream_agent_response_async,
-        get_active_console,
-        _current_loading_live,
-    )
     from clanker.ui.console import Console
+    from clanker.ui.streaming import (
+        _current_loading_live,
+        get_active_console,
+        stream_agent_response_async,
+    )
 
     # Resolve agent configuration
     agent_config = load_agent_config(agent_name, os.getcwd())
@@ -167,10 +169,8 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
 
     # Restart the parent's loading spinner (it was stopped before spawn)
     if parent_spinner_stopped:
-        try:
+        with contextlib.suppress(Exception):
             _current_loading_live.start()
-        except Exception:
-            pass
 
     # Print visual end boundary
     parent_console._console.print(

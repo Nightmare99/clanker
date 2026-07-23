@@ -1,6 +1,5 @@
 """Tests for Clanker tools."""
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -17,8 +16,8 @@ def sample_pdf(tmp_path: Path) -> Path:
     writer = PdfWriter()
 
     # Create 3 pages with different content
-    for i in range(1, 4):
-        page = writer.add_blank_page(width=612, height=792)
+    for _i in range(1, 4):
+        writer.add_blank_page(width=612, height=792)
         # Add text annotation (pypdf doesn't support direct text writing easily,
         # so we'll use a different approach)
 

@@ -1,6 +1,5 @@
 """Search tools for finding files and content."""
 
-import fnmatch
 import re
 from pathlib import Path
 

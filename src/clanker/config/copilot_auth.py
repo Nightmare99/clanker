@@ -339,7 +339,7 @@ def get_valid_copilot_token() -> str:
     logger.info("Copilot token expired or missing -- refreshing.")
     try:
         copilot_token, refresh_in = exchange_for_copilot_token(github_token)
-    except CopilotAuthError:
+    except CopilotAuthError as e:
         # The cached GitHub token is likely stale/revoked. Clear it so the
         # user gets a clear "not connected" prompt rather than a cryptic
         # 502 on every subsequent attempt. Matches copilot-bridge's behaviour
@@ -352,7 +352,7 @@ def get_valid_copilot_token() -> str:
         raise CopilotAuthError(
             "Copilot session expired. Run 'clanker copilot-login' or "
             "connect via the web config UI (clanker config)."
-        )
+        ) from e
     cache["copilot_token"] = copilot_token
     cache["copilot_token_expires_at"] = time.time() + refresh_in
     _save_token_cache(cache)

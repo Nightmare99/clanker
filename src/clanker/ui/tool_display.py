@@ -1,7 +1,8 @@
 """Unified tool display handling for all providers."""
 
+import contextlib
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from rich.console import Group
 from rich.live import Live
@@ -291,10 +292,8 @@ class ToolDisplayHandler:
         """Update or create the Live display for pending tools."""
         if not self._pending_calls:
             if self._live:
-                try:
+                with contextlib.suppress(Exception):
                     self._live.stop()
-                except Exception:
-                    pass
                 self._live = None
             return
 
@@ -369,10 +368,8 @@ class ToolDisplayHandler:
 
         # Stop Live display before printing
         if self._live:
-            try:
+            with contextlib.suppress(Exception):
                 self._live.stop()
-            except Exception:
-                pass
             self._live = None
 
         # Print header + result together (permanent output)
@@ -418,10 +415,8 @@ class ToolDisplayHandler:
         Call this at the end of a response to ensure no stale displays remain.
         """
         if self._live:
-            try:
+            with contextlib.suppress(Exception):
                 self._live.stop()
-            except Exception:
-                pass
             self._live = None
         self._pending_calls.clear()
         self._pending_order.clear()
@@ -472,16 +467,12 @@ def normalize_tool_output(output) -> str:
     # If it's a string, try to parse as dict (JSON or Python literal)
     if isinstance(output, str):
         parsed = None
-        try:
+        with contextlib.suppress(json.JSONDecodeError, ValueError):
             parsed = json.loads(output)
-        except (json.JSONDecodeError, ValueError):
-            pass
 
         if parsed is None:
-            try:
+            with contextlib.suppress(ValueError, SyntaxError):
                 parsed = ast.literal_eval(output)
-            except (ValueError, SyntaxError):
-                pass
 
         if isinstance(parsed, dict):
             output = parsed

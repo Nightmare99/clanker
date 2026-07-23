@@ -18,16 +18,18 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import contextlib
 import os
 import secrets
 import signal
 import tempfile
 import threading
 import time
+from collections.abc import Awaitable
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, TypeVar
+from typing import Any, TypeVar
 
 from langchain.tools import tool
 
@@ -290,19 +292,15 @@ class JobManager:
         if job.process.returncode is not None:
             return
         pid = job.process.pid
-        try:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(os.getpgid(pid), signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            pass
         try:
             await asyncio.wait_for(job.process.wait(), timeout=2.0)
             return
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
-        try:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(os.getpgid(pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
 
     async def _kill_coro(self, job_id: str) -> str:
         job = self.get(job_id)
@@ -331,7 +329,7 @@ class JobManager:
             else:
                 await asyncio.wait_for(job._done.wait(), timeout=timeout)
             return job, True
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return job, False
 
     # ------------------------------------------------------------------
@@ -372,10 +370,8 @@ class JobManager:
             running = [j for j in self._jobs.values() if j.state == "running"]
             for job in running:
                 job.state = "killed"
-                try:
+                with contextlib.suppress(Exception):
                     await self._terminate(job)
-                except Exception:  # noqa: BLE001
-                    pass
 
         await asyncio.wrap_future(self.submit(_do()))
 
@@ -400,10 +396,8 @@ def _atexit_cleanup() -> None:
     for job in _manager.all():
         if job.state != "running" or job.process.returncode is not None:
             continue
-        try:
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
             os.killpg(os.getpgid(job.process.pid), signal.SIGTERM)
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
 
 
 # ---------------------------------------------------------------------------

@@ -1,14 +1,23 @@
 """Console output management using Rich."""
 
+import contextlib
 import json
 import random
 from contextlib import contextmanager
 
+from rich import box
 from rich.console import Console as RichConsole
 from rich.console import Group
 from rich.live import Live
-from rich import box
 from rich.markdown import Heading, Markdown
+from rich.markup import escape
+from rich.panel import Panel
+from rich.spinner import Spinner
+from rich.syntax import Syntax
+from rich.text import Text
+from rich.theme import Theme
+
+from clanker.config import get_settings
 
 
 class _LeftAlignedHeading(Heading):
@@ -27,12 +36,7 @@ class _LeftAlignedHeading(Heading):
 
 # Replace default heading renderer for our Markdown output.
 Markdown.elements["heading_open"] = _LeftAlignedHeading
-from rich.markup import escape
-from rich.panel import Panel
-from rich.spinner import Spinner
-from rich.syntax import Syntax
-from rich.text import Text
-from rich.theme import Theme
+
 
 # Eagerly materialize pygments lexers AND styles at module import time.
 # Rich's Markdown/Syntax renderers do lazy string-based lookup
@@ -51,23 +55,17 @@ try:
         "javascript", "typescript", "html", "css", "markdown",
         "text", "diff", "sql", "go", "rust", "c", "cpp", "java",
     ):
-        try:
+        with contextlib.suppress(Exception):
             get_lexer_by_name(_name)
-        except Exception:  # noqa: BLE001
-            pass
 
     # Force every style module into sys.modules. Rich defaults to
     # "monokai" but users / themes may pick others.
     for _style in list(get_all_styles()):
-        try:
+        with contextlib.suppress(Exception):
             get_style_by_name(_style)
-        except Exception:  # noqa: BLE001
-            pass
 except Exception:  # noqa: BLE001
     # Pygments missing or import failure — Rich will degrade gracefully.
     pass
-
-from clanker.config import get_settings
 
 
 def _job_label(job_id: str) -> str:
@@ -568,9 +566,7 @@ class Console:
         if tool_name in ("bash", "execute_shell") and result.startswith("Command exited with code"):
             return True
         parsed = self._parse_tool_json(result)
-        if parsed is not None and parsed.get("ok") is False:
-            return True
-        return False
+        return bool(parsed is not None and parsed.get("ok") is False)
 
     def _print_result_line(self, summary: str, failed: bool = False) -> None:
         """Print a ✓/✗ result summary line matching the screenshot style."""
@@ -731,7 +727,7 @@ class Console:
         prefix = "    >> " if is_append else "    + "
         style = "cyan" if is_append else "green"
 
-        for i, line in enumerate(lines[:max_lines]):
+        for _i, line in enumerate(lines[:max_lines]):
             display_line = line if len(line) <= max_line_len else line[:max_line_len] + "..."
             text = Text()
             text.append(prefix, style="dim")
@@ -863,7 +859,6 @@ class Console:
         from clanker.config import get_default_model
         from clanker.runtime import is_yolo_mode
 
-        agent_name = self._settings.agent.name
 
         # Get current model info
         current_model = get_default_model()

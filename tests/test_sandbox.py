@@ -1,6 +1,5 @@
 """Tests for sandbox utilities."""
 
-import pytest
 
 from clanker.utils.sandbox import is_command_safe, is_path_safe, requires_confirmation
 

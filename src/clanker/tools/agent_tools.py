@@ -8,7 +8,8 @@ import os
 
 from langchain_core.tools import tool
 
-from clanker.agents import MAX_AGENT_PROMPT_CHARS, list_agents, load_agent as _load_agent
+from clanker.agents import MAX_AGENT_PROMPT_CHARS, list_agents
+from clanker.agents import load_agent as _load_agent
 from clanker.logging import get_logger
 
 logger = get_logger("tools.agent")

@@ -1,5 +1,4 @@
-import yaml
-from clanker.config.settings import Settings, CONFIG_PATH
+from clanker.config.settings import Settings
 
 
 def test_agent_name_persisted(tmp_path, monkeypatch):

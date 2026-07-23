@@ -9,8 +9,7 @@ before graph execution begins (same pattern as runtime.py / yolo mode).
 The tool calls the callback synchronously, which prints immediately via Rich.
 """
 
-import sys
-from typing import Callable
+from collections.abc import Callable
 
 from langchain_core.tools import tool
 

@@ -1,0 +1,129 @@
+/* Cyberpunk theme for Clanker TUI */
+
+Screen {
+    background: black;
+    color: rgb(200, 200, 200);
+}
+
+/* === Chat Log === */
+ChatLog {
+    width: 100%;
+    height: 1fr;
+    overflow-y: scroll;
+    border: round rgb(0, 240, 240);
+    padding: 1;
+}
+
+ChatLog .msg-user {
+    color: rgb(0, 240, 240);
+    width: 1fr;
+    margin: 0 0 1 0;
+}
+
+ChatLog .msg-assistant {
+    width: 1fr;
+}
+
+ChatLog .msg-card {
+    background: rgb(18, 18, 24);
+    padding: 1 1 0 1;
+    margin: 0 0 0 0;
+}
+
+ChatLog .notify-info {
+    border-left: thick rgb(0, 240, 240);
+}
+
+ChatLog .notify-success {
+    border-left: thick rgb(180, 255, 60);
+}
+
+ChatLog .notify-warning {
+    border-left: thick rgb(255, 220, 60);
+}
+
+ChatLog .notify-error {
+    border-left: thick rgb(255, 80, 80);
+}
+
+ChatLog .msg-thinking {
+    color: rgb(100, 100, 100);
+    width: 1fr;
+}
+
+ChatLog .msg-notify {
+    width: 1fr;
+}
+
+ChatLog .msg-tool {
+    width: 1fr;
+}
+
+ChatLog .msg-tool-output {
+    width: 1fr;
+}
+
+ChatLog .tool-card {
+    background: transparent;
+    border-left: solid rgb(200, 200, 200);
+    padding-top: 1;
+    padding-left: 1;
+}
+
+ChatLog .msg-code {
+    width: 1fr;
+}
+
+ChatLog .msg-system {
+    color: rgb(0, 240, 240);
+    width: 1fr;
+}
+
+ChatLog .msg-error {
+    color: rgb(255, 80, 80);
+    width: 1fr;
+}
+
+ChatLog .msg-warning {
+    color: rgb(255, 220, 60);
+    width: 1fr;
+}
+
+ChatLog .msg-info {
+    color: rgb(0, 240, 240);
+    width: 1fr;
+}
+
+ChatLog .msg-success {
+    color: rgb(180, 255, 60);
+    width: 1fr;
+}
+
+/* Hero section */
+ChatLog #hero-widget {
+    width: 1fr;
+}
+
+/* HR after hero — cyan */
+ChatLog > Rule {
+    color: rgb(0, 240, 240);
+}
+
+/* Turn separators — dim */
+ChatLog > Rule.dashed {
+    color: rgb(60, 60, 80);
+}
+
+/* === Status Bar — hidden when empty, auto-shows === */
+StatusBar {
+    height: 1;
+    dock: top;
+    background: rgb(15, 15, 15);
+    visibility: hidden;
+    padding: 0 1;
+    margin-top: 1;
+}
+
+StatusBar.visible {
+    visibility: visible;
+}

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from clanker.config.settings import SafetySettings, Settings, OutputSettings, ContextSettings
+from clanker.config.settings import ContextSettings, OutputSettings, SafetySettings, Settings
 
 
 class TestSettings:
