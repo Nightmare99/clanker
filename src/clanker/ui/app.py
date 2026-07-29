@@ -41,7 +41,7 @@ _SLASH_COMMANDS = [
 
 
 class PromptInput(Input):
-    """Input widget with tab completion, history navigation, escape clear, and completion menu."""
+    """Input widget with Tab completion menu and Alt+Up/Down history navigation."""
 
     can_focus_within = False
 
@@ -49,9 +49,13 @@ class PromptInput(Input):
         super().__init__(*args, **kwargs)
         self._history: list[str] = []
         self._history_index: int = -1
-        self._current_input: str = ""
+        self._saved_input: str = ""
         self._completion_menu: CompletionMenu | None = None
         self._menu_active = False
+        # Cursor offset at the moment Tab was pressed, so we can restore it
+        self._tab_cursor_offset: int = 0
+        # Tracks previous value so watch_value can detect the "/" transition
+        self._previous_value: str = ""
         self._on_history_add: callable | None = None
 
     def set_completion_menu(self, menu: CompletionMenu) -> None:
@@ -66,89 +70,144 @@ class PromptInput(Input):
         """Set callback invoked when a new item is added to history."""
         self._on_history_add = callback
 
+    # -- key handling ----------------------------------------------------------
+
     def on_key(self, event) -> None:
-        if event.key == "tab":
-            self._tab_complete()
+        key = event.key
+
+        # Tab: activate / cycle / accept completion
+        if key == "tab":
+            self._on_tab()
             event.stop()
-        elif event.key == "enter" and self._menu_active and self._completion_menu:
-            # Insert selected command into input without submitting
-            selected = self._completion_menu.get_selected()
-            if selected:
-                self._insert_completion(selected)
+            return
+
+        # While menu is active …
+        if self._menu_active and self._completion_menu:
+            if key == "enter":
+                selected = self._completion_menu.get_selected()
+                if selected:
+                    self._accept_completion(selected)
+                    event.stop()
+                    return
+            elif key == "up":
+                self._completion_menu.prev_item()
                 event.stop()
                 return
-        elif event.key == "up" and self._menu_active:
-            if self._completion_menu:
-                self._completion_menu.prev_item()
-            event.stop()
-        elif event.key == "down" and self._menu_active:
-            if self._completion_menu:
+            elif key == "down":
                 self._completion_menu.next_item()
-            event.stop()
-        elif event.key == "up":
-            self._navigate_history(-1)
-            self._deactivate_menu()
-            event.stop()
-        elif event.key == "down":
-            self._navigate_history(1)
-            self._deactivate_menu()
-            event.stop()
-        elif event.key == "escape":
-            self.value = ""
-            self._deactivate_menu()
-            event.stop()
-        elif self._menu_active and self._completion_menu and event.key not in (
-            "ctrl+c", "ctrl+d", "home", "end",
-            "ctrl+home", "ctrl+end", "delete", "backspace",
-        ):
-            # Realtime filter: update menu immediately on character input
-            self._completion_menu.show(self.value)
+                event.stop()
+                return
+            elif key == "escape":
+                self._hide_menu()
+                event.stop()
+                return
+            # Printable keys, backspace, delete — let the Input widget handle
+            # them normally so the text updates; watch_value will re-filter
+            # the menu afterward.
 
-    def _insert_completion(self, completion: str) -> None:
-        """Insert a completion into the input, preserving cursor position."""
-        prefix = self.value.split(" ", 1)[0] if " " in self.value else self.value
-        suffix = self.value[len(prefix):] if len(self.value) > len(prefix) else ""
-        self.value = completion + suffix
-        self.cursor_position = len(completion) + len(suffix)
+        # Alt+Up / Alt+Down: history navigation (outside menu)
+        if key == "m-up" or (hasattr(event, "shift") and not event.shift and key == "up"):
+            # Only intercept M-Up for history; plain Up is for menu (handled above)
+            pass
+        if key == "m-up":
+            self._navigate_history(-1)
+            event.stop()
+            return
+        if key == "m-down":
+            self._navigate_history(1)
+            event.stop()
+            return
+
+        # Plain Escape (no menu): clear input
+        if key == "escape":
+            self.value = ""
+            event.stop()
+
+    # -- auto-show menu on "/" transition --------------------------------------
 
     def watch_value(self, value: str) -> None:
-        if value.startswith("/"):
-            self._activate_menu(value)
-        else:
-            self._deactivate_menu()
+        """Show (or re-filter) the completion menu when input starts with '/'.
 
-    def _activate_menu(self, text: str) -> None:
-        if not self._completion_menu:
+        Fires on the initial "/" transition and then keeps the menu in sync
+        whenever the menu is already open — without consuming the key event
+        so the Input widget still processes every keystroke normally.
+        """
+        prev = self._previous_value
+        self._previous_value = value
+
+        if not value.startswith("/"):
+            if self._menu_active and self._completion_menu:
+                self._hide_menu()
             return
-        if not self._menu_active:
-            self._menu_active = True
-        self._completion_menu.show(text)
 
-    def _deactivate_menu(self) -> None:
+        # Case 1: just typed "/" — open the menu
+        if not prev.startswith("/"):
+            if self._completion_menu and not self._menu_active:
+                self._completion_menu.show(value)
+                if self._completion_menu._matches:
+                    self._menu_active = True
+        # Case 2: menu already open — re-filter to match edited text
+        elif self._menu_active and self._completion_menu:
+            self._completion_menu.show(value)
+
+    # -- tab completion --------------------------------------------------------
+
+    def _on_tab(self) -> None:
+        text = self.value
+        if not text or not text.startswith("/"):
+            return
+
+        if not self._completion_menu:
+            # Fallback: inline completion without menu
+            self._tab_inline()
+            return
+
+        # Record cursor position so we can restore relative position
+        self._tab_cursor_offset = self.cursor_position
+
+        if self._menu_active:
+            # Menu already open — accept highlighted item
+            selected = self._completion_menu.get_selected()
+            if selected:
+                self._accept_completion(selected)
+            return
+
+        # First Tab: show menu
+        self._completion_menu.show(text)
+        if self._completion_menu._matches:
+            self._menu_active = True
+
+    def _tab_inline(self) -> None:
+        """Inline completion fallback when no menu is wired."""
+        text = self.value
+        matches = [c for c in _SLASH_COMMANDS if c.startswith(text)]
+        if matches:
+            self.value = matches[0]
+            self.cursor_position = len(matches[0])
+
+    def _accept_completion(self, completion: str) -> None:
+        """Replace the pre-cursor text with the completion, restore cursor offset."""
+        cursor = self._tab_cursor_offset
+        before = self.value[:cursor]
+        after = self.value[cursor:]
+        self.value = completion + after
+        self.cursor_position = len(completion) + len(after)
+        self._hide_menu()
+
+    def _hide_menu(self) -> None:
         if self._menu_active and self._completion_menu:
             self._menu_active = False
             self._completion_menu.hide()
 
-    def _tab_complete(self) -> None:
-        if self._menu_active and self._completion_menu:
-            selected = self._completion_menu.get_selected()
-            if selected:
-                self._insert_completion(selected)
-        else:
-            text = self.value
-            if not text.startswith("/"):
-                return
-            matches = [c for c in _SLASH_COMMANDS if c.startswith(text)]
-            if matches:
-                self.value = matches[0]
-                self.cursor_position = len(matches[0])
+    # -- history navigation (Alt+Up / Alt+Down) --------------------------------
 
     def _navigate_history(self, direction: int) -> None:
         if not self._history:
             return
+        self._hide_menu()
         if direction < 0:
             if self._history_index == -1:
-                self._current_input = self.value
+                self._saved_input = self.value
             next_idx = self._history_index + 1
             if next_idx < len(self._history):
                 self._history_index = next_idx
@@ -157,8 +216,8 @@ class PromptInput(Input):
         else:
             if self._history_index <= 0:
                 self._history_index = -1
-                self.value = self._current_input
-                self._current_input = ""
+                self.value = self._saved_input
+                self._saved_input = ""
                 self.cursor_position = len(self.value)
                 return
             self._history_index -= 1
