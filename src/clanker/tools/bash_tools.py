@@ -5,6 +5,7 @@ import contextlib
 import os
 import signal
 import subprocess
+import threading
 import time
 
 from langchain.tools import tool
@@ -53,10 +54,10 @@ _APPROVE_YES = "Yes, execute"
 _APPROVE_ALWAYS = "Yes, and don't ask again (this session)"
 _APPROVE_NO = "No, reject and stop"
 
-# Module-level approval prompter set by the streaming layer, mirroring the
+# Thread-local approval prompter set by the streaming layer, mirroring the
 # notify/ask callbacks. Signature: (question, options, preface) -> dict with
 # {"selected": [...], "cancelled": bool}. When None, a plain stdin prompt is used.
-_approval_callback = None
+_approval_thread_locals = threading.local()
 
 
 def set_approval_callback(callback) -> None:
@@ -65,14 +66,16 @@ def set_approval_callback(callback) -> None:
     Called by the streaming layer before graph execution so the bash approval
     gate can use the same arrow-key menu as ask_user (with spinner coordination).
     Pass None to clear it (falls back to a plain numbered stdin prompt).
+
+    Uses thread-local storage so parallel subagents each get their own
+    isolated callback scope.
     """
-    global _approval_callback
-    _approval_callback = callback
+    _approval_thread_locals._approval_callback = callback
 
 
 def get_approval_callback():
     """Return the currently registered approval callback."""
-    return _approval_callback
+    return getattr(_approval_thread_locals, "_approval_callback", None)
 
 
 def _format_command_box(command: str) -> str:
@@ -110,7 +113,7 @@ def prompt_for_approval(command: str) -> bool:
     preface = _format_command_box(command)
     options = [_APPROVE_YES, _APPROVE_ALWAYS, _APPROVE_NO]
 
-    callback = _approval_callback
+    callback = get_approval_callback()
     try:
         if callback is not None:
             result = callback("Run this command?", options, preface=preface)

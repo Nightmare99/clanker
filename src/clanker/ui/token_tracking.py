@@ -77,6 +77,12 @@ class SessionTokenTracker:
     # Cumulative output tokens (for cost tracking)
     total_output: int = 0
 
+    # Cumulative input tokens (for subagent aggregation)
+    total_input: int = 0
+
+    # Cumulative input tokens (for subagent aggregation)
+    total_input: int = 0
+
     # Cumulative cost across all turns (None when no pricing is configured)
     total_cost_usd: float | None = None
 

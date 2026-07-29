@@ -9,10 +9,14 @@ Architecture mirrors ``notify_tools.py``: the streaming layer registers a
 console-backed asker via ``set_ask_callback`` before graph execution. When no
 callback is set (or it fails), the tool falls back to :func:`select_options`
 directly, which itself degrades to a numbered stdin prompt off-TTY.
+
+Uses thread-local storage so parallel subagents each get their own isolated
+callback scope.
 """
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 
 from langchain_core.tools import tool
@@ -24,9 +28,9 @@ logger = get_logger("tools.ask")
 # Upper bound on options to keep the menu usable.
 MAX_OPTIONS = 10
 
-# Module-level asker callback set by the streaming layer.
+# Thread-local asker callback set by the streaming layer.
 # Signature: (question, options, multi_select, allow_other, allow_cancel) -> dict
-_ask_callback: Callable[..., dict] | None = None
+_thread_locals = threading.local()
 
 
 def set_ask_callback(callback: Callable[..., dict] | None) -> None:
@@ -35,14 +39,16 @@ def set_ask_callback(callback: Callable[..., dict] | None) -> None:
     Called by the streaming layer before graph execution so ask_user can drive
     the Rich/prompt_toolkit selector. Pass None to clear it (falls back to a
     plain stdin prompt).
+
+    Uses thread-local storage so parallel subagents each get their own
+    isolated callback scope.
     """
-    global _ask_callback
-    _ask_callback = callback
+    _thread_locals._ask_callback = callback
 
 
 def get_ask_callback() -> Callable[..., dict] | None:
     """Return the currently registered asker callback."""
-    return _ask_callback
+    return getattr(_thread_locals, "_ask_callback", None)
 
 
 @tool
@@ -97,7 +103,7 @@ def ask_user(
 
     logger.info("ask_user: %s (%d options, multi=%s)", question[:80], len(labels), multi_select)
 
-    asker = _ask_callback
+    asker = get_ask_callback()
     try:
         if asker is not None:
             result = asker(

@@ -16,6 +16,41 @@ from clanker.logging import get_logger
 
 logger = get_logger("tools.subagent")
 
+# Appended to every subagent system prompt so that output stays concise.
+# The full response is sent to the parent agent (not shown directly in TUI),
+# so subagents should keep output brief to avoid flooding the parent context.
+# Maximum word count for subagent output sent to the parent agent.
+# If the subagent's response exceeds this, the full output is written to a
+# temporary file and a truncated summary + file path reference is returned.
+# This is a hard ceiling — the LLM may ignore the conciseness instructions in
+# the system prompt, so we enforce it programmatically.
+_SUBAGENT_MAX_WORDS = 800
+
+# Maximum word count for subagent output sent to the parent agent.
+# If the subagent's response exceeds this, the full output is written to a
+# temporary file and a truncated summary + file path reference is returned.
+# This is a hard ceiling — the LLM may ignore the conciseness instructions in
+# the system prompt, so we enforce it programmatically.
+_SUBAGENT_MAX_WORDS = 800
+
+_SUBAGENT_CONCISE_INSTRUCTIONS = """
+
+## Output conciseness
+
+You are running as a subagent — your full output is sent to a parent agent that
+will relay it to the user. Keep your final response to **500-700 words** so it
+doesn't flood the parent agent's context. If your findings exceed that:
+
+1. Write the detailed output to a temporary file (e.g.,
+   `/tmp/clanker_<agent>_<timestamp>.md`)
+2. In your response, summarize the key findings and reference the file path so
+   the parent agent can read the full details if needed."""
+
+
+def _build_subagent_system_prompt(base_prompt: str) -> str:
+    """Combine the agent's base system prompt with conciseness instructions."""
+    return base_prompt + _SUBAGENT_CONCISE_INSTRUCTIONS
+
 
 def _resolve_tools(tool_names: list[str]) -> list:
     """Resolve a list of tool name strings to actual tool objects."""
@@ -131,16 +166,37 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
                     config=config,
                     console=sub_console,
                     tools=agent_tools,
-                    system_prompt=agent_config.system_prompt,
+                    system_prompt=_build_subagent_system_prompt(agent_config.system_prompt),
                     progress_callback=_progress_callback,
                 )
             )
             result_container.append(result)
         except Exception as e:
+            import traceback
+            logger.error(
+                "Subagent '%s' thread failed: %s\n%s",
+                agent_name, e, traceback.format_exc(),
+            )
             error_container.append(e)
         finally:
             _thread_queue.put_nowait(("done", "", ""))
-            loop.close()
+            # Cancel any pending tasks (debounce timers, etc.) before closing
+            # the loop to avoid "Event loop is closed" errors when multiple
+            # subagents run in parallel.
+            try:
+                pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True)
+                    )
+                loop.close()
+            except Exception:
+                try:
+                    loop.close()
+                except Exception:
+                    pass
 
     # Start subagent in a dedicated thread
     t = threading.Thread(target=run_subagent, daemon=True)
@@ -151,8 +207,11 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
     tool_entry = None
     if textual_app:
         try:
-            chat_log = textual_app.get_chat_log()
-            tool_entry = chat_log.add_tool_start(
+            # We're already on the TUI's event loop thread (spawn_subagent runs
+            # as a tool call within the parent's streaming context), so call the
+            # widget methods directly. call_from_thread would fail with
+            # RuntimeError because it requires a different thread.
+            tool_entry = textual_app.get_chat_log().add_tool_start(
                 agent_name,
                 "Starting...",
             )
@@ -190,8 +249,9 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
                 last_update_time = now
                 if tool_entry and textual_app:
                     try:
-                        chat_log = textual_app.get_chat_log()
-                        chat_log.update_tool_progress(tool_entry, current_action)
+                        textual_app.get_chat_log().update_tool_progress(
+                            tool_entry, current_action
+                        )
                     except Exception:
                         pass
 
@@ -208,8 +268,7 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
         error_msg = str(error_container[0])
         if tool_entry and textual_app:
             try:
-                chat_log = textual_app.get_chat_log()
-                chat_log.finalize_subagent(
+                textual_app.get_chat_log().finalize_subagent(
                     tool_entry, agent_name, f"Error: {error_msg}", success=False
                 )
             except Exception:
@@ -222,29 +281,13 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
 
     result = result_container[0]
 
-    def make_summary(text: str, max_len: int = 300) -> str:
-        """Truncate subagent response to a brief summary for the parent agent."""
-        text = text.strip()
-        if len(text) <= max_len:
-            return text
-        truncated = text[:max_len]
-        last_newline = truncated.rfind("\n\n")
-        last_period = truncated.rfind(". ")
-        if last_newline > max_len * 0.5:
-            return truncated[:last_newline]
-        if last_period > max_len * 0.5:
-            return truncated[:last_period + 1]
-        return truncated.rsplit(None, 1)[0]
-
-    summary = make_summary(result.response)
-
     # Use cumulative tokens (subagent may have multiple model calls)
     sub_input_tokens = result.cumulative_input_tokens or result.input_tokens
     sub_output_tokens = result.cumulative_output_tokens or result.output_tokens
     sub_cache_read = result.cumulative_cache_read_tokens or result.cache_read_tokens
     sub_cache_creation = result.cumulative_cache_creation_tokens or result.cache_creation_tokens
 
-    # Add subagent tokens/cost to the parent session tracker
+    # Add subagent tokens/cost to the parent session tracker (status bar)
     if textual_app and hasattr(textual_app, "add_subagent_tokens"):
         try:
             textual_app.add_subagent_tokens(
@@ -256,41 +299,59 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
         except Exception:
             pass
 
-    # Compute cost from the model config
-    cost_usd: float | None = None
-    try:
-        from clanker.config import get_default_model
-        cm = get_default_model()
-        if cm:
-            cost_usd = cm.compute_cost(
-                sub_input_tokens,
-                sub_output_tokens,
-                sub_cache_read,
-                sub_cache_creation,
-            )
-    except Exception:
-        pass
-
-    # Finalize TUI: full markdown output + token/cost line
+    # Finalize TUI: just show agent badge with success/failure (no output)
     if tool_entry and textual_app:
         try:
-            chat_log = textual_app.get_chat_log()
-            chat_log.finalize_subagent(
+            textual_app.get_chat_log().finalize_subagent(
                 tool_entry,
                 agent_name,
                 result.response,
-                input_tokens=sub_input_tokens,
-                output_tokens=sub_output_tokens,
-                cost_usd=cost_usd,
                 success=True,
             )
         except Exception:
             pass
 
+    # Enforce response length limit: if the subagent produced more than
+    # _SUBAGENT_MAX_WORDS, write the full output to a temp file and return
+    # a truncated summary + file path reference so the parent agent doesn't
+    # get flooded with context.
+    response_text = result.response
+    response_words = len(response_text.split())
+    if response_words > _SUBAGENT_MAX_WORDS:
+        import tempfile
+        from datetime import datetime
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=f"_{agent_name}_{ts}.md",
+            delete=False,
+            prefix="clanker_",
+        )
+        tmp.write(response_text)
+        tmp.close()
+
+        # Truncate to ~_SUBAGENT_MAX_WORDS at a word boundary
+        truncated_words = response_text.split()[:_SUBAGENT_MAX_WORDS]
+        response_text = (
+            " ".join(truncated_words)
+            + f"\n\n---\n"
+            f"[Output truncated: {response_words} words total. "
+            f"Full output saved to `{tmp.name}`. Read it with `read_file` if needed.]"
+        )
+        logger.info(
+            "Subagent '%s' output truncated from %d words to %d; "
+            "full output at %s",
+            agent_name,
+            response_words,
+            _SUBAGENT_MAX_WORDS,
+            tmp.name,
+        )
+
     return {
         "success": True,
         "agent": agent_name,
-        "summary": f"[Subagent output already shown above. Summary: {summary}]",
+        "response": response_text,
         "input_tokens": sub_input_tokens,
         "output_tokens": sub_output_tokens,
     }

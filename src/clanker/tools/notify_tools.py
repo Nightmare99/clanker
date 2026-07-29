@@ -4,11 +4,14 @@ The tool writes directly to the terminal while the agent continues running,
 giving the user visibility into long-running operations without waiting for
 the final response.
 
-Architecture: A module-level callback is registered by the streaming layer
+Architecture: A thread-local callback is registered by the streaming layer
 before graph execution begins (same pattern as runtime.py / yolo mode).
 The tool calls the callback synchronously, which prints immediately via Rich.
+Thread-local storage ensures parallel subagents don't stomp on each other's
+callbacks.
 """
 
+import threading
 from collections.abc import Callable
 
 from langchain_core.tools import tool
@@ -17,10 +20,10 @@ from clanker.logging import get_logger
 
 logger = get_logger("tools.notify")
 
-# Module-level output callback set by the streaming layer.
+# Thread-local output callback set by the streaming layer.
 # Signature: (message: str, level: str, title: str | None) -> None
 # When None, falls back to plain print().
-_output_callback: Callable[[str, str, str | None], None] | None = None
+_thread_locals = threading.local()
 
 
 def set_notify_callback(callback: Callable[[str, str, str | None], None] | None) -> None:
@@ -29,17 +32,19 @@ def set_notify_callback(callback: Callable[[str, str, str | None], None] | None)
     Called by the streaming layer before graph execution begins so that
     notify() can write directly to the Rich console mid-stream.
 
+    Uses thread-local storage so parallel subagents each get their own
+    isolated callback scope.
+
     Args:
         callback: Function that accepts (message, level, title) and prints to
                   the console, or None to clear the callback.
     """
-    global _output_callback
-    _output_callback = callback
+    _thread_locals._output_callback = callback
 
 
 def get_notify_callback() -> Callable[[str, str, str | None], None] | None:
     """Return the currently registered notify callback."""
-    return _output_callback
+    return getattr(_thread_locals, "_output_callback", None)
 
 
 @tool
@@ -89,7 +94,7 @@ def notify(message: str, level: str = "info", title: str | None = None) -> dict:
 
     logger.debug("notify(%s, title=%r): %s", level, title, message)
 
-    callback = _output_callback
+    callback = get_notify_callback()
     if callback is not None:
         try:
             callback(message, level, title)

@@ -47,18 +47,108 @@ async def test_spawn_subagent_success() -> None:
 
         assert res["success"] is True
         assert res["agent"] == "test-agent"
-        assert "summary" in res
-        assert "Subagent output task complete" in res["summary"]
+        assert "response" in res
+        assert res["response"] == "Subagent output task complete"
         assert res["input_tokens"] == 15
         assert res["output_tokens"] == 10
 
         mock_stream.assert_called_once()
         kwargs = mock_stream.call_args[1]
         assert kwargs["checkpointer"] is None
-        assert kwargs["system_prompt"] == "You are a test helper agent"
+        # System prompt should include the conciseness instructions appended
+        assert kwargs["system_prompt"].startswith("You are a test helper agent")
+        assert "Output conciseness" in kwargs["system_prompt"]
         assert len(kwargs["state"]["messages"]) == 1
         assert isinstance(kwargs["state"]["messages"][0], HumanMessage)
         assert kwargs["state"]["messages"][0].content == "Run a test"
+
+
+@pytest.mark.asyncio
+async def test_spawn_subagent_response_truncation() -> None:
+    """spawn_subagent truncates long subagent output to a temp file."""
+    # Generate a response that exceeds the word threshold
+    long_response = " ".join(["word"] * 900)
+    mock_result = StreamResult(
+        response=long_response,
+        input_tokens=15,
+        output_tokens=10,
+    )
+
+    mock_agent = MagicMock()
+    mock_agent.name = "test-agent"
+    mock_agent.system_prompt = "You are a test helper agent"
+    mock_agent.tools = []
+
+    with patch(
+        "clanker.tools.subagent.load_agent_config",
+        return_value=mock_agent,
+    ), patch(
+        "clanker.ui.streaming.stream_agent_response_async",
+        new_callable=AsyncMock,
+        return_value=mock_result,
+    ), patch(
+        "clanker.ui.streaming.get_active_console",
+    ):
+        res = await spawn_subagent.ainvoke(
+            {"agent_name": "test-agent", "prompt": "Run a test"}
+        )
+
+        assert res["success"] is True
+        assert "Output truncated" in res["response"]
+        assert "Full output saved to" in res["response"]
+        # Verify the temp file was created and contains the full output
+        import re
+        match = re.search(r"`(/tmp/clanker_[^`]+)`", res["response"])
+        assert match is not None
+        tmp_path = match.group(1)
+        assert tmp_path is not None
+        with open(tmp_path) as f:
+            full_content = f.read()
+        assert full_content == long_response
+
+
+@pytest.mark.asyncio
+async def test_spawn_subagent_response_truncation() -> None:
+    """spawn_subagent truncates long subagent output to a temp file."""
+    # Generate a response that exceeds the word threshold
+    long_response = " ".join(["word"] * 900)
+    mock_result = StreamResult(
+        response=long_response,
+        input_tokens=15,
+        output_tokens=10,
+    )
+
+    mock_agent = MagicMock()
+    mock_agent.name = "test-agent"
+    mock_agent.system_prompt = "You are a test helper agent"
+    mock_agent.tools = []
+
+    with patch(
+        "clanker.tools.subagent.load_agent_config",
+        return_value=mock_agent,
+    ), patch(
+        "clanker.ui.streaming.stream_agent_response_async",
+        new_callable=AsyncMock,
+        return_value=mock_result,
+    ), patch(
+        "clanker.ui.streaming.get_active_console",
+    ):
+        res = await spawn_subagent.ainvoke(
+            {"agent_name": "test-agent", "prompt": "Run a test"}
+        )
+
+        assert res["success"] is True
+        assert "Output truncated" in res["response"]
+        assert "Full output saved to" in res["response"]
+        # Verify the temp file was created and contains the full output
+        import re
+        match = re.search(r"`(/tmp/clanker_[^`]+)`", res["response"])
+        assert match is not None
+        tmp_path = match.group(1)
+        assert tmp_path is not None
+        with open(tmp_path) as f:
+            full_content = f.read()
+        assert full_content == long_response
 
 
 @pytest.mark.asyncio

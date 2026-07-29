@@ -446,7 +446,12 @@ class ChatLog(VerticalScroll):
         cost_usd: float | None = None,
         success: bool = True,
     ) -> None:
-        """Finalize a spawn_subagent tool entry with full markdown output."""
+        """Finalize a spawn_subagent tool entry - just show agent badge with status.
+
+        The full response is returned to the parent agent for display via
+        normal streaming. Tokens/cost are accumulated in the session tracker
+        and shown in the status bar.
+        """
         entry.status = "success" if success else "error"
         entry.result = response
 
@@ -455,7 +460,7 @@ class ChatLog(VerticalScroll):
             entry.spinner_timer.pause()
             entry.spinner_timer = None
 
-        # Update header to show agent name as tool badge
+        # Update header to show agent name as tool badge with status
         header_text = Text()
         header_text.append(f" {agent_name} ", style="black on rgb(0,240,240)")
         if success:
@@ -464,22 +469,6 @@ class ChatLog(VerticalScroll):
             header_text.append(" ✗", style="bold rgb(255,80,80)")
         if entry.header_widget:
             entry.header_widget.update(header_text)
-
-        # Mount full response as markdown (no truncation)
-        if response.strip():
-            md = Markdown(response, classes="msg-tool-output tool-card")
-            entry.output_widget = md
-            self.mount(md)
-            self._messages.append(md)
-
-        # Add token/cost line below
-        token_parts = [f"{input_tokens} in", f"{output_tokens} out"]
-        token_line = f"Tokens: {', '.join(token_parts)}"
-        if cost_usd is not None:
-            token_line += f"  (${cost_usd:.4f})"
-        cost_static = Static(token_line, classes="msg-tool-output")
-        self.mount(cost_static)
-        self._messages.append(cost_static)
 
         self._scroll_to_bottom()
 

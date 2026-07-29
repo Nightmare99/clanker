@@ -358,10 +358,11 @@ class ClankerApp(App):
         cache_read_tokens: int = 0,
         cache_creation_tokens: int = 0,
     ) -> None:
-        """Accumulate subagent cost into the session tracker only.
+        """Accumulate subagent tokens and cost into the session tracker.
 
         Subagent has its own context window, so tokens do not affect the
-        parent's context remaining. Only the monetary cost carries over.
+        parent's context remaining. But we accumulate input/output tokens
+        and cost so the status bar shows accurate session totals.
         """
         try:
             from clanker.config import get_default_model
@@ -377,11 +378,27 @@ class ClankerApp(App):
                 )
             else:
                 turn_cost = None
-            # Only accumulate cost, don't touch context tracking
+            # Accumulate token counts and cost
+            token_tracker.total_input += input_tokens
+            token_tracker.total_output += output_tokens
             if turn_cost is not None:
                 token_tracker.total_cost_usd = (
                     (token_tracker.total_cost_usd or 0.0) + turn_cost
                 )
+            # Refresh the status bar to show updated totals
+            try:
+                from clanker.config import get_settings
+                settings = get_settings()
+                if settings.output.show_token_usage:
+                    status_bar = self.get_status_bar()
+                    status_bar.set_token_usage(
+                        token_tracker.total_input,
+                        token_tracker.total_output,
+                        token_tracker.context_remaining_percent,
+                        turn_cost,
+                    )
+            except Exception:
+                pass
         except Exception:
             pass
 
