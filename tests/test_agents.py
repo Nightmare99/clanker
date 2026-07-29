@@ -66,7 +66,56 @@ You are a test runner.
         assert agent.description == "Runs tests."
         assert agent.system_prompt == "You are a test runner."
         assert agent.tools == []
+        assert agent.model is None
         assert agent.source == "project"
+
+    def test_valid_agent_with_model(self, tmp_path: Path) -> None:
+        content = """---
+name: reviewer
+description: Reviews code.
+model: claude-sonnet
+tools: [read_file]
+---
+You are a code reviewer.
+"""
+        file_path = tmp_path / "reviewer.md"
+        file_path.write_text(content)
+
+        agent = _load_agent_from_file(file_path, "project")
+        assert agent is not None
+        assert agent.name == "reviewer"
+        assert agent.model == "claude-sonnet"
+        assert agent.tools == ["read_file"]
+
+    def test_agent_with_empty_model(self, tmp_path: Path) -> None:
+        content = """---
+name: agent
+description: Has empty model.
+model: ""
+---
+System prompt.
+"""
+        file_path = tmp_path / "agent.md"
+        file_path.write_text(content)
+
+        agent = _load_agent_from_file(file_path, "project")
+        assert agent is not None
+        assert agent.model is None
+
+    def test_agent_with_invalid_model_type(self, tmp_path: Path) -> None:
+        content = """---
+name: agent
+description: Has invalid model.
+model: 123
+---
+System prompt.
+"""
+        file_path = tmp_path / "agent.md"
+        file_path.write_text(content)
+
+        agent = _load_agent_from_file(file_path, "project")
+        assert agent is not None
+        assert agent.model is None
 
     def test_missing_description(self, tmp_path: Path) -> None:
         content = """---

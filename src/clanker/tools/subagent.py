@@ -168,6 +168,7 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
                     tools=agent_tools,
                     system_prompt=_build_subagent_system_prompt(agent_config.system_prompt),
                     progress_callback=_progress_callback,
+                    model_name=agent_config.model,
                 )
             )
             result_container.append(result)

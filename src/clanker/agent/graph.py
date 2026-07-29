@@ -10,7 +10,7 @@ from clanker.agent.middleware import (
 )
 from clanker.agent.prompts import get_system_prompt
 from clanker.agent.summarization import RobustSummarizationMiddleware
-from clanker.config import Settings, create_llm_from_config, get_default_model, get_settings
+from clanker.config import Settings, create_llm_from_config, get_default_model, get_model_by_name, get_settings
 from clanker.logging import get_logger
 from clanker.mcp import load_mcp_tools, load_mcp_tools_async
 from clanker.tools import get_tools
@@ -45,11 +45,14 @@ def _get_all_tools(settings: Settings) -> list:
     return tools
 
 
-def create_model(settings: Settings = None):
+def create_model(settings: Settings = None, model_name: str | None = None):
     """Create the LLM based on JSON models configuration.
 
     Args:
         settings: Optional settings (unused, kept for API compatibility).
+        model_name: Optional model name to use. If provided, looks up the
+                    model by name in ~/.clanker/models.json. Falls back to
+                    the default model if None or the name is not found.
 
     Returns:
         Configured LangChain chat model.
@@ -57,15 +60,24 @@ def create_model(settings: Settings = None):
     Raises:
         ValueError: If no model is configured.
     """
-    default_model = get_default_model()
-    if not default_model:
+    if model_name:
+        chosen = get_model_by_name(model_name)
+        if chosen:
+            logger.info("Using explicitly configured model: %s (provider=%s)", chosen.name, chosen.provider)
+        else:
+            logger.warning("Model '%s' not found in config, falling back to default", model_name)
+            chosen = get_default_model()
+    else:
+        chosen = get_default_model()
+
+    if not chosen:
         raise ValueError(
             "No model configured. Run 'clanker' to start the setup wizard, "
             "or use 'clanker model add' to configure a model."
         )
 
-    logger.info("Using model: %s (provider=%s)", default_model.name, default_model.provider)
-    return create_llm_from_config(default_model)
+    logger.info("Using model: %s (provider=%s)", chosen.name, chosen.provider)
+    return create_llm_from_config(chosen)
 
 
 def create_agent_graph(
@@ -74,6 +86,7 @@ def create_agent_graph(
     tools: list | None = None,
     middleware: list | None = None,
     system_prompt: str | None = None,
+    model_name: str | None = None,
 ):
     """Create an agent with SummarizationMiddleware.
 
@@ -83,6 +96,8 @@ def create_agent_graph(
         tools: Optional list of tools override.
         middleware: Optional list of middleware override.
         system_prompt: Optional system prompt override.
+        model_name: Optional model name to use. If provided, looks up the
+                    model by name instead of using the default.
 
     Returns:
         Compiled agent with automatic summarization.
@@ -93,7 +108,7 @@ def create_agent_graph(
     all_tools = tools if tools is not None else _get_all_tools(settings)
 
     # Create model
-    model = create_model(settings)
+    model = create_model(settings, model_name=model_name)
 
     # Convert percentage to fraction (e.g., 80.0 -> 0.8)
     trigger_fraction = settings.context.summarization_threshold / 100.0
@@ -142,6 +157,7 @@ async def create_agent_graph_async(
     tools: list | None = None,
     middleware: list | None = None,
     system_prompt: str | None = None,
+    model_name: str | None = None,
 ):
     """Create an agent with async MCP tool loading and SummarizationMiddleware.
 
@@ -151,6 +167,8 @@ async def create_agent_graph_async(
         tools: Optional list of tools override.
         middleware: Optional list of middleware override.
         system_prompt: Optional system prompt override.
+        model_name: Optional model name to use. If provided, looks up the
+                    model by name instead of using the default.
 
     Returns:
         Tuple of (agent, mcp_client). Keep mcp_client alive while using agent.
@@ -178,7 +196,7 @@ async def create_agent_graph_async(
     logger.debug("Total tools available: %d", len(all_tools))
 
     # Create model
-    model = create_model(settings)
+    model = create_model(settings, model_name=model_name)
 
     # Convert percentage to fraction (e.g., 80.0 -> 0.8)
     trigger_fraction = settings.context.summarization_threshold / 100.0

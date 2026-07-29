@@ -14,10 +14,15 @@ Agent files follow this format:
     name: code-reviewer
     description: Specialized agent for reviewing code quality and suggesting improvements.
     tools: [read_file, grep_search, glob_search]
+    model: claude-haiku  # optional; uses session default if omitted
     ---
     # Code Reviewer
 
     You are an expert code reviewer. Your job is to ...
+
+The `model` field is optional. When specified, the agent uses the named model
+(must match a model configured in `~/.clanker/models.json`). If omitted, the
+agent uses the session's default model.
 
 Agents are discovered from two locations (project wins on name collision):
 
@@ -60,6 +65,9 @@ class Agent:
         system_prompt: The full markdown body serving as the agent's system prompt.
         tools: Optional list of tool names the agent should have access to.
                If empty/missing, the agent gets all default tools.
+        model: Optional model name to use for this agent. If omitted, the
+               session's default model is used. The name must match a model
+               configured in ~/.clanker/models.json.
         directory: Absolute path to the agent's directory.
         source: "project" (.clanker/agents) or "personal" (~/.clanker/agents).
     """
@@ -70,6 +78,7 @@ class Agent:
     tools: list[str]
     directory: Path
     source: AgentSource
+    model: str | None = None
 
 
 def get_agent_dirs(working_directory: str | None = None) -> list[tuple[Path, AgentSource]]:
@@ -143,6 +152,7 @@ def _load_agent_from_file(agent_file: Path, source: AgentSource) -> Agent | None
     name = meta.get("name") or agent_file.stem
     description = meta.get("description", "")
     tools = meta.get("tools", [])
+    model = meta.get("model", None)
 
     if not isinstance(name, str) or not name.strip():
         logger.warning("Agent %s has invalid 'name'; skipping", agent_file)
@@ -157,11 +167,20 @@ def _load_agent_from_file(agent_file: Path, source: AgentSource) -> Agent | None
         logger.warning("Agent %s has invalid 'tools'; defaulting to all tools", agent_file)
         tools = []
 
+    # model is optional; if provided, validate it's a non-empty string
+    agent_model: str | None = None
+    if model is not None:
+        if isinstance(model, str) and model.strip():
+            agent_model = model.strip()
+        else:
+            logger.warning("Agent %s has invalid 'model'; ignoring", agent_file)
+
     return Agent(
         name=name.strip(),
         description=description.strip(),
         system_prompt=body.strip(),
         tools=[t.strip() for t in tools if isinstance(t, str) and t.strip()],
+        model=agent_model,
         directory=agent_file.parent.resolve(),
         source=source,
     )
@@ -216,6 +235,7 @@ def get_agents_catalog(working_directory: str | None = None) -> str:
         desc = agent.description
         if len(desc) > MAX_DESC_CHARS:
             desc = desc[:MAX_DESC_CHARS].rstrip() + "..."
-        lines.append(f"- {agent.name}: {desc} ({agent.source})")
+        model_tag = f" [model: {agent.model}]" if agent.model else ""
+        lines.append(f"- {agent.name}: {desc} ({agent.source}{model_tag})")
 
     return "\n".join(lines)

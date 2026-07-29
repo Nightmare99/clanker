@@ -247,6 +247,7 @@ async def stream_agent_response_async(
     middleware: list | None = None,
     system_prompt: str | None = None,
     progress_callback=None,
+    model_name: str | None = None,
 ) -> StreamResult:
     """Async handler for streaming agent response."""
     from langgraph.errors import GraphRecursionError
@@ -267,7 +268,7 @@ async def stream_agent_response_async(
 
     # Create graph inside async context
     graph, mcp_client = await create_agent_graph_async(
-        settings, checkpointer, tools=tools, middleware=middleware, system_prompt=system_prompt
+        settings, checkpointer, tools=tools, middleware=middleware, system_prompt=system_prompt, model_name=model_name
     )
 
     current_response = ""

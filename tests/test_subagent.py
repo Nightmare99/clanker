@@ -66,7 +66,6 @@ async def test_spawn_subagent_success() -> None:
 @pytest.mark.asyncio
 async def test_spawn_subagent_response_truncation() -> None:
     """spawn_subagent truncates long subagent output to a temp file."""
-    # Generate a response that exceeds the word threshold
     long_response = " ".join(["word"] * 900)
     mock_result = StreamResult(
         response=long_response,
@@ -78,6 +77,7 @@ async def test_spawn_subagent_response_truncation() -> None:
     mock_agent.name = "test-agent"
     mock_agent.system_prompt = "You are a test helper agent"
     mock_agent.tools = []
+    mock_agent.model = None
 
     with patch(
         "clanker.tools.subagent.load_agent_config",
@@ -96,21 +96,86 @@ async def test_spawn_subagent_response_truncation() -> None:
         assert res["success"] is True
         assert "Output truncated" in res["response"]
         assert "Full output saved to" in res["response"]
-        # Verify the temp file was created and contains the full output
         import re
         match = re.search(r"`(/tmp/clanker_[^`]+)`", res["response"])
         assert match is not None
         tmp_path = match.group(1)
-        assert tmp_path is not None
         with open(tmp_path) as f:
             full_content = f.read()
         assert full_content == long_response
 
 
 @pytest.mark.asyncio
+async def test_spawn_subagent_model_passthrough() -> None:
+    """spawn_subagent passes the agent's model config to stream_agent_response_async."""
+    mock_result = StreamResult(
+        response="Done",
+        input_tokens=5,
+        output_tokens=3,
+    )
+
+    mock_agent = MagicMock()
+    mock_agent.name = "model-agent"
+    mock_agent.system_prompt = "You use a specific model"
+    mock_agent.tools = []
+    mock_agent.model = "claude-sonnet"
+
+    with patch(
+        "clanker.tools.subagent.load_agent_config",
+        return_value=mock_agent,
+    ), patch(
+        "clanker.ui.streaming.stream_agent_response_async",
+        new_callable=AsyncMock,
+        return_value=mock_result,
+    ) as mock_stream, patch(
+        "clanker.ui.streaming.get_active_console",
+    ):
+        res = await spawn_subagent.ainvoke(
+            {"agent_name": "model-agent", "prompt": "Test model"}
+        )
+
+        assert res["success"] is True
+        kwargs = mock_stream.call_args[1]
+        assert kwargs["model_name"] == "claude-sonnet"
+
+
+@pytest.mark.asyncio
+async def test_spawn_subagent_model_none_passthrough() -> None:
+    """spawn_subagent passes None model_name when agent has no model configured."""
+    mock_result = StreamResult(
+        response="Done",
+        input_tokens=5,
+        output_tokens=3,
+    )
+
+    mock_agent = MagicMock()
+    mock_agent.name = "default-agent"
+    mock_agent.system_prompt = "You use the default model"
+    mock_agent.tools = []
+    mock_agent.model = None
+
+    with patch(
+        "clanker.tools.subagent.load_agent_config",
+        return_value=mock_agent,
+    ), patch(
+        "clanker.ui.streaming.stream_agent_response_async",
+        new_callable=AsyncMock,
+        return_value=mock_result,
+    ) as mock_stream, patch(
+        "clanker.ui.streaming.get_active_console",
+    ):
+        res = await spawn_subagent.ainvoke(
+            {"agent_name": "default-agent", "prompt": "Test default"}
+        )
+
+        assert res["success"] is True
+        kwargs = mock_stream.call_args[1]
+        assert kwargs["model_name"] is None
+
+
+@pytest.mark.asyncio
 async def test_spawn_subagent_response_truncation() -> None:
     """spawn_subagent truncates long subagent output to a temp file."""
-    # Generate a response that exceeds the word threshold
     long_response = " ".join(["word"] * 900)
     mock_result = StreamResult(
         response=long_response,
@@ -122,6 +187,7 @@ async def test_spawn_subagent_response_truncation() -> None:
     mock_agent.name = "test-agent"
     mock_agent.system_prompt = "You are a test helper agent"
     mock_agent.tools = []
+    mock_agent.model = None
 
     with patch(
         "clanker.tools.subagent.load_agent_config",
@@ -140,15 +206,81 @@ async def test_spawn_subagent_response_truncation() -> None:
         assert res["success"] is True
         assert "Output truncated" in res["response"]
         assert "Full output saved to" in res["response"]
-        # Verify the temp file was created and contains the full output
         import re
         match = re.search(r"`(/tmp/clanker_[^`]+)`", res["response"])
         assert match is not None
         tmp_path = match.group(1)
-        assert tmp_path is not None
         with open(tmp_path) as f:
             full_content = f.read()
         assert full_content == long_response
+
+
+@pytest.mark.asyncio
+async def test_spawn_subagent_model_passthrough() -> None:
+    """spawn_subagent passes the agent's model config to stream_agent_response_async."""
+    mock_result = StreamResult(
+        response="Done",
+        input_tokens=5,
+        output_tokens=3,
+    )
+
+    mock_agent = MagicMock()
+    mock_agent.name = "model-agent"
+    mock_agent.system_prompt = "You use a specific model"
+    mock_agent.tools = []
+    mock_agent.model = "claude-sonnet"
+
+    with patch(
+        "clanker.tools.subagent.load_agent_config",
+        return_value=mock_agent,
+    ), patch(
+        "clanker.ui.streaming.stream_agent_response_async",
+        new_callable=AsyncMock,
+        return_value=mock_result,
+    ) as mock_stream, patch(
+        "clanker.ui.streaming.get_active_console",
+    ):
+        res = await spawn_subagent.ainvoke(
+            {"agent_name": "model-agent", "prompt": "Test model"}
+        )
+
+        assert res["success"] is True
+        kwargs = mock_stream.call_args[1]
+        assert kwargs["model_name"] == "claude-sonnet"
+
+
+@pytest.mark.asyncio
+async def test_spawn_subagent_model_none_passthrough() -> None:
+    """spawn_subagent passes None model_name when agent has no model configured."""
+    mock_result = StreamResult(
+        response="Done",
+        input_tokens=5,
+        output_tokens=3,
+    )
+
+    mock_agent = MagicMock()
+    mock_agent.name = "default-agent"
+    mock_agent.system_prompt = "You use the default model"
+    mock_agent.tools = []
+    mock_agent.model = None
+
+    with patch(
+        "clanker.tools.subagent.load_agent_config",
+        return_value=mock_agent,
+    ), patch(
+        "clanker.ui.streaming.stream_agent_response_async",
+        new_callable=AsyncMock,
+        return_value=mock_result,
+    ) as mock_stream, patch(
+        "clanker.ui.streaming.get_active_console",
+    ):
+        res = await spawn_subagent.ainvoke(
+            {"agent_name": "default-agent", "prompt": "Test default"}
+        )
+
+        assert res["success"] is True
+        kwargs = mock_stream.call_args[1]
+        assert kwargs["model_name"] is None
 
 
 @pytest.mark.asyncio

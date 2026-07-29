@@ -231,7 +231,9 @@ AGENTS_TOOLS_SECTION = """\
   contains a `summary` key with a brief recap. **The subagent's output is already
   complete — do NOT continue, repeat, or re-summarize it.** Simply acknowledge what
   was found and move on to the next step.
-- When a task is better suited to a specialized agent, call `load_agent` to see its configuration, then `spawn_subagent` with the agent's name and a detailed prompt.
+- **Do NOT use subagents unless the user explicitly asks for one.** Subagents are only
+  for when the user directly requests a specific agent or asks you to delegate work to
+  a subagent. Do not spawn them on your own initiative.
 
 """
 
@@ -309,9 +311,8 @@ instructions, then follow them. Do not guess a skill's steps from its descriptio
 # AVAILABLE AGENTS
 
 You have access to specialized agents. Each agent below shows its name and when to use it.
-When a task is better handled by a specialized agent, call `spawn_subagent(agent_name="<name>", prompt="...")`
-to delegate the subtask. The agent runs independently with its own system prompt and streams
-its full output live to the user. The return value is only a brief summary — do not repeat it.
+**Do NOT spawn subagents unless the user explicitly asks for one.** Only use `spawn_subagent`
+when the user directly requests a specific agent or asks you to delegate work.
 
 {agents_catalog}
 
