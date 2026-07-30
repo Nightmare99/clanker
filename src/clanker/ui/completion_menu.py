@@ -39,6 +39,9 @@ class CompletionMenu(Static):
         self._render_cache: Text = Text()
         # Signature: (cmd: str, arg_prefix: str) -> list[str]
         self._subcommand_completer: Callable[[str, str], list[str]] | None = None
+        # Whether the user has taken keyboard control of the menu (via Tab).
+        # Shown as a hint until then.
+        self._engaged = False
 
     # -- public API ------------------------------------------------------------
 
@@ -58,10 +61,11 @@ class CompletionMenu(Static):
 
         return [c for c in self._all_commands if c.startswith(text)]
 
-    def show(self, text: str) -> None:
+    def show(self, text: str, engaged: bool = False) -> None:
         """Populate, position, and display the menu for *text*."""
         self._matches = self.compute_matches(text)
         self._highlight_index = 0
+        self._engaged = engaged
 
         if not self._matches:
             self.hide()
@@ -71,8 +75,16 @@ class CompletionMenu(Static):
         self._position()
         self.add_class("visible")
 
+    def set_engaged(self, engaged: bool) -> None:
+        """Toggle the "Tab to select" hint without recomputing matches."""
+        if engaged != self._engaged:
+            self._engaged = engaged
+            self._build_render()
+            self.refresh()
+
     def hide(self) -> None:
         """Remove the menu from view."""
+        self._engaged = False
         self.remove_class("visible")
 
     def next_item(self, wrap: bool = True) -> None:
@@ -110,13 +122,16 @@ class CompletionMenu(Static):
                 self._render_cache.append(f"> {item}\n", style="bold rgb(0,240,240)")
             else:
                 self._render_cache.append(f"  {item}\n")
+        if not self._engaged:
+            self._render_cache.append("Tab to select", style="dim italic rgb(120,120,120)")
 
     def _position(self) -> None:
         """Position immediately above the input bar, left-aligned."""
         if not self.is_attached:
             return
         screen = self.screen
-        menu_height = len(self._matches) + 2  # +2 for border
+        hint_lines = 0 if self._engaged else 1
+        menu_height = len(self._matches) + hint_lines + 2  # +2 for border
         y = screen.size.height - 1 - 1 - menu_height
         if y < 1:
             y = 1

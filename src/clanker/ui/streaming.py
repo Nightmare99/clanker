@@ -248,6 +248,7 @@ async def stream_agent_response_async(
     system_prompt: str | None = None,
     progress_callback=None,
     model_name: str | None = None,
+    input_queue: "asyncio.Queue[str] | None" = None,
 ) -> StreamResult:
     """Async handler for streaming agent response."""
     from langgraph.errors import GraphRecursionError
@@ -409,330 +410,370 @@ async def stream_agent_response_async(
 
         await _heal_orphaned_tool_calls(graph, config)
 
-        with _suppress_subprocess_stderr():
-            async for event in graph.astream_events(
-                state, config=stream_config, version="v2"
-            ):
-                # Flush buffered notify messages from callback
-                if _pending_notifies and textual_app:
-                    try:
-                        chat_log = textual_app.get_chat_log()
-                        for msg, level, title in _pending_notifies:
-                            if msg:
-                                chat_log.add_message(msg, MessageType.NOTIFY, title=level)
-                    except Exception:
-                        pass
-                    _pending_notifies.clear()
-
-                event_type = event.get("event", "")
-
-                if _interrupted:
-                    _stop_loading()
-                    tool_handler.finalize_live()
-                    if textual_app:
+        _pending_restart_state = None
+        while True:
+            _pending_restart_state = None
+            with _suppress_subprocess_stderr():
+                async for event in graph.astream_events(
+                    state, config=stream_config, version="v2"
+                ):
+                    # Flush buffered notify messages from callback
+                    if _pending_notifies and textual_app:
                         try:
                             chat_log = textual_app.get_chat_log()
-                            chat_log.add_message(
-                                "*BZZZT* Agent halted. Control returned to you. *CLANK*",
-                                MessageType.WARNING,
-                            )
+                            for msg, level, title in _pending_notifies:
+                                if msg:
+                                    chat_log.add_message(msg, MessageType.NOTIFY, title=level)
                         except Exception:
                             pass
-                    return StreamResult(
-                        response=current_response,
-                        input_tokens=last_input_tokens,
-                        output_tokens=last_output_tokens,
-                        cache_read_tokens=last_cache_read_tokens,
-                        cache_creation_tokens=last_cache_creation_tokens,
-                        cumulative_input_tokens=cumulative_input_tokens,
-                        cumulative_output_tokens=cumulative_output_tokens,
-                        cumulative_cache_read_tokens=cumulative_cache_read_tokens,
-                        cumulative_cache_creation_tokens=cumulative_cache_creation_tokens,
-                        model_name=model_name,
-                        summarization_occurred=summarization_detected,
-                    )
+                        _pending_notifies.clear()
 
-                if event_type == "on_tool_start":
-                    tools_started = True
+                    event_type = event.get("event", "")
 
-                    if settings.output.show_tool_calls:
-                        run_id = event.get("run_id", "")
-                        if run_id and run_id not in shown_tool_calls:
-                            shown_tool_calls.add(run_id)
-                            tool_name_ev = event.get("name", "unknown")
-                            tool_input = event.get("data", {}).get("input", {})
-                            if tool_name_ev == "run" and not is_yolo_mode():
-                                continue
-                            if tool_name_ev.lower() in ("notify", "ask_user", "spawn_subagent"):
-                                continue
+                    if _interrupted:
+                        _stop_loading()
+                        tool_handler.finalize_live()
+                        if textual_app:
+                            try:
+                                chat_log = textual_app.get_chat_log()
+                                chat_log.add_message(
+                                    "*BZZZT* Agent halted. Control returned to you. *CLANK*",
+                                    MessageType.WARNING,
+                                )
+                            except Exception:
+                                pass
+                        return StreamResult(
+                            response=current_response,
+                            input_tokens=last_input_tokens,
+                            output_tokens=last_output_tokens,
+                            cache_read_tokens=last_cache_read_tokens,
+                            cache_creation_tokens=last_cache_creation_tokens,
+                            cumulative_input_tokens=cumulative_input_tokens,
+                            cumulative_output_tokens=cumulative_output_tokens,
+                            cumulative_cache_read_tokens=cumulative_cache_read_tokens,
+                            cumulative_cache_creation_tokens=cumulative_cache_creation_tokens,
+                            model_name=model_name,
+                            summarization_occurred=summarization_detected,
+                        )
 
-                            arg_str = _get_tool_arg_summary(tool_name_ev, tool_input)
+                    if event_type == "on_tool_start":
+                        tools_started = True
+
+                        if settings.output.show_tool_calls:
+                            run_id = event.get("run_id", "")
+                            if run_id and run_id not in shown_tool_calls:
+                                shown_tool_calls.add(run_id)
+                                tool_name_ev = event.get("name", "unknown")
+                                tool_input = event.get("data", {}).get("input", {})
+                                if tool_name_ev == "run" and not is_yolo_mode():
+                                    continue
+                                if tool_name_ev.lower() in ("notify", "ask_user", "spawn_subagent"):
+                                    continue
+
+                                arg_str = _get_tool_arg_summary(tool_name_ev, tool_input)
+
+                                # Fire progress callback for subagent tracking
+                                if progress_callback:
+                                    try:
+                                        progress_callback("start", tool_name_ev, arg_str)
+                                    except Exception:
+                                        pass
+
+                                if textual_app:
+                                    try:
+                                        # Store pending tool info — debounce timer will
+                                        # mount the LoadingIndicator if the tool takes >200ms
+                                        _tui_tool_pending[run_id] = {
+                                            "name": tool_name_ev,
+                                            "args": arg_str,
+                                            "input": tool_input,
+                                        }
+                                        # Schedule debounce: show loader after 200ms if still running
+                                        task = asyncio.create_task(
+                                            _tool_debounce(run_id, tool_name_ev, arg_str, tool_input)
+                                        )
+                                        _tui_debounce_tasks[run_id] = task
+                                    except Exception:
+                                        pass
+
+                                tool_handler.handle_tool_start(tool_name_ev, tool_input)
+                        else:
+                            _stop_loading()
+
+                    elif event_type == "on_tool_end":
+                        tool_name_end = event.get("name", "")
+                        if tool_name_end.lower() == "notify":
+                            # Render notify output in TUI chat log from tool result
+                            if textual_app:
+                                try:
+                                    data = event.get("data", {})
+                                    raw_output = data.get("output", {})
+                                    if isinstance(raw_output, dict):
+                                        msg = raw_output.get("message", "")
+                                        level = raw_output.get("level", "info")
+                                    elif isinstance(raw_output, str):
+                                        import json as _json
+                                        parsed = _json.loads(raw_output) if raw_output.strip() else {}
+                                        msg = parsed.get("message", "") if isinstance(parsed, dict) else raw_output
+                                        level = parsed.get("level", "info") if isinstance(parsed, dict) else "info"
+                                    else:
+                                        msg, level = "", "info"
+                                    if msg:
+                                        chat_log = textual_app.get_chat_log()
+                                        chat_log.add_message(msg, MessageType.NOTIFY, title=level)
+                                except Exception:
+                                    pass
+                            _start_loading()
+                            continue
+                        elif tool_name_end.lower() == "spawn_subagent":
+                            # Rendering handled by spawn_subagent tool itself
+                            _start_loading()
+                            continue
+                        elif tool_name_end.lower() == "ask_user":
+                            _start_loading()
+                            continue
+
+                        if settings.output.show_tool_calls:
+                            data = event.get("data", {})
+                            tool_output = normalize_tool_output(data.get("output"))
+                            tool_handler.handle_tool_end(tool_name_end, tool_output)
 
                             # Fire progress callback for subagent tracking
                             if progress_callback:
                                 try:
-                                    progress_callback("start", tool_name_ev, arg_str)
+                                    progress_callback("end", tool_name_end, "", tool_output)
                                 except Exception:
                                     pass
 
                             if textual_app:
                                 try:
-                                    # Store pending tool info — debounce timer will
-                                    # mount the LoadingIndicator if the tool takes >200ms
-                                    _tui_tool_pending[run_id] = {
-                                        "name": tool_name_ev,
-                                        "args": arg_str,
-                                        "input": tool_input,
-                                    }
-                                    # Schedule debounce: show loader after 200ms if still running
-                                    task = asyncio.create_task(
-                                        _tool_debounce(run_id, tool_name_ev, arg_str, tool_input)
-                                    )
-                                    _tui_debounce_tasks[run_id] = task
+                                    chat_log = textual_app.get_chat_log()
+                                    is_error = console._is_failed_tool_result(
+                                        tool_output, tool_name_end,
+                                        tool_handler._pending_inputs[0][2] if tool_handler._pending_inputs else None
+                                    ) if tool_handler._pending_inputs else False
+
+                                    run_id_end = event.get("run_id", "")
+
+                                    # Cancel debounce task if tool finished before it fired
+                                    debounce_task = _tui_debounce_tasks.pop(run_id_end, None)
+                                    if debounce_task is not None and not debounce_task.done():
+                                        debounce_task.cancel()
+                                        # Suppress CancelledError — consume it in the next await
+                                        try:
+                                            await debounce_task
+                                        except asyncio.CancelledError:
+                                            pass
+
+                                    # Check if debounce timer already mounted a loader
+                                    existing_entry = _tui_tool_entries.pop(run_id_end, None)
+                                    pending_info = _tui_tool_pending.pop(run_id_end, None)
+
+                                    if existing_entry is not None:
+                                        # Loader was already showing — replace with result
+                                        chat_log.update_tool_end(
+                                            existing_entry, tool_output, success=not is_error
+                                        )
+                                    elif pending_info is not None:
+                                        # Tool finished before debounce fired — show as instant complete
+                                        chat_log.add_tool_complete(
+                                            pending_info["name"],
+                                            pending_info["args"],
+                                            tool_output,
+                                            success=not is_error,
+                                            tool_input=pending_info.get("input"),
+                                        )
+                                    else:
+                                        # Fallback: no tracking info available
+                                        tool_input_end = event.get("data", {}).get("input", {})
+                                        arg_str_end = _get_tool_arg_summary(tool_name_end, tool_input_end)
+                                        chat_log.add_tool_complete(
+                                            tool_name_end, arg_str_end, tool_output,
+                                            success=not is_error,
+                                            tool_input=tool_input_end,
+                                        )
                                 except Exception:
                                     pass
-
-                            tool_handler.handle_tool_start(tool_name_ev, tool_input)
-                    else:
-                        _stop_loading()
-
-                elif event_type == "on_tool_end":
-                    tool_name_end = event.get("name", "")
-                    if tool_name_end.lower() == "notify":
-                        # Render notify output in TUI chat log from tool result
-                        if textual_app:
-                            try:
-                                data = event.get("data", {})
-                                raw_output = data.get("output", {})
-                                if isinstance(raw_output, dict):
-                                    msg = raw_output.get("message", "")
-                                    level = raw_output.get("level", "info")
-                                elif isinstance(raw_output, str):
-                                    import json as _json
-                                    parsed = _json.loads(raw_output) if raw_output.strip() else {}
-                                    msg = parsed.get("message", "") if isinstance(parsed, dict) else raw_output
-                                    level = parsed.get("level", "info") if isinstance(parsed, dict) else "info"
-                                else:
-                                    msg, level = "", "info"
-                                if msg:
-                                    chat_log = textual_app.get_chat_log()
-                                    chat_log.add_message(msg, MessageType.NOTIFY, title=level)
-                            except Exception:
-                                pass
-                        _start_loading()
-                        continue
-                    elif tool_name_end.lower() == "spawn_subagent":
-                        # Rendering handled by spawn_subagent tool itself
-                        _start_loading()
-                        continue
-                    elif tool_name_end.lower() == "ask_user":
-                        _start_loading()
-                        continue
-
-                    if settings.output.show_tool_calls:
-                        data = event.get("data", {})
-                        tool_output = normalize_tool_output(data.get("output"))
-                        tool_handler.handle_tool_end(tool_name_end, tool_output)
-
-                        # Fire progress callback for subagent tracking
-                        if progress_callback:
-                            try:
-                                progress_callback("end", tool_name_end, "", tool_output)
-                            except Exception:
-                                pass
-
-                        if textual_app:
-                            try:
-                                chat_log = textual_app.get_chat_log()
-                                is_error = console._is_failed_tool_result(
-                                    tool_output, tool_name_end,
-                                    tool_handler._pending_inputs[0][2] if tool_handler._pending_inputs else None
-                                ) if tool_handler._pending_inputs else False
-
-                                run_id_end = event.get("run_id", "")
-
-                                # Cancel debounce task if tool finished before it fired
-                                debounce_task = _tui_debounce_tasks.pop(run_id_end, None)
-                                if debounce_task is not None and not debounce_task.done():
-                                    debounce_task.cancel()
-                                    # Suppress CancelledError — consume it in the next await
-                                    try:
-                                        await debounce_task
-                                    except asyncio.CancelledError:
-                                        pass
-
-                                # Check if debounce timer already mounted a loader
-                                existing_entry = _tui_tool_entries.pop(run_id_end, None)
-                                pending_info = _tui_tool_pending.pop(run_id_end, None)
-
-                                if existing_entry is not None:
-                                    # Loader was already showing — replace with result
-                                    chat_log.update_tool_end(
-                                        existing_entry, tool_output, success=not is_error
-                                    )
-                                elif pending_info is not None:
-                                    # Tool finished before debounce fired — show as instant complete
-                                    chat_log.add_tool_complete(
-                                        pending_info["name"],
-                                        pending_info["args"],
-                                        tool_output,
-                                        success=not is_error,
-                                        tool_input=pending_info.get("input"),
-                                    )
-                                else:
-                                    # Fallback: no tracking info available
-                                    tool_input_end = event.get("data", {}).get("input", {})
-                                    arg_str_end = _get_tool_arg_summary(tool_name_end, tool_input_end)
-                                    chat_log.add_tool_complete(
-                                        tool_name_end, arg_str_end, tool_output,
-                                        success=not is_error,
-                                        tool_input=tool_input_end,
-                                    )
-                            except Exception:
-                                pass
-                    else:
-                        tool_handler.clear_tool_tracking(tool_name_end)
-                        _start_loading()
-
-                elif event_type == "on_chat_model_start":
-                    run_id = event.get("run_id", "")
-                    if run_id != current_model_run:
-                        model_call_count += 1
-
-                        if model_call_count == 2 and not tools_started and not summarization_spinner_shown:
-                            summarization_detected = True
-                            summarization_spinner_shown = True
-                            _stop_loading()
-                            console.print_info("*WHIRR* Compressing memory banks...")
+                        else:
+                            tool_handler.clear_tool_tracking(tool_name_end)
                             _start_loading()
 
-                        if tool_handler.has_pending_tools():
-                            tool_handler.flush_pending_tools()
-                        current_response = ""
-                        current_thinking = ""
-                        thinking_shown = False
-                        first_content_received = False
-                        in_think_tag = False
-                        think_tag_closed = False
-                        current_model_run = run_id
+                    elif event_type == "on_chat_model_start":
+                        if input_queue is not None and not input_queue.empty():
+                            pending_msgs = []
+                            while True:
+                                try:
+                                    pending_msgs.append(input_queue.get_nowait())
+                                except asyncio.QueueEmpty:
+                                    break
+                            if pending_msgs:
+                                from langchain_core.messages import HumanMessage
 
-                elif event_type == "on_chat_model_stream":
-                    chunk = event.get("data", {}).get("chunk")
-                    if chunk:
-                        content = getattr(chunk, "content", None)
+                                # Don't call graph.aupdate_state while astream_events is
+                                # actively driving this thread's checkpoint -- concurrent
+                                # writes race with the graph's own checkpoint writes and
+                                # corrupt the run. Instead, cleanly stop this generator and
+                                # resume the same thread with the new messages as input;
+                                # the checkpointer + add_messages reducer appends them.
+                                if tool_handler.has_pending_tools():
+                                    tool_handler.flush_pending_tools()
+                                _pending_restart_state = {
+                                    "messages": [HumanMessage(content=m) for m in pending_msgs]
+                                }
+                                if textual_app:
+                                    try:
+                                        textual_app.get_message_queue().mark_all_picked_up()
+                                        chat_log = textual_app.get_chat_log()
+                                        chat_log.add_message(
+                                            "Injected queued message(s) into agent context",
+                                            MessageType.INFO,
+                                        )
+                                    except Exception:
+                                        pass
+                                break
 
-                        if content and not first_content_received:
-                            first_content_received = True
-                            _stop_loading()
+                        run_id = event.get("run_id", "")
+                        if run_id != current_model_run:
+                            model_call_count += 1
 
-                        if isinstance(content, list):
-                            for block in content:
-                                if isinstance(block, dict):
-                                    if block.get("type") == "thinking":
-                                        thinking_text = block.get("thinking", "")
-                                        if thinking_text:
-                                            current_thinking += thinking_text
+                            if model_call_count == 2 and not tools_started and not summarization_spinner_shown:
+                                summarization_detected = True
+                                summarization_spinner_shown = True
+                                _stop_loading()
+                                console.print_info("*WHIRR* Compressing memory banks...")
+                                _start_loading()
+
+                            if tool_handler.has_pending_tools():
+                                tool_handler.flush_pending_tools()
+                            current_response = ""
+                            current_thinking = ""
+                            thinking_shown = False
+                            first_content_received = False
+                            in_think_tag = False
+                            think_tag_closed = False
+                            current_model_run = run_id
+
+                    elif event_type == "on_chat_model_stream":
+                        chunk = event.get("data", {}).get("chunk")
+                        if chunk:
+                            content = getattr(chunk, "content", None)
+
+                            if content and not first_content_received:
+                                first_content_received = True
+                                _stop_loading()
+
+                            if isinstance(content, list):
+                                for block in content:
+                                    if isinstance(block, dict):
+                                        if block.get("type") == "thinking":
+                                            thinking_text = block.get("thinking", "")
+                                            if thinking_text:
+                                                current_thinking += thinking_text
+                                                if not thinking_shown:
+                                                    console.print_thinking_start()
+                                                    thinking_shown = True
+                                        elif block.get("type") == "text":
+                                            text = block.get("text", "")
+                                            if text:
+                                                current_response += text
+                                    elif hasattr(block, "type"):
+                                        if block.type == "thinking":
+                                            thinking_text = getattr(block, "thinking", "")
+                                            if thinking_text:
+                                                current_thinking += thinking_text
+                                                if not thinking_shown:
+                                                    console.print_thinking_start()
+                                                    thinking_shown = True
+                                        elif block.type == "text":
+                                            text = getattr(block, "text", "")
+                                            if text:
+                                                current_response += text
+
+                            elif content and isinstance(content, str):
+                                remaining = content
+                                while remaining:
+                                    if think_tag_closed:
+                                        current_response += remaining
+                                        remaining = ""
+                                    elif in_think_tag:
+                                        end_idx = remaining.find("</think>")
+                                        if end_idx != -1:
+                                            current_thinking += remaining[:end_idx]
+                                            remaining = remaining[end_idx + 8:]
+                                            in_think_tag = False
+                                            think_tag_closed = True
+                                        else:
+                                            current_thinking += remaining
+                                            remaining = ""
+                                    else:
+                                        end_idx = remaining.find("</think>")
+                                        start_idx = remaining.find("<think>")
+
+                                        if start_idx != -1 and (end_idx == -1 or start_idx < end_idx):
+                                            current_response += remaining[:start_idx]
+                                            remaining = remaining[start_idx + 7:]
+                                            in_think_tag = True
                                             if not thinking_shown:
                                                 console.print_thinking_start()
                                                 thinking_shown = True
-                                    elif block.get("type") == "text":
-                                        text = block.get("text", "")
-                                        if text:
-                                            current_response += text
-                                elif hasattr(block, "type"):
-                                    if block.type == "thinking":
-                                        thinking_text = getattr(block, "thinking", "")
-                                        if thinking_text:
-                                            current_thinking += thinking_text
+                                        elif end_idx != -1:
+                                            current_thinking += remaining[:end_idx]
+                                            remaining = remaining[end_idx + 8:]
+                                            think_tag_closed = True
+                                            if not thinking_shown and current_thinking:
+                                                console.print_thinking_start()
+                                                thinking_shown = True
+                                        else:
+                                            current_thinking += remaining
                                             if not thinking_shown:
                                                 console.print_thinking_start()
                                                 thinking_shown = True
-                                    elif block.type == "text":
-                                        text = getattr(block, "text", "")
-                                        if text:
-                                            current_response += text
+                                            remaining = ""
 
-                        elif content and isinstance(content, str):
-                            remaining = content
-                            while remaining:
-                                if think_tag_closed:
-                                    current_response += remaining
-                                    remaining = ""
-                                elif in_think_tag:
-                                    end_idx = remaining.find("</think>")
-                                    if end_idx != -1:
-                                        current_thinking += remaining[:end_idx]
-                                        remaining = remaining[end_idx + 8:]
-                                        in_think_tag = False
-                                        think_tag_closed = True
-                                    else:
-                                        current_thinking += remaining
-                                        remaining = ""
-                                else:
-                                    end_idx = remaining.find("</think>")
-                                    start_idx = remaining.find("<think>")
+                    elif event_type == "on_chat_model_end":
+                        output = event.get("data", {}).get("output")
+                        if output:
+                            if hasattr(output, "response_metadata"):
+                                meta = output.response_metadata
+                                model_name = meta.get("model", "") or meta.get("model_name", "")
 
-                                    if start_idx != -1 and (end_idx == -1 or start_idx < end_idx):
-                                        current_response += remaining[:start_idx]
-                                        remaining = remaining[start_idx + 7:]
-                                        in_think_tag = True
-                                        if not thinking_shown:
-                                            console.print_thinking_start()
-                                            thinking_shown = True
-                                    elif end_idx != -1:
-                                        current_thinking += remaining[:end_idx]
-                                        remaining = remaining[end_idx + 8:]
-                                        think_tag_closed = True
-                                        if not thinking_shown and current_thinking:
-                                            console.print_thinking_start()
-                                            thinking_shown = True
-                                    else:
-                                        current_thinking += remaining
-                                        if not thinking_shown:
-                                            console.print_thinking_start()
-                                            thinking_shown = True
-                                        remaining = ""
-
-                elif event_type == "on_chat_model_end":
-                    output = event.get("data", {}).get("output")
-                    if output:
-                        if hasattr(output, "response_metadata"):
-                            meta = output.response_metadata
-                            model_name = meta.get("model", "") or meta.get("model_name", "")
-
-                        if hasattr(output, "usage_metadata") and output.usage_metadata:
-                            usage = output.usage_metadata
-                            last_input_tokens = usage.get("input_tokens", 0)
-                            last_output_tokens = usage.get("output_tokens", 0)
-                            cumulative_input_tokens += last_input_tokens
-                            cumulative_output_tokens += last_output_tokens
-                            details = usage.get("input_token_details") or {}
-                            last_cache_read_tokens = details.get("cache_read", 0)
-                            last_cache_creation_tokens = details.get("cache_creation", 0)
-                            cumulative_cache_read_tokens += last_cache_read_tokens
-                            cumulative_cache_creation_tokens += last_cache_creation_tokens
-
-                        elif hasattr(output, "response_metadata"):
-                            meta = output.response_metadata
-                            usage = meta.get("usage", {})
-                            if usage:
-                                last_input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
-                                last_output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+                            if hasattr(output, "usage_metadata") and output.usage_metadata:
+                                usage = output.usage_metadata
+                                last_input_tokens = usage.get("input_tokens", 0)
+                                last_output_tokens = usage.get("output_tokens", 0)
                                 cumulative_input_tokens += last_input_tokens
                                 cumulative_output_tokens += last_output_tokens
+                                details = usage.get("input_token_details") or {}
+                                last_cache_read_tokens = details.get("cache_read", 0)
+                                last_cache_creation_tokens = details.get("cache_creation", 0)
+                                cumulative_cache_read_tokens += last_cache_read_tokens
+                                cumulative_cache_creation_tokens += last_cache_creation_tokens
 
-                            if not usage and "token_usage" in meta:
-                                usage = meta.get("token_usage", {})
-                                last_input_tokens = usage.get("prompt_tokens", 0)
-                                last_output_tokens = usage.get("completion_tokens", 0)
-                                cumulative_input_tokens += last_input_tokens
-                                cumulative_output_tokens += last_output_tokens
+                            elif hasattr(output, "response_metadata"):
+                                meta = output.response_metadata
+                                usage = meta.get("usage", {})
+                                if usage:
+                                    last_input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
+                                    last_output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+                                    cumulative_input_tokens += last_input_tokens
+                                    cumulative_output_tokens += last_output_tokens
 
-                            if not usage:
-                                last_input_tokens = meta.get("prompt_tokens", 0)
-                                last_output_tokens = meta.get("completion_tokens", 0)
-                                cumulative_input_tokens += last_input_tokens
-                                cumulative_output_tokens += last_output_tokens
+                                if not usage and "token_usage" in meta:
+                                    usage = meta.get("token_usage", {})
+                                    last_input_tokens = usage.get("prompt_tokens", 0)
+                                    last_output_tokens = usage.get("completion_tokens", 0)
+                                    cumulative_input_tokens += last_input_tokens
+                                    cumulative_output_tokens += last_output_tokens
+
+                                if not usage:
+                                    last_input_tokens = meta.get("prompt_tokens", 0)
+                                    last_output_tokens = meta.get("completion_tokens", 0)
+                                    cumulative_input_tokens += last_input_tokens
+                                    cumulative_output_tokens += last_output_tokens
+            if _pending_restart_state is not None:
+                state = _pending_restart_state
+                continue
+            break
 
     except CommandRejectedError as e:
         _stop_loading()

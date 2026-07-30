@@ -52,6 +52,10 @@ class PromptInput(Input):
         self._saved_input: str = ""
         self._completion_menu: CompletionMenu | None = None
         self._menu_active = False
+        # True once the user has explicitly taken keyboard control of the menu
+        # (via Tab). Until then the menu is only a visual hint — Up/Down/Enter
+        # keep their normal behavior (history nav / submit).
+        self._menu_engaged = False
         # Cursor offset at the moment Tab was pressed, so we can restore it
         self._tab_cursor_offset: int = 0
         # Tracks previous value so watch_value can detect the "/" transition
@@ -81,8 +85,8 @@ class PromptInput(Input):
             event.stop()
             return
 
-        # While menu is active …
-        if self._menu_active and self._completion_menu:
+        # While menu is active AND engaged (user pressed Tab to take control) …
+        if self._menu_active and self._menu_engaged and self._completion_menu:
             if key == "enter":
                 selected = self._completion_menu.get_selected()
                 if selected:
@@ -145,7 +149,7 @@ class PromptInput(Input):
                     self._menu_active = True
         # Case 2: menu already open — re-filter to match edited text
         elif self._menu_active and self._completion_menu:
-            self._completion_menu.show(value)
+            self._completion_menu.show(value, engaged=self._menu_engaged)
 
     # -- tab completion --------------------------------------------------------
 
@@ -162,17 +166,22 @@ class PromptInput(Input):
         # Record cursor position so we can restore relative position
         self._tab_cursor_offset = self.cursor_position
 
-        if self._menu_active:
-            # Menu already open — accept highlighted item
+        if self._menu_active and self._menu_engaged:
+            # Menu already engaged — accept highlighted item
             selected = self._completion_menu.get_selected()
             if selected:
                 self._accept_completion(selected)
             return
 
-        # First Tab: show menu
-        self._completion_menu.show(text)
+        # Menu may already be visible (auto-shown on "/"), but not yet engaged.
+        if not self._menu_active:
+            self._completion_menu.show(text, engaged=True)
+        else:
+            self._completion_menu.set_engaged(True)
+
         if self._completion_menu._matches:
             self._menu_active = True
+            self._menu_engaged = True
 
     def _tab_inline(self) -> None:
         """Inline completion fallback when no menu is wired."""
@@ -194,6 +203,7 @@ class PromptInput(Input):
     def _hide_menu(self) -> None:
         if self._menu_active and self._completion_menu:
             self._menu_active = False
+            self._menu_engaged = False
             self._completion_menu.hide()
 
     # -- history navigation (Alt+Up / Alt+Down) --------------------------------
@@ -227,6 +237,54 @@ class PromptInput(Input):
             self._history_index = -1
             if self._on_history_add:
                 self._on_history_add(text.strip())
+
+
+class MessageQueue(Static):
+    """Shows messages queued while the agent is processing, above the input bar."""
+
+    DEFAULT_CSS = """
+    MessageQueue {
+        dock: bottom;
+        background: black;
+        color: rgb(150, 150, 150);
+        padding: 0 1;
+        display: none;
+    }
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._entries: list[tuple[str, bool]] = []  # (text, picked_up)
+
+    def add_pending(self, text: str) -> None:
+        self._entries.append((text, False))
+        self._refresh()
+
+    def mark_all_picked_up(self) -> None:
+        self._entries = [(text, True) for text, _ in self._entries]
+        self._refresh()
+        self.set_timer(1.5, self._clear_if_all_picked_up)
+
+    def _clear_if_all_picked_up(self) -> None:
+        if all(picked for _, picked in self._entries):
+            self.clear()
+
+    def clear(self) -> None:
+        self._entries = []
+        self._refresh()
+
+    def _refresh(self) -> None:
+        if not self._entries:
+            self.display = False
+            self.update("")
+            return
+        self.display = True
+        lines = []
+        for text, picked in self._entries:
+            mark = "✓" if picked else "⏳"
+            preview = text if len(text) <= 80 else text[:77] + "..."
+            lines.append(f"{mark} {preview}")
+        self.update("\n".join(lines))
 
 
 class PromptBar(Horizontal):
@@ -300,6 +358,7 @@ class ClankerApp(App):
         self._update_message = update_message
         self._processing = False
         self._input_history: list[str] = self._load_history()
+        self._input_queue: asyncio.Queue[str] = asyncio.Queue()
 
     def _load_history(self) -> list[str]:
         """Load input history from file across sessions."""
@@ -324,6 +383,7 @@ class ClankerApp(App):
     def compose(self) -> ComposeResult:
         yield ChatLog(id="chat-log")
         yield StatusBar(id="status-bar")
+        yield MessageQueue(id="message-queue")
         yield PromptBar(id="prompt-bar")
         yield CompletionMenu(_SLASH_COMMANDS)
 
@@ -381,6 +441,9 @@ class ClankerApp(App):
 
     def get_prompt_input(self) -> PromptInput:
         return self.query_one("#prompt-input", PromptInput)
+
+    def get_message_queue(self) -> MessageQueue:
+        return self.query_one("#message-queue", MessageQueue)
 
     # --- Actions ---
 
@@ -483,6 +546,12 @@ class ClankerApp(App):
         prompt_input.add_to_history(text)
         prompt_input.value = ""
 
+        if self._processing and not text.startswith("/"):
+            self._input_queue.put_nowait(text)
+            self._add_user_message_to_ui(text)
+            self.get_message_queue().add_pending(text)
+            return
+
         cmd_result = self._handle_slash_command(text)
         if cmd_result is not None:
             if cmd_result == "exit":
@@ -506,9 +575,15 @@ class ClankerApp(App):
     def _set_processing(self, processing: bool) -> None:
         self._processing = processing
         prompt_input = self.get_prompt_input()
-        prompt_input.disabled = processing
+        prompt_input.disabled = False
+        prompt_input.placeholder = (
+            "Type a follow-up... (queued until agent's next step)"
+            if processing
+            else "Type your message... (ctrl+c interrupt)"
+        )
         if not processing:
             prompt_input.focus()
+            self.get_message_queue().clear()
 
     def _handle_slash_command(self, text: str) -> str | None:
         if not text.startswith("/"):
@@ -608,6 +683,7 @@ class ClankerApp(App):
                 state,
                 session_manager.get_config(),
                 console,
+                input_queue=self._input_queue,
             )
 
             if result.input_tokens > 0 or result.output_tokens > 0:
