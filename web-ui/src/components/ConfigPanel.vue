@@ -107,6 +107,8 @@ interface ModelConfig {
   thinking_budget_tokens: number
   // Reasoning effort (Azure OpenAI o1/o3 models)
   reasoning_effort: string | null
+  // Use OpenAI's /responses endpoint instead of /chat/completions (OpenAI only)
+  use_responses_api: boolean
   // Streaming reliability (OpenAI/Azure): seconds to wait for next chunk
   stream_chunk_timeout: number | null
   // Cost tracking (USD per million tokens — optional, omit to skip cost display)
@@ -152,6 +154,7 @@ const modelForm = ref<ModelConfig>({
   thinking_enabled: false,
   thinking_budget_tokens: 10000,
   reasoning_effort: null,
+  use_responses_api: false,
   stream_chunk_timeout: null,
   cost_input: null,
   cost_output: null,
@@ -372,6 +375,7 @@ function openAddModel() {
     thinking_enabled: false,
     thinking_budget_tokens: 10000,
     reasoning_effort: null,
+    use_responses_api: false,
     stream_chunk_timeout: null,
     cost_input: null,
     cost_output: null,
@@ -818,6 +822,10 @@ onUnmounted(() => {
                     <span class="detail-label">Reasoning:</span>
                     <NTag size="small" type="warning">{{ model.reasoning_effort }}</NTag>
                   </div>
+                  <div v-if="model.use_responses_api" class="model-detail-row">
+                    <span class="detail-label">Endpoint:</span>
+                    <NTag size="small" type="warning">/responses</NTag>
+                  </div>
                   <div v-if="model.cost_input != null || model.cost_output != null" class="model-detail-row">
                     <span class="detail-label">Pricing:</span>
                     <span class="detail-value" style="font-size: 0.82em; color: var(--n-text-color-3)">
@@ -1033,6 +1041,26 @@ onUnmounted(() => {
                     Max seconds to wait for the next streamed chunk before erroring. Raise this
                     for high-reasoning models that pause silently while thinking. Leave empty for
                     the default ({{ 600 }}s); set to <strong>0</strong> to disable entirely.
+                  </small>
+                </NAlert>
+              </template>
+
+              <!-- Responses API (OpenAI only -- most compatible endpoints, e.g.
+                   OpenRouter or local proxies, only implement /chat/completions
+                   and error on /responses) -->
+              <template v-if="isModelFormOpenAI">
+                <NDivider style="margin: 16px 0">Responses API</NDivider>
+
+                <NFormItem label="Use /responses Endpoint">
+                  <NSwitch v-model:value="modelForm.use_responses_api" />
+                </NFormItem>
+
+                <NAlert v-if="modelForm.use_responses_api" type="warning" style="margin-top: 8px">
+                  <small>
+                    Routes requests through OpenAI's <code>/responses</code> endpoint instead of
+                    <code>/chat/completions</code>. Only enable this if you know your endpoint
+                    supports it -- most OpenAI-compatible proxies and gateways don't, and will
+                    reject the request.
                   </small>
                 </NAlert>
               </template>

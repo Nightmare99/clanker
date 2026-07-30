@@ -16,6 +16,7 @@ warnings.filterwarnings("ignore", message="Core Pydantic V1 functionality")
 import click
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, HumanMessage
+from rich.markup import escape
 
 from clanker import __version__
 from clanker.agent import create_model
@@ -81,6 +82,16 @@ def handle_command(
     parts = command.strip().split(maxsplit=1)
     logger.debug("Handling command: %s", cmd)
 
+    def _mirror(text: str, msg_type: MessageType = MessageType.INFO) -> None:
+        """Mirror a plain-text command result into the TUI chat log, if present.
+
+        Callers build ``text`` directly (no Rich markup, no baked-in line
+        wrapping) so the chat log's own Text widget reflows it at its actual
+        render width instead of double-wrapping console-captured output.
+        """
+        if chat_log and text.strip():
+            chat_log.add_message(text.strip(), msg_type)
+
     if cmd in ("/exit", "/quit", "/q"):
         logger.info("User requested exit")
         console.print("[bold cyan]*BZZZT*[/bold cyan] Shutdown sequence initiated. [bold cyan]*WHIRR... click*[/bold cyan]")
@@ -89,7 +100,10 @@ def handle_command(
         return "exit"
 
     elif cmd == "/help":
+        from clanker.ui.console import build_help_text
+
         console.print_help()
+        _mirror(build_help_text(markup=False))
 
     elif cmd == "/clear":
         console.clear()
@@ -104,21 +118,31 @@ def handle_command(
         model_names = list_model_names()
         if len(parts) == 1:
             current = get_default_model()
+            lines = []
             if current:
                 console.print_info(f"Current model: {current.name} ({current.provider})")
+                lines.append(f"Current model: {current.name} ({current.provider})")
             else:
                 console.print_warning("No model configured.")
+                lines.append("No model configured.")
             if model_names:
                 console.print_info("\nConfigured models:")
+                lines.append("\nConfigured models:")
                 for name in model_names:
                     model = get_model_by_name(name)
                     if model:
                         marker = " *" if current and current.name == name else ""
                         console.print(f"  [cyan]{name}[/cyan] ({model.provider}){marker}")
+                        lines.append(f"  {name} ({model.provider}){marker}")
                 console.print_info("\nUse /model <name> to switch models.")
+                lines.append("\nUse /model <name> to switch models.")
             else:
                 console.print_info("\nNo models configured in ~/.clanker/models.json")
                 console.print_info("Add models via 'clanker config'.")
+                lines.append("\nNo models configured in ~/.clanker/models.json")
+                lines.append("Add models via 'clanker config'.")
+            if chat_log:
+                chat_log.add_message("\n".join(lines), MessageType.INFO)
         else:
             target_name = parts[1].strip()
             model = get_model_by_name(target_name)
@@ -126,10 +150,20 @@ def handle_command(
                 set_default_model(target_name)
                 console.print_success(f"Switched to model: {model.name} ({model.provider})")
                 console.print_info("Note: Changes take effect on next message.")
+                if chat_log:
+                    chat_log.add_message(
+                        f"Switched to model: {model.name} ({model.provider})\n"
+                        "Note: Changes take effect on next message.",
+                        MessageType.SUCCESS,
+                    )
             else:
                 console.print_warning(f"Model '{target_name}' not found.")
+                msg = f"Model '{target_name}' not found."
                 if model_names:
                     console.print_info(f"Available: {', '.join(model_names)}")
+                    msg += f"\nAvailable: {', '.join(model_names)}"
+                if chat_log:
+                    chat_log.add_message(msg, MessageType.WARNING)
 
     elif cmd == "/copilot-login":
         from clanker.config.copilot_auth import (
@@ -143,9 +177,12 @@ def handle_command(
             session = start_device_flow()
         except CopilotAuthError as e:
             console.print_error(str(e))
+            _mirror(str(e), MessageType.ERROR)
             return None
-        console.print_info(f"Open {session.verification_uri} and enter code: {session.user_code}")
+        code_msg = f"Open {session.verification_uri} and enter code: {session.user_code}"
+        console.print_info(code_msg)
         console.print_info("Waiting for approval... (Ctrl+C to cancel)")
+        _mirror(f"{code_msg}\nWaiting for approval... (Ctrl+C to cancel)")
         github_token: str | None = None
         try:
             while github_token is None:
@@ -153,104 +190,137 @@ def handle_command(
                 github_token = poll_for_github_token(session)
         except KeyboardInterrupt:
             console.print_warning("Login cancelled.")
+            _mirror("Login cancelled.", MessageType.WARNING)
             return None
         except CopilotAuthError as e:
             console.print_error(str(e))
+            _mirror(str(e), MessageType.ERROR)
             return None
         try:
             complete_login(github_token)
             synced = sync_copilot_models()
         except CopilotAuthError as e:
             console.print_error(str(e))
+            _mirror(str(e), MessageType.ERROR)
             return None
+        success_msg = f"Connected! Synced {synced} Copilot model(s).\nUse /model to switch to one."
         console.print_success(f"Connected! Synced {synced} Copilot model(s).")
         console.print_info("Use /model to switch to one.")
+        _mirror(success_msg, MessageType.SUCCESS)
 
     elif cmd == "/config":
         settings = get_settings()
-        console.print_info(f"Config file: {CONFIG_PATH}")
-        console.print_info(f"Agent name: {settings.agent.name}")
+        lines = [f"Config file: {CONFIG_PATH}", f"Agent name: {settings.agent.name}"]
         current_model = get_default_model()
         if current_model:
-            console.print_info(f"Model: {current_model.name}")
-            console.print_info(f"Provider: {current_model.provider}")
+            lines.append(f"Model: {current_model.name}")
+            lines.append(f"Provider: {current_model.provider}")
             if current_model.model:
-                console.print_info(f"Model ID: {current_model.model}")
+                lines.append(f"Model ID: {current_model.model}")
         else:
-            console.print_warning("No model configured. Run 'clanker' to set up.")
+            lines.append("No model configured. Run 'clanker' to set up.")
         if settings.mcp.enabled and settings.mcp.servers:
             enabled = [n for n, s in settings.mcp.servers.items() if s.enabled]
-            console.print_info(f"MCP servers: {len(enabled)} enabled")
+            lines.append(f"MCP servers: {len(enabled)} enabled")
+        for line in lines:
+            console.print_info(line)
+        _mirror("\n".join(lines))
 
     elif cmd == "/mcp":
         settings = get_settings()
+        lines = []
         if not settings.mcp.enabled:
-            console.print_info("MCP is disabled")
+            lines.append("MCP is disabled")
         elif not settings.mcp.servers:
-            console.print_info("No MCP servers configured")
+            lines.append("No MCP servers configured")
         else:
-            console.print_info("MCP Servers:")
+            lines.append("MCP Servers:")
             for name, server in settings.mcp.servers.items():
                 status = "enabled" if server.enabled else "disabled"
                 if server.transport == "stdio":
                     detail = f"{server.command} {' '.join(server.args)}"
                 else:
                     detail = server.url or ""
-                console.print_info(f"  {name}: [{server.transport}] {status}")
+                lines.append(f"  {name}: [{server.transport}] {status}")
                 if detail:
-                    console.print(f"    {detail[:60]}{'...' if len(detail) > 60 else ''}")
+                    lines.append(f"    {detail[:60]}{'...' if len(detail) > 60 else ''}")
+        for line in lines:
+            console.print_info(line)
+        _mirror("\n".join(lines))
 
     elif cmd == "/logs":
         settings = get_settings()
+        lines = []
         if not settings.logging.enabled:
-            console.print_info("Logging is disabled")
+            lines.append("Logging is disabled")
         else:
             log_path = get_log_path()
             if log_path and log_path.exists():
-                console.print_info(f"Log file: {log_path}")
-                console.print_info(f"Log level: {settings.logging.level}")
-                console.print_info(f"Max file size: {settings.logging.max_file_size_mb} MB")
-                console.print_info(f"Backup count: {settings.logging.backup_count}")
+                lines.append(f"Log file: {log_path}")
+                lines.append(f"Log level: {settings.logging.level}")
+                lines.append(f"Max file size: {settings.logging.max_file_size_mb} MB")
+                lines.append(f"Backup count: {settings.logging.backup_count}")
                 log_dir = log_path.parent
                 log_files = sorted(log_dir.glob("clanker.log*"))
                 if log_files:
-                    console.print_info(f"\nLog files in {log_dir}:")
+                    lines.append(f"\nLog files in {log_dir}:")
                     for f in log_files:
                         size_kb = f.stat().st_size / 1024
-                        console.print(f"  {f.name} ({size_kb:.1f} KB)")
+                        lines.append(f"  {f.name} ({size_kb:.1f} KB)")
             else:
-                console.print_info(f"Log directory: {settings.logging.log_dir}")
-                console.print_info("No log file created yet")
+                lines.append(f"Log directory: {settings.logging.log_dir}")
+                lines.append("No log file created yet")
+        for line in lines:
+            console.print_info(line)
+        _mirror("\n".join(lines))
 
     elif cmd == "/history":
         sessions = session_manager.list_sessions()
+        lines = []
         if not sessions:
-            console.print_info("No conversation history found in this workspace.")
-            console.print_info("Conversations are saved to .clanker/conversations/")
+            lines.append("No conversation history found in this workspace.")
+            lines.append("Conversations are saved to .clanker/conversations/")
+            for line in lines:
+                console.print_info(line)
         else:
-            console.print_info(f"Conversation history ({len(sessions)} sessions):\n")
+            header = f"Conversation history ({len(sessions)} sessions):\n"
+            console.print_info(header)
+            lines.append(header)
             for s in sessions[:20]:
                 title = s["title"][:40] + "..." if len(s["title"]) > 40 else s["title"]
                 created = s["created_at"][:10] if s["created_at"] else "unknown"
-                console.print(f"  [bold cyan]{s['id']}[/bold cyan]  {title}")
+                console.print(f"  [bold cyan]{escape(s['id'])}[/bold cyan]  {escape(title)}")
                 console.print(f"           {created}  ({s['message_count']} messages)")
-            console.print_info("\nUse /restore <id> to resume a conversation.")
+                lines.append(f"  {s['id']}  {title}")
+                lines.append(f"           {created}  ({s['message_count']} messages)")
+            footer = "\nUse /restore <id> to resume a conversation."
+            console.print_info(footer)
+            lines.append(footer)
+        _mirror("\n".join(lines))
 
     elif cmd.startswith("/restore"):
         parts = command.strip().split(maxsplit=1)
         if len(parts) < 2:
             console.print_warning("Usage: /restore <session-id>")
             console.print_info("Use /history to see available sessions.")
+            _mirror(
+                "Usage: /restore <session-id>\nUse /history to see available sessions.",
+                MessageType.WARNING,
+            )
         else:
             session_id = parts[1].strip()
             return f"restore:{session_id}"
 
     elif cmd == "/compact":
         if conversation_messages is None:
-            console.print_warning("No active conversation messages context to compact.")
+            msg = "No active conversation messages context to compact."
+            console.print_warning(msg)
+            _mirror(msg, MessageType.WARNING)
             return None
         if not conversation_messages:
-            console.print_info("No conversation history to compact.")
+            msg = "No conversation history to compact."
+            console.print_info(msg)
+            _mirror(msg)
             return None
         from clanker.agent.summarization import RobustSummarizationMiddleware
 
@@ -258,7 +328,9 @@ def handle_command(
         try:
             model = create_model()
         except ValueError as e:
-            console.print_error(f"Cannot compact: {e}")
+            msg = f"Cannot compact: {e}"
+            console.print_error(msg)
+            _mirror(msg, MessageType.ERROR)
             return None
 
         keep_count = settings.context.keep_recent_turns * 2
@@ -274,6 +346,8 @@ def handle_command(
             cutoff_index = max(1, len(conversation_messages) - 1)
 
         console.print_info("Compacting conversation history...")
+        if chat_log:
+            chat_log.add_message("Compacting conversation history...", MessageType.INFO)
         messages_to_summarize, preserved_messages = summarization._partition_messages(
             conversation_messages, cutoff_index
         )
@@ -292,50 +366,75 @@ def handle_command(
             conversation_messages.clear()
             conversation_messages.extend(compacted_messages)
             session_manager.save_conversation_snapshot(compacted_messages)
-            console.print_success(
+            success_msg = (
                 f"Successfully compacted conversation! Condensed {len(messages_to_summarize)} messages "
                 f"into a summary. History now contains {len(compacted_messages)} message(s)."
             )
+            console.print_success(success_msg)
+            _mirror(success_msg, MessageType.SUCCESS)
         except Exception as e:
             logger.exception("Failed to compact conversation: %s", e)
-            console.print_error(f"Failed to compact conversation: {e}")
+            error_msg = f"Failed to compact conversation: {e}"
+            console.print_error(error_msg)
+            _mirror(error_msg, MessageType.ERROR)
 
     elif cmd == "/memories":
         store = get_memory_store()
         memories = store.list_all()
+        lines = []
         if not memories:
-            console.print_info("No memories stored for this workspace.")
-            console.print_info("Ask me to remember something, or use the remember tool.")
+            lines.append("No memories stored for this workspace.")
+            lines.append("Ask me to remember something, or use the remember tool.")
+            for line in lines:
+                console.print_info(line)
         else:
-            console.print_info(f"Workspace memories ({len(memories)}):\n")
+            header = f"Workspace memories ({len(memories)}):\n"
+            console.print_info(header)
+            lines.append(header)
             for m in memories[:20]:
                 content = m.content[:60] + "..." if len(m.content) > 60 else m.content
                 tags = f" [{', '.join(m.tags)}]" if m.tags else ""
-                console.print(f"  [bold cyan]{m.id}[/bold cyan]  {content}{tags}")
-            console.print_info("\nMemories are automatically used in conversations.")
+                console.print(f"  [bold cyan]{escape(m.id)}[/bold cyan]  {escape(content)}{escape(tags)}")
+                lines.append(f"  {m.id}  {content}{tags}")
+            footer = "\nMemories are automatically used in conversations."
+            console.print_info(footer)
+            lines.append(footer)
+        _mirror("\n".join(lines))
 
     elif cmd.startswith("/remember"):
         parts = command.strip().split(maxsplit=1)
         if len(parts) < 2:
-            console.print_warning("Usage: /remember <something to remember>")
+            msg = "Usage: /remember <something to remember>"
+            console.print_warning(msg)
+            _mirror(msg, MessageType.WARNING)
         else:
             content = parts[1].strip()
             store = get_memory_store()
             memory = store.add(content, source="user")
-            console.print_info(f"Remembered (ID: {memory.id}): {content[:50]}{'...' if len(content) > 50 else ''}")
+            msg = f"Remembered (ID: {memory.id}): {content[:50]}{'...' if len(content) > 50 else ''}"
+            console.print_info(msg)
+            _mirror(msg)
 
     elif cmd.startswith("/forget"):
         parts = command.strip().split(maxsplit=1)
         if len(parts) < 2:
             console.print_warning("Usage: /forget <memory-id>")
             console.print_info("Use /memories to see memory IDs.")
+            _mirror(
+                "Usage: /forget <memory-id>\nUse /memories to see memory IDs.",
+                MessageType.WARNING,
+            )
         else:
             memory_id = parts[1].strip()
             store = get_memory_store()
             if store.delete(memory_id):
-                console.print_info(f"Memory {memory_id} deleted.")
+                msg = f"Memory {memory_id} deleted."
+                console.print_info(msg)
+                _mirror(msg)
             else:
-                console.print_warning(f"Memory {memory_id} not found.")
+                msg = f"Memory {memory_id} not found."
+                console.print_warning(msg)
+                _mirror(msg, MessageType.WARNING)
 
     elif cmd.startswith("/workflow"):
         from clanker.workflows import (
@@ -347,47 +446,73 @@ def handle_command(
         parts = command.strip().split(maxsplit=1)
         if len(parts) < 2:
             workflows = list_workflows()
+            lines = []
             if not workflows:
-                console.print_info("No workflows found.")
-                console.print_info("Create .md files in .clanker/workflows/ to add workflows.")
+                lines.append("No workflows found.")
+                lines.append("Create .md files in .clanker/workflows/ to add workflows.")
+                for line in lines:
+                    console.print_info(line)
             else:
-                console.print_info(f"Available workflows ({len(workflows)}):\n")
+                header = f"Available workflows ({len(workflows)}):\n"
+                console.print_info(header)
+                lines.append(header)
                 for name in workflows:
-                    console.print(f"  [bold cyan]{name}[/bold cyan]")
-                console.print_info("\nUse /workflow <name> to execute a workflow.")
+                    console.print(f"  [bold cyan]{escape(name)}[/bold cyan]")
+                    lines.append(f"  {name}")
+                footer = "\nUse /workflow <name> to execute a workflow."
+                console.print_info(footer)
+                lines.append(footer)
+            _mirror("\n".join(lines))
         else:
             workflow_name = parts[1].strip()
             content = load_workflow(workflow_name)
             if content:
                 if len(content) > MAX_WORKFLOW_CHARS:
-                    console.print_error(f"Workflow '{workflow_name}' is too large ({len(content)} chars).")
+                    msg = f"Workflow '{workflow_name}' is too large ({len(content)} chars)."
+                    console.print_error(msg)
+                    _mirror(msg, MessageType.ERROR)
                 else:
                     return f"workflow:{WORKFLOW_PREAMBLE}{content}"
             else:
                 console.print_warning(f"Workflow '{workflow_name}' not found.")
+                msg = f"Workflow '{workflow_name}' not found."
                 workflows = list_workflows()
                 if workflows:
                     console.print_info(f"Available: {', '.join(workflows)}")
+                    msg += f"\nAvailable: {', '.join(workflows)}"
+                _mirror(msg, MessageType.WARNING)
 
     elif cmd.startswith("/skill"):
         from clanker.skills import MAX_SKILL_BODY_CHARS, SKILL_PREAMBLE, list_skills, load_skill
         parts = command.strip().split(maxsplit=1)
         skills = list_skills()
         if len(parts) < 2:
+            lines = []
             if not skills:
-                console.print_info("No skills found.")
-                console.print_info(
+                lines.append("No skills found.")
+                lines.append(
                     "Create .clanker/skills/<name>/SKILL.md (project) or "
                     "~/.clanker/skills/<name>/SKILL.md (personal) to add skills."
                 )
+                for line in lines:
+                    console.print_info(line)
             else:
-                console.print_info(f"Available skills ({len(skills)}):\n")
+                header = f"Available skills ({len(skills)}):\n"
+                console.print_info(header)
+                lines.append(header)
                 for skill in skills.values():
                     desc = skill.description
                     if len(desc) > 80:
                         desc = desc[:80].rstrip() + "..."
-                    console.print(f"  [bold cyan]{skill.name}[/bold cyan] [dim]({skill.source})[/dim] - {desc}")
-                console.print_info("\nThe agent loads skills automatically. Use /skill <name> to load one manually.")
+                    console.print(
+                        f"  [bold cyan]{escape(skill.name)}[/bold cyan] "
+                        f"[dim]({escape(skill.source)})[/dim] - {escape(desc)}"
+                    )
+                    lines.append(f"  {skill.name} ({skill.source}) - {desc}")
+                footer = "\nThe agent loads skills automatically. Use /skill <name> to load one manually."
+                console.print_info(footer)
+                lines.append(footer)
+            _mirror("\n".join(lines))
         else:
             skill_name = parts[1].strip()
             skill = load_skill(skill_name)
@@ -395,16 +520,24 @@ def handle_command(
                 body = skill.body
                 if len(body) > MAX_SKILL_BODY_CHARS:
                     body = body[:MAX_SKILL_BODY_CHARS].rstrip() + "\n\n... [skill instructions truncated]"
-                console.print_info(f"Loaded skill '{skill.name}' from {skill.directory}")
+                loaded_msg = f"Loaded skill '{skill.name}' from {skill.directory}"
+                console.print_info(loaded_msg)
+                _mirror(loaded_msg)
                 return f"skill:{SKILL_PREAMBLE}{body}\n\nThis skill's files are in: {skill.directory}"
             else:
-                console.print_warning(f"Skill '{skill_name}' not found.")
+                msg = f"Skill '{skill_name}' not found."
+                console.print_warning(msg)
                 if skills:
-                    console.print_info(f"Available: {', '.join(skills.keys())}")
+                    available = f"Available: {', '.join(skills.keys())}"
+                    console.print_info(available)
+                    msg += f"\n{available}"
+                _mirror(msg, MessageType.WARNING)
 
     else:
+        msg = f"Unknown command: {command}\nType /help for available commands."
         console.print_warning(f"Unknown command: {command}")
         console.print_info("Type /help for available commands.")
+        _mirror(msg, MessageType.WARNING)
 
     return None
 
@@ -498,49 +631,6 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
     if conversation_messages:
         session_manager.save_conversation_snapshot(conversation_messages)
     cleanup_event_loop()
-
-
-async def _process_message_in_tui(
-    app: "ClankerApp",
-    user_input: str,
-) -> None:
-    """Handle slash-commands within the Textual TUI.
-
-    Agent execution is now handled by ClankerApp._run_agent which runs
-    directly on Textual's event loop so widget updates render in real time.
-    This function only processes /commands that don't need the agent.
-    """
-    console = app.clanker_console
-    session_manager = app._session_manager
-    conversation_messages = app._conversation_messages
-    chat_log = app.get_chat_log()
-
-    if not user_input.startswith("/"):
-        # Non-command messages are handled by ClankerApp._run_agent
-        return
-
-    result = handle_command(
-        user_input, console, session_manager, conversation_messages, chat_log
-    )
-    if result == "exit":
-        app.exit()
-    elif result and result.startswith("restore:"):
-        session_id = result.split(":", 1)[1]
-        messages = session_manager.get_session_messages(session_id)
-        if messages:
-            if conversation_messages:
-                session_manager.save_conversation_snapshot(conversation_messages)
-            session_manager.resume_session(session_id)
-            conversation_messages = list(messages)
-            app._pending_restore_messages = list(messages)
-            chat_log.add_message(
-                f"Restored session {session_id} with {len(messages)} messages",
-                MessageType.INFO,
-            )
-        else:
-            chat_log.add_message(
-                f"Session {session_id} not found", MessageType.WARNING
-            )
 
 
 def run_single_prompt(prompt: str, console: Console, settings: Settings) -> None:

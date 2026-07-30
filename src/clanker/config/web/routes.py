@@ -23,6 +23,7 @@ from clanker.config.copilot_auth import (
 from clanker.config.models import (
     MODELS_CONFIG_PATH,
     ModelConfig,
+    copilot_uses_responses_api,
     add_model,
     get_model_by_name,
     get_models_config,
@@ -320,6 +321,8 @@ class ModelRequest(BaseModel):
     thinking_budget_tokens: int = 10000
     # Reasoning effort (Azure OpenAI o1/o3 models)
     reasoning_effort: str | None = None
+    # Use OpenAI's /responses endpoint instead of /chat/completions (OpenAI only)
+    use_responses_api: bool = False
     # Streaming reliability (OpenAI/Azure only)
     stream_chunk_timeout: int | None = None
     # Cost tracking (USD per million tokens)
@@ -372,6 +375,7 @@ async def create_model_config(request: ModelRequest) -> MessageResponse:
             thinking_enabled=request.thinking_enabled,
             thinking_budget_tokens=request.thinking_budget_tokens,
             reasoning_effort=request.reasoning_effort,
+            use_responses_api=request.use_responses_api,
             stream_chunk_timeout=request.stream_chunk_timeout,
             cost_input=request.cost_input,
             cost_output=request.cost_output,
@@ -411,6 +415,7 @@ async def update_model_config(name: str, request: ModelRequest) -> MessageRespon
             thinking_enabled=request.thinking_enabled,
             thinking_budget_tokens=request.thinking_budget_tokens,
             reasoning_effort=request.reasoning_effort,
+            use_responses_api=request.use_responses_api,
             stream_chunk_timeout=request.stream_chunk_timeout,
             cost_input=request.cost_input,
             cost_output=request.cost_output,
@@ -469,6 +474,8 @@ async def test_model_config(name: str) -> MessageResponse:
                 kwargs["base_url"] = model_config.base_url
             if model_config.max_input_tokens:
                 kwargs["model_kwargs"] = {"profile": {"max_input_tokens": model_config.max_input_tokens}}
+            if model_config.use_responses_api:
+                kwargs["use_responses_api"] = True
             llm = ChatOpenAI(**kwargs)
 
         elif provider == "AzureOpenAI":
@@ -514,7 +521,10 @@ async def test_model_config(name: str) -> MessageResponse:
             }
             if model_config.model:
                 kwargs["model"] = model_config.model
-            llm = ChatOpenAI(use_responses_api=True, **kwargs)
+            llm = ChatOpenAI(
+                use_responses_api=copilot_uses_responses_api(model_config.model),
+                **kwargs,
+            )
 
         else:
             raise ValueError(f"Unsupported provider: {provider}")

@@ -153,6 +153,100 @@ _LEFT_BORDER_BOX = box.Box(
 )
 
 
+# Structured help content, rendered two ways by build_help_text(): colored
+# Rich markup for the plain-terminal CLI, plain text for the TUI chat log.
+# Single source of truth avoids the two views drifting out of sync, and
+# `escape()`-ing descriptions means literal brackets (e.g. "[server]") always
+# display as-is instead of being misparsed as (invalid) style tags.
+_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
+    ("System Commands", [
+        ("/help", "Display this help matrix"),
+        ("/clear", "Wipe conversation memory banks"),
+        ("/model", "Query current AI model status"),
+        ("/copilot-login", "Connect a GitHub Copilot subscription as a model provider"),
+        ("/config", "Display configuration parameters"),
+        ("/mcp", "Show MCP server connections"),
+        ("/logs", "Access diagnostic log files"),
+        ("/exit", "Initiate shutdown sequence"),
+    ]),
+    ("History & Memory", [
+        ("/history", "List past conversations"),
+        ("/restore", "Resume a previous session (usage: /restore <id>)"),
+        ("/compact", "Compact the current conversation history manually"),
+        ("/memories", "Show stored workspace memories"),
+        ("/remember", "Store a memory (usage: /remember <text>)"),
+        ("/forget", "Delete a memory (usage: /forget <id>)"),
+    ]),
+    ("Workflows", [
+        ("/workflow", "List or run a stored workflow (usage: /workflow <name>)"),
+    ]),
+    ("Skills", [
+        ("/skill", "List or load a skill (usage: /skill <name>); the agent also loads skills automatically"),
+    ]),
+]
+
+_HELP_CAPABILITIES = [
+    "File operations: read, write, edit, append",
+    "Codebase search: glob patterns, regex content search",
+    "Command execution: bash shell access",
+    "Memory: remember context across conversations",
+    "Skills: model-discovered capabilities from .clanker/skills/",
+    "MCP tools: extended capabilities via [server] prefix",
+]
+
+_HELP_TIPS = [
+    "Be direct. State objectives clearly.",
+    "I act first, explain after. No hesitation.",
+    "Ask me to remember project preferences.",
+    "Use /restore to continue past conversations.",
+]
+
+
+def build_help_text(markup: bool) -> str:
+    """Build the /help body.
+
+    ``markup=True`` renders Rich markup for the plain-terminal CLI.
+    ``markup=False`` renders plain text sized for the narrower TUI chat log
+    (no hard-wrapping baked in -- the chat log's own Text widget reflows
+    to its actual render width).
+    """
+    lines: list[str] = []
+
+    def heading(text: str) -> str:
+        return f"[bold]{text}[/bold]" if markup else text
+
+    if markup:
+        lines.append("[bold cyan]*WHIRR*[/bold cyan] [bold]CLANKER HELP SUBSYSTEM[/bold]")
+    else:
+        lines.append("*WHIRR* CLANKER HELP SUBSYSTEM")
+    lines.append("")
+
+    max_cmd_len = max(len(cmd) for _, cmds in _HELP_SECTIONS for cmd, _ in cmds)
+    for title, commands in _HELP_SECTIONS:
+        lines.append(heading(f"{title}:"))
+        for cmd, desc in commands:
+            desc = escape(desc) if markup else desc
+            lines.append(f"  {cmd:<{max_cmd_len + 2}}{desc}")
+        lines.append("")
+
+    lines.append(heading("Operational Capabilities:"))
+    for item in _HELP_CAPABILITIES:
+        lines.append(f"  • {escape(item) if markup else item}")
+    lines.append("")
+
+    lines.append(heading("Pro Tips:"))
+    for item in _HELP_TIPS:
+        lines.append(f"  • {item}")
+    lines.append("")
+
+    if markup:
+        lines.append("[dim]*CLANK* Systems ready for input. *BZZZT*[/dim]")
+    else:
+        lines.append("*CLANK* Systems ready for input. *BZZZT*")
+
+    return "\n".join(lines)
+
+
 class Console:
     """Rich console wrapper for Clanker output."""
 
@@ -907,50 +1001,7 @@ Commands:
 
     def print_help(self) -> None:
         """Print help information."""
-        help_text = """
-[bold cyan]*WHIRR*[/bold cyan] [bold]CLANKER HELP SUBSYSTEM[/bold]
-
-[bold]System Commands:[/bold]
-  /help       Display this help matrix
-  /clear      Wipe conversation memory banks
-  /model      Query current AI model status
-  /copilot-login  Connect a GitHub Copilot subscription as a model provider
-  /config     Display configuration parameters
-  /mcp        Show MCP server connections
-  /logs       Access diagnostic log files
-  /exit       Initiate shutdown sequence
-
-[bold]History & Memory:[/bold]
-  /history    List past conversations
-  /restore    Resume a previous session (usage: /restore <id>)
-  /compact    Compact the current conversation history manually
-  /memories   Show stored workspace memories
-  /remember   Store a memory (usage: /remember <text>)
-  /forget     Delete a memory (usage: /forget <id>)
-
-[bold]Workflows:[/bold]
-  /workflow    List or run a stored workflow (usage: /workflow <name>)
-
-[bold]Skills:[/bold]
-  /skill       List or load a skill (usage: /skill <name>); the agent also loads skills automatically
-
-[bold]Operational Capabilities:[/bold]
-  • File operations: read, write, edit, append
-  • Codebase search: glob patterns, regex content search
-  • Command execution: bash shell access
-  • Memory: remember context across conversations
-  • Skills: model-discovered capabilities from .clanker/skills/
-  • MCP tools: extended capabilities via [server] prefix
-
-[bold]Pro Tips:[/bold]
-  • Be direct. State objectives clearly.
-  • I act first, explain after. No hesitation.
-  • Ask me to remember project preferences.
-  • Use /restore to continue past conversations.
-"""
-
-        help_text += "\n[dim]*CLANK* Systems ready for input. *BZZZT*[/dim]\n"
-        self._console.print(help_text)
+        self._console.print(build_help_text(markup=True))
 
     def clear(self) -> None:
         """Clear the console."""

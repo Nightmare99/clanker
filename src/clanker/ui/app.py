@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
-from textual.widgets import Input, Label
+from textual.widgets import Input, Label, Static
 
 from clanker.ui.chat_log import ChatLog, MessageType
 from clanker.ui.status_bar import StatusBar
@@ -105,15 +105,12 @@ class PromptInput(Input):
             # them normally so the text updates; watch_value will re-filter
             # the menu afterward.
 
-        # Alt+Up / Alt+Down: history navigation (outside menu)
-        if key == "m-up" or (hasattr(event, "shift") and not event.shift and key == "up"):
-            # Only intercept M-Up for history; plain Up is for menu (handled above)
-            pass
-        if key == "m-up":
+        # Up / Down (and Alt+Up / Alt+Down): history navigation when menu is closed
+        if key in ("up", "m-up"):
             self._navigate_history(-1)
             event.stop()
             return
-        if key == "m-down":
+        if key in ("down", "m-down"):
             self._navigate_history(1)
             event.stop()
             return
@@ -282,7 +279,10 @@ class ClankerApp(App):
     CSS_PATH = str(Path(__file__).parent / "styles.tcss")
 
     BINDINGS = [
-        Binding("ctrl+c", "copy_or_interrupt", "Copy/Interrupt", show=True),
+        # Priority so this always wins over Input's own "ctrl+c: copy selection
+        # within the field" binding and Screen's silent built-in copy binding —
+        # both would otherwise pre-empt this action with no user feedback.
+        Binding("ctrl+c", "copy_or_interrupt", "Copy/Interrupt", show=True, priority=True),
         Binding("ctrl+d", "quit", "Quit", show=True),
     ]
 
@@ -391,10 +391,20 @@ class ClankerApp(App):
         prompt_input.set_history(self._input_history)
 
     def action_copy_or_interrupt(self) -> None:
-        """Copy selected text if any, otherwise interrupt the agent."""
-        selection = self.selection
-        if selection is not None:
-            self.notify(f"Copied {len(selection.text)} characters", severity="information")
+        """Copy selected text if any, otherwise interrupt the agent.
+
+        Checks the focused Input's own in-field selection first (its own
+        cursor-based selection system), then the screen-wide mouse-drag
+        selection, before falling back to interrupting the agent.
+        """
+        focused = self.focused
+        input_selection = (
+            focused.selected_text if isinstance(focused, Input) else None
+        )
+        selected_text = input_selection or self.screen.get_selected_text()
+        if selected_text:
+            self.copy_to_clipboard(selected_text)
+            self.notify(f"Copied {len(selected_text)} characters", severity="information")
         else:
             self.action_interrupt()
 
@@ -503,6 +513,17 @@ class ClankerApp(App):
     def _handle_slash_command(self, text: str) -> str | None:
         if not text.startswith("/"):
             return None
+
+        if text.strip().lower() == "/copilot-login":
+            # Runs in a background worker instead of through handle_command's
+            # blocking poll loop -- that loop runs on the same thread as the
+            # UI event loop, so a time.sleep()-based wait would freeze the
+            # entire TUI for however long the user takes to approve in their
+            # browser (often well over a minute).
+            self.run_worker(
+                self._copilot_login_flow(), exclusive=True, group="copilot-login"
+            )
+            return "skip"
 
         from clanker.cli import handle_command
 
@@ -637,6 +658,68 @@ class ClankerApp(App):
             chat_log.add_message(f"Agent error: {e}", MessageType.ERROR)
         finally:
             self._set_processing(False)
+
+    # --- Copilot device-code login ---
+
+    async def _copilot_login_flow(self) -> None:
+        """Run the GitHub Copilot device-code login without blocking the UI.
+
+        Mirrors ``handle_command``'s ``/copilot-login`` branch (used by the
+        non-TUI REPL, where blocking is harmless) but polls with
+        ``asyncio.sleep`` and runs each blocking HTTP call via
+        ``asyncio.to_thread`` so the rest of the app stays responsive while
+        waiting for the user to approve the code in their browser. Ctrl+C
+        sets the same interrupt event the agent-streaming path uses, so it
+        doubles as "cancel this login".
+        """
+        from clanker.config.copilot_auth import (
+            CopilotAuthError,
+            complete_login,
+            poll_for_github_token,
+            start_device_flow,
+            sync_copilot_models,
+        )
+
+        chat_log = self.get_chat_log()
+        self.reset_interrupt()
+
+        try:
+            session = await asyncio.to_thread(start_device_flow)
+        except CopilotAuthError as e:
+            chat_log.add_message(str(e), MessageType.ERROR)
+            return
+
+        chat_log.add_message(
+            f"Open {session.verification_uri} and enter code: {session.user_code}\n"
+            "Waiting for approval... (Ctrl+C to cancel)",
+            MessageType.INFO,
+        )
+
+        github_token: str | None = None
+        try:
+            while github_token is None:
+                if self._interrupt_event.is_set():
+                    chat_log.add_message("Login cancelled.", MessageType.WARNING)
+                    return
+                await asyncio.sleep(session.interval)
+                github_token = await asyncio.to_thread(poll_for_github_token, session)
+        except CopilotAuthError as e:
+            chat_log.add_message(str(e), MessageType.ERROR)
+            return
+        finally:
+            self.reset_interrupt()
+
+        try:
+            await asyncio.to_thread(complete_login, github_token)
+            synced = await asyncio.to_thread(sync_copilot_models)
+        except CopilotAuthError as e:
+            chat_log.add_message(str(e), MessageType.ERROR)
+            return
+
+        chat_log.add_message(
+            f"Connected! Synced {synced} Copilot model(s).\nUse /model to switch to one.",
+            MessageType.SUCCESS,
+        )
 
     # --- Subcommand completion ---
 

@@ -61,6 +61,19 @@ def _apply_stream_chunk_timeout(chat_cls, kwargs: dict, model_config: "ModelConf
     os.environ["LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S"] = str(timeout if timeout else 0)
 
 
+def copilot_uses_responses_api(model_id: str | None) -> bool:
+    """Whether this Copilot-backed model exposes the ``/responses`` endpoint.
+
+    Only the GPT-5.x reasoning family does. Claude, Gemini, and legacy
+    GPT-4.x models served through GitHub Copilot only implement
+    ``/chat/completions`` and error with "responses endpoint is not
+    supported for this model" if sent there. Mirrors the model-capability
+    registry in betaHi/copilot-bridge (models without a
+    ``fallback: "chat-completions"`` entry are exactly the gpt-5.x family).
+    """
+    return bool(model_id) and model_id.startswith("gpt-5")
+
+
 class ModelConfig(BaseModel):
     """Configuration for a single model."""
 
@@ -84,6 +97,13 @@ class ModelConfig(BaseModel):
 
     # Reasoning effort (Azure OpenAI o1/o3 models)
     reasoning_effort: str | None = Field(default=None, description="Reasoning effort: low, medium, high")
+
+    # Use OpenAI's /responses endpoint instead of /chat/completions. Optional
+    # per-model toggle -- most OpenAI-compatible endpoints (OpenRouter, local
+    # proxies, etc.) only implement /chat/completions and error on /responses.
+    use_responses_api: bool = Field(
+        default=False, description="Use the /responses endpoint instead of /chat/completions (OpenAI only)"
+    )
 
     # Streaming reliability: max seconds to wait for the next streamed chunk
     # before erroring. langchain_openai defaults to 120s, which is too low for
@@ -292,6 +312,12 @@ def create_llm_from_config(model_config: ModelConfig):
         # (version-safe: kwarg on newer langchain-openai, env var on older).
         _apply_stream_chunk_timeout(ChatOpenAI, kwargs, model_config)
 
+        # Optional: route through /responses instead of /chat/completions.
+        # Off by default -- most OpenAI-compatible endpoints only implement
+        # /chat/completions and error on /responses.
+        if model_config.use_responses_api:
+            kwargs["use_responses_api"] = True
+
         # stream_usage enables token counts in streaming responses
         return ChatOpenAI(
             api_key=api_key,
@@ -455,7 +481,7 @@ def create_llm_from_config(model_config: ModelConfig):
         return ChatOpenAI(
             api_key=get_valid_copilot_token,
             stream_usage=True,
-            use_responses_api=True,
+            use_responses_api=copilot_uses_responses_api(model_config.model),
             **kwargs,
         )
 

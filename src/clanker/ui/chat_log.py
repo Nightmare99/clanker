@@ -490,7 +490,7 @@ class ChatLog(VerticalScroll):
             output_widget = self._create_output_widget(result, success)
             if output_widget:
                 entry.output_widget = output_widget
-                self.mount(output_widget)
+                self.mount(output_widget, after=entry.header_widget)
                 self._messages.append(output_widget)
 
         self._scroll_to_bottom()
