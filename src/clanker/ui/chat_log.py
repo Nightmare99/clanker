@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -264,9 +266,35 @@ class ChatLog(VerticalScroll):
         return Static(text, classes="msg-user")
 
     def _assistant_message(self, msg: Message) -> Markdown:
-        md = Markdown(msg.content, classes="msg-assistant msg-card")
+        # Mounted empty -- add_message() reveals the content with a
+        # typewriter animation via _reveal_markdown() right after mounting.
+        md = Markdown("", classes="msg-assistant msg-card")
         md.code_indent_guides = False
         return md
+
+    async def _reveal_markdown(self, widget: Markdown, full_text: str) -> None:
+        """Typewriter-reveal an assistant message, chunk by chunk.
+
+        Chunk size scales with message length so the animation always takes
+        roughly the same ~0.6s regardless of whether the response is one
+        sentence or a long essay, instead of a fixed per-character delay
+        that would make long responses crawl.
+        """
+        length = len(full_text)
+        if length == 0:
+            return
+
+        target_ticks = 40
+        tick_delay = 0.015
+        chunk_size = max(1, -(-length // target_ticks))  # ceil(length / target_ticks)
+
+        revealed = 0
+        while revealed < length:
+            revealed = min(length, revealed + chunk_size)
+            with contextlib.suppress(Exception):
+                await widget.update(full_text[:revealed])
+            self._scroll_to_bottom()
+            await asyncio.sleep(tick_delay)
 
     def _notify_message(self, msg: Message) -> Markdown | Static:
         level_colors = {
@@ -547,6 +575,9 @@ class ChatLog(VerticalScroll):
         self.mount(widget)
         self._messages.append(widget)
         self._scroll_to_bottom()
+
+        if msg_type == MessageType.ASSISTANT and isinstance(widget, Markdown) and content.strip():
+            self.run_worker(self._reveal_markdown(widget, content), exclusive=False)
 
     def add_code(self, code: str, language: str = "python") -> None:
         syntax = Syntax(code, language, theme="monokai", line_numbers=True)
