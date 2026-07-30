@@ -295,13 +295,13 @@ async def stream_agent_response_async(
     summarization_spinner_shown = False
 
     # Debounced tool loader: mounts LoadingIndicator after delay if tool still running
-    async def _tool_debounce(run_id: str, tool_name: str, args: str) -> None:
+    async def _tool_debounce(run_id: str, tool_name: str, args: str, tool_input: dict) -> None:
         await asyncio.sleep(0.2)
         if run_id in _tui_tool_pending and run_id not in _tui_tool_entries:
             # Tool still running after 200ms — show loader
             try:
                 chat_log = textual_app.get_chat_log()
-                entry = chat_log.add_tool_start(tool_name, args)
+                entry = chat_log.add_tool_start(tool_name, args, tool_input=tool_input)
                 _tui_tool_entries[run_id] = entry
             except Exception:
                 pass
@@ -482,10 +482,11 @@ async def stream_agent_response_async(
                                     _tui_tool_pending[run_id] = {
                                         "name": tool_name_ev,
                                         "args": arg_str,
+                                        "input": tool_input,
                                     }
                                     # Schedule debounce: show loader after 200ms if still running
                                     task = asyncio.create_task(
-                                        _tool_debounce(run_id, tool_name_ev, arg_str)
+                                        _tool_debounce(run_id, tool_name_ev, arg_str, tool_input)
                                     )
                                     _tui_debounce_tasks[run_id] = task
                                 except Exception:
@@ -576,6 +577,7 @@ async def stream_agent_response_async(
                                         pending_info["args"],
                                         tool_output,
                                         success=not is_error,
+                                        tool_input=pending_info.get("input"),
                                     )
                                 else:
                                     # Fallback: no tracking info available
@@ -584,6 +586,7 @@ async def stream_agent_response_async(
                                     chat_log.add_tool_complete(
                                         tool_name_end, arg_str_end, tool_output,
                                         success=not is_error,
+                                        tool_input=tool_input_end,
                                     )
                             except Exception:
                                 pass

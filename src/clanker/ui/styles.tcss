@@ -66,8 +66,7 @@ ChatLog .msg-tool-output {
 ChatLog .tool-card {
     background: transparent;
     border-left: solid rgb(200, 200, 200);
-    padding-top: 1;
-    padding-left: 1;
+    padding: 1 0 1 1;
 }
 
 ChatLog .msg-code {

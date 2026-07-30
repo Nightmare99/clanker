@@ -1,7 +1,6 @@
 """Console output management using Rich."""
 
 import contextlib
-import json
 import random
 from contextlib import contextmanager
 
@@ -18,6 +17,7 @@ from rich.text import Text
 from rich.theme import Theme
 
 from clanker.config import get_settings
+from clanker.ui import tool_summary
 
 
 class _LeftAlignedHeading(Heading):
@@ -342,16 +342,11 @@ class Console:
 
     def _shorten_path(self, path: str, max_parts: int = 3) -> str:
         """Shorten a file path to show last N components."""
-        parts = path.rstrip("/").split("/")
-        if len(parts) <= max_parts:
-            return path
-        return ".../" + "/".join(parts[-max_parts:])
+        return tool_summary.shorten_path(path, max_parts)
 
     def _truncate(self, text: str, max_len: int = 50) -> str:
         """Truncate text with ellipsis if too long."""
-        if len(text) <= max_len:
-            return text
-        return text[: max_len - 3] + "..."
+        return tool_summary.truncate(text, max_len)
 
     def _tool_summary_arg(self, tool_name: str, args: dict) -> str:
         """Return a short human-readable argument string for a tool call."""
@@ -446,13 +441,7 @@ class Console:
 
     def _parse_tool_json(self, result: str) -> dict | None:
         """Try to parse a tool result as JSON. Returns None if not valid JSON."""
-        try:
-            parsed = json.loads(result)
-            if isinstance(parsed, dict):
-                return parsed
-        except (json.JSONDecodeError, ValueError):
-            pass
-        return None
+        return tool_summary.parse_tool_json(result)
 
     def _print_dim(self, text_str: str) -> None:
         """Print dim/muted text with consistent indent on all lines."""
@@ -477,175 +466,7 @@ class Console:
         max_chars: int = 60,
     ) -> str | None:
         """Return a short one-line summary string for a tool result, or None to suppress."""
-        result = result.strip()
-        if not result:
-            return None
-
-        parsed = self._parse_tool_json(result)
-
-        if tool_name in ("write_file", "append_file"):
-            # Diff is shown inline; just confirm with line count if available
-            if parsed and parsed.get("ok"):
-                lines_written = parsed.get("lines_written") or parsed.get("lines")
-                if lines_written:
-                    return f"wrote {lines_written} lines"
-                return "saved"
-            return None
-
-        if tool_name == "edit_file":
-            if parsed and parsed.get("ok"):
-                path = parsed.get("path") or (tool_input or {}).get("file_path", "")
-                if path and tool_input:
-                    new_str = tool_input.get("new_string", "")
-                    # Try to find the line number of new_str in the file
-                    try:
-                        from pathlib import Path
-                        full_path = Path(path)
-                        if full_path.exists():
-                            content = full_path.read_text(encoding="utf-8", errors="ignore")
-                            idx = content.find(new_str)
-                            if idx != -1:
-                                line_num = content[:idx].count("\n") + 1
-                                return f"patched at line {line_num}"
-                    except Exception:
-                        pass
-                return "saved"
-            if parsed and not parsed.get("ok"):
-                return str(parsed.get("error", "error"))[:max_chars]
-            return None
-
-        if parsed and parsed.get("ok") and "message" in parsed and "memory_id" in parsed:
-            return str(parsed.get("message", ""))[:max_chars]
-
-        if tool_name == "read_file":
-            if parsed and parsed.get("ok"):
-                content = parsed.get("content", "")
-                lines = content.splitlines() if content else []
-                path = parsed.get("path", "") or (tool_input or {}).get("file_path", "")
-                short = self._shorten_path(path) if path else ""
-                return f"read {len(lines)} lines{f'  {short}' if short else ''}"
-            if parsed and not parsed.get("ok"):
-                return str(parsed.get("message", "error"))[:max_chars]
-            return None
-
-        if tool_name == "read_project_instructions":
-            if parsed and parsed.get("ok"):
-                if parsed.get("found"):
-                    content = parsed.get("content", "")
-                    lines = content.splitlines() if content else []
-                    return f"read AGENTS.md  {len(lines)} lines"
-                return "no AGENTS.md found"
-            return None
-
-        if tool_name == "load_skill":
-            if parsed and parsed.get("ok"):
-                name = parsed.get("name", "?")
-                return f"loaded {name}"
-            if parsed and not parsed.get("ok"):
-                return str(parsed.get("error", "not found"))[:max_chars]
-            return None
-
-        if tool_name == "load_agent":
-            if parsed and parsed.get("ok"):
-                name = parsed.get("name", "?")
-                desc = parsed.get("description", "")
-                summary = f"loaded {name}"
-                if desc:
-                    summary += f"  — {desc[:max_chars - len(summary) - 3]}"
-                return summary[:max_chars]
-            if parsed and not parsed.get("ok"):
-                return str(parsed.get("error", "not found"))[:max_chars]
-            return None
-
-        if tool_name in ("bash", "execute_shell"):
-            # Failure: result starts with "Command exited with code N\n{output}".
-            # Summarize as the exit-code line so the red ✗ has a clear message.
-            if result.startswith("Command exited with code"):
-                first_line = result.splitlines()[0] if result.splitlines() else result
-                extra = len(result.splitlines()) - 1
-                suffix = f"  (+{extra} lines)" if extra > 0 else ""
-                return self._truncate(first_line, max_chars) + suffix
-            raw = (parsed.get("output") or parsed.get("stdout") or parsed.get("stderr") or result) if parsed else result
-            raw = raw.strip()
-            if not raw:
-                return "done"
-            first_line = raw.splitlines()[0]
-            total_lines = len(raw.splitlines())
-            suffix = f"  (+{total_lines - 1} lines)" if total_lines > 1 else ""
-            return self._truncate(first_line, max_chars) + suffix
-
-        if tool_name == "execute_shell":
-            lines = result.splitlines()
-            first = lines[0] if lines else "done"
-            suffix = f"  (+{len(lines) - 1} lines)" if len(lines) > 1 else ""
-            return self._truncate(first, max_chars) + suffix
-
-        if tool_name == "glob_search":
-            lines = [line.strip() for line in result.splitlines() if line.strip()]
-            if not lines:
-                return None
-            first = lines[0]
-            if first.startswith("Found "):
-                parts = first.split()
-                if len(parts) >= 2:
-                    return f"{parts[1]} file{'s' if parts[1] != '1' else ''}"
-            return first
-
-        if tool_name == "grep_search":
-            lines = [line.strip() for line in result.splitlines() if line.strip()]
-            if not lines:
-                return None
-            first = lines[0]
-            if first.startswith("Found "):
-                parts = first.split()
-                if len(parts) >= 2:
-                    matches_str = f"{parts[1]} {parts[2]}"  # "3 matches"
-                    if len(lines) > 1:
-                        match_line = lines[1]
-                        match_parts = match_line.split(":", 2)
-                        if len(match_parts) >= 2:
-                            file_path = match_parts[0]
-                            return f"{matches_str} in {file_path}"
-                    return matches_str
-            return first
-
-        if tool_name == "list_directory":
-            if parsed and parsed.get("ok"):
-                items = parsed.get("items", [])
-                return f"{len(items)} item{'s' if len(items) != 1 else ''}"
-            return None
-
-        if tool_name == "remember":
-            if parsed and parsed.get("ok"):
-                return parsed.get("message", "saved")[:max_chars]
-            return None
-
-        if tool_name == "recall":
-            if parsed and parsed.get("ok"):
-                memories = parsed.get("memories", [])
-                n = len(memories)
-                return f"{n} memor{'ies' if n != 1 else 'y'} found"
-            return None
-
-        if tool_name == "forget":
-            if parsed and parsed.get("ok"):
-                return parsed.get("message", "deleted")[:max_chars]
-            return None
-
-        if tool_name == "list_memories":
-            if parsed and parsed.get("ok"):
-                total = parsed.get("total", 0) or len(parsed.get("memories", []))
-                return f"{total} memor{'ies' if total != 1 else 'y'}"
-            return None
-
-        # Fallback: first line of plain result
-        lines = result.split("\n")
-        first = lines[0].strip()
-        total = len(lines)
-        suffix = f"  (+{total - 1} lines)" if total > 1 else ""
-        if first:
-            return self._truncate(first, max_chars) + suffix
-        return None
+        return tool_summary.compact_result_summary(result, tool_name, tool_input, max_chars)
 
     def _is_failed_tool_result(self, result: str, tool_name: str, tool_input: dict | None) -> bool:
         """Return True if a tool result represents a failure (render ✗ not ✓).
@@ -654,13 +475,7 @@ class Console:
         code N" on nonzero exit. JSON-returning tools signal failure via
         ``ok: false``.
         """
-        result = result.strip()
-        if not result:
-            return False
-        if tool_name in ("bash", "execute_shell") and result.startswith("Command exited with code"):
-            return True
-        parsed = self._parse_tool_json(result)
-        return bool(parsed is not None and parsed.get("ok") is False)
+        return tool_summary.is_failed_tool_result(result, tool_name, tool_input)
 
     def _print_result_line(self, summary: str, failed: bool = False) -> None:
         """Print a ✓/✗ result summary line matching the screenshot style."""

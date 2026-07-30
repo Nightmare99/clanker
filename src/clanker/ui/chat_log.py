@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from rich import box
-from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Rule, Static
+
+from clanker.ui import tool_summary
 
 
 class MessageType(StrEnum):
@@ -51,6 +51,7 @@ class ToolEntry:
     args: str
     status: str  # "running" | "success" | "error"
     result: str = ""
+    tool_input: dict = field(default_factory=dict)
     header_widget: Static | None = None
     output_widget: Static | Markdown | None = None
     spinner_timer: object | None = None  # Timer reference for inline spinner
@@ -328,49 +329,6 @@ class ChatLog(VerticalScroll):
             text.append(mcp_prefix, style="dim rgb(0,240,240)")
         return text
 
-    def _format_tool_output(self, result: str, max_lines: int = 3) -> str:
-        result = (result or "").strip()
-        if not result:
-            return ""
-
-        try:
-            parsed = json.loads(result)
-            if isinstance(parsed, dict):
-                if parsed.get("ok"):
-                    if "message" in parsed:
-                        return str(parsed["message"])[:300]
-                    if "content" in parsed:
-                        content = str(parsed["content"])
-                        lines = content.split("\n")
-                        snippet = "\n".join(lines[:max_lines])
-                        if len(lines) > max_lines:
-                            snippet += f"\n... (+{len(lines) - max_lines} more)"
-                        return snippet[:300]
-                    if "path" in parsed:
-                        lines_count = parsed.get("lines", "")
-                        path = str(parsed["path"])
-                        if lines_count:
-                            return f"{path}  ({lines_count} lines)"
-                        return path
-                if not parsed.get("ok", True) and "error" in parsed:
-                    return str(parsed["error"])[:300]
-        except (json.JSONDecodeError, ValueError):
-            pass
-
-        if result.startswith("Command exited with code"):
-            lines = result.split("\n")
-            first = lines[0]
-            rest = "\n".join(lines[1:max_lines + 1])
-            if len(lines) > max_lines + 1:
-                rest += f"\n... (+{len(lines) - max_lines - 1} more)"
-            return f"{first}\n{rest}"[:300] if rest else first
-
-        lines = result.split("\n")
-        snippet = "\n".join(lines[:max_lines])
-        if len(lines) > max_lines:
-            snippet += f"\n... (+{len(lines) - max_lines} more)"
-        return snippet[:300]
-
     def _render_tool_header(self, entry: ToolEntry) -> Text:
         text = Text()
         text.append(self._tool_badge_text(entry.tool_name))
@@ -388,19 +346,35 @@ class ChatLog(VerticalScroll):
 
         return text
 
-    def _create_output_widget(self, result: str, success: bool) -> Markdown | None:
-        preview = self._format_tool_output(result)
-        if not preview:
+    def _create_output_widget(
+        self, result: str, success: bool, tool_name: str, tool_input: dict | None
+    ) -> Static | None:
+        """Build a one-line result-summary widget below a tool's header.
+
+        Uses the same per-tool summarizer as the CLI (``clanker.ui.tool_summary``)
+        instead of a generic JSON/text preview, so e.g. ``load_skill`` shows
+        "loaded <name>" rather than a raw JSON dump, and ``execute_shell``
+        shows the first output line rather than several raw lines rendered as
+        Markdown (which can visually break on stray `#`/`*`/backticks in
+        arbitrary command output).
+        """
+        summary = tool_summary.compact_result_summary(result, tool_name, tool_input)
+        if not summary:
             return None
 
-        md = Markdown(preview, classes="msg-tool-output tool-card")
-        return md
+        color = "rgb(130,220,100)" if success else "rgb(255,80,80)"
+        text = Text(summary, style=color)
+        return Static(text, classes="msg-tool-output tool-card")
 
-    def add_tool_start(self, tool_name: str, args: str = "") -> ToolEntry:
+    def add_tool_start(
+        self, tool_name: str, args: str = "", tool_input: dict | None = None
+    ) -> ToolEntry:
         """Add a running tool call with an inline spinner in the header."""
         self._tool_counter += 1
         key = f"tool:{self._tool_counter}"
-        entry = ToolEntry(tool_name=tool_name, args=args, status="running")
+        entry = ToolEntry(
+            tool_name=tool_name, args=args, status="running", tool_input=tool_input or {}
+        )
 
         header_widget = Static("", classes="msg-tool")
         entry.header_widget = header_widget
@@ -487,7 +461,9 @@ class ChatLog(VerticalScroll):
             entry.header_widget.update(header)
 
         if result:
-            output_widget = self._create_output_widget(result, success)
+            output_widget = self._create_output_widget(
+                result, success, entry.tool_name, entry.tool_input
+            )
             if output_widget:
                 entry.output_widget = output_widget
                 self.mount(output_widget, after=entry.header_widget)
@@ -496,7 +472,12 @@ class ChatLog(VerticalScroll):
         self._scroll_to_bottom()
 
     def add_tool_complete(
-        self, tool_name: str, args: str, result: str, success: bool = True
+        self,
+        tool_name: str,
+        args: str,
+        result: str,
+        success: bool = True,
+        tool_input: dict | None = None,
     ) -> None:
         """Add a tool that completed instantly (start + end in same tick)."""
         entry = ToolEntry(
@@ -504,6 +485,7 @@ class ChatLog(VerticalScroll):
             args=args,
             status="success" if success else "error",
             result=result,
+            tool_input=tool_input or {},
         )
         header = self._render_tool_header(entry)
         header_widget = Static(header, classes="msg-tool")
@@ -512,10 +494,10 @@ class ChatLog(VerticalScroll):
         self._messages.append(header_widget)
 
         if result:
-            output_widget = self._create_output_widget(result, success)
+            output_widget = self._create_output_widget(result, success, tool_name, entry.tool_input)
             if output_widget:
                 entry.output_widget = output_widget
-                self.mount(output_widget)
+                self.mount(output_widget, after=header_widget)
                 self._messages.append(output_widget)
 
         self._scroll_to_bottom()
