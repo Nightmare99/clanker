@@ -23,6 +23,96 @@ DEFAULT_STREAM_CHUNK_TIMEOUT = 600
 ProviderType = Literal["AzureOpenAI", "OpenAI", "Anthropic", "Ollama", "GitHubCopilot"]
 
 
+def _fresh_openai_http_clients() -> dict:
+    """Build a dedicated httpx client pair for one ChatOpenAI/AzureChatOpenAI instance.
+
+    langchain-openai lazily builds its default sync/async httpx clients via a
+    module-level ``functools.lru_cache`` (keyed on base_url/timeout), so two
+    ``ChatOpenAI`` instances with the same config -- e.g. two subagents
+    spawned in parallel, each running in its own OS thread with its own
+    event loop (see ``clanker.tools.subagent``) -- silently get back the
+    SAME shared ``httpx.AsyncClient``. That client's connection pool binds
+    to whichever thread's loop touches it first; when that thread's loop
+    later closes, the other (still-alive) thread's next request breaks with
+    "Event loop is closed" even though ITS OWN loop is still running.
+
+    ``ChatOpenAI``/``AzureChatOpenAI`` accept explicit ``http_client``/
+    ``http_async_client`` overrides, which bypass that shared cache
+    entirely -- unlike ChatAnthropic (see ``_isolate_anthropic_http_client``
+    below), so this is a clean, public-API fix for the OpenAI family.
+    """
+    import httpx
+
+    return {
+        "http_client": httpx.Client(),
+        "http_async_client": httpx.AsyncClient(),
+    }
+
+
+def _isolate_anthropic_http_client(llm) -> None:
+    """Give this ChatAnthropic instance its own dedicated httpx clients.
+
+    Unlike ChatOpenAI, ``ChatAnthropic`` has no public ``http_client``/
+    ``http_async_client`` constructor override (as of langchain-anthropic
+    1.4.x) -- its ``_client``/``_async_client`` are ``functools.cached_property``s
+    that always build from a module-level ``functools.lru_cache``'d default
+    keyed on (base_url, timeout, proxy). Two ChatAnthropic instances with
+    identical config (the common case for two subagents spawned in
+    parallel, each isolated onto its own OS thread + event loop -- see
+    ``clanker.tools.subagent``) get back the SAME shared client the first
+    time either one makes a real API call. That client's connection pool
+    binds to whichever thread's loop touches it first, so when that
+    thread's loop later closes, the OTHER, still-running thread's next
+    request breaks with "Event loop is closed" even though its own loop is
+    still alive.
+
+    An earlier version of this fix called ``.cache_clear()`` on the
+    upstream lru_cache before constructing each model. That doesn't
+    actually work: population is lazy (only happens on the first real API
+    call, deep inside the SDK, long after construction), so whichever
+    subagent's first request happens to land first still populates the
+    shared cache and the other one transparently reuses it -- the race
+    just moves, it doesn't go away.
+
+    ``functools.cached_property`` reads ``instance.__dict__`` first and
+    only computes if the key is absent. Pre-populating ``_client``/
+    ``_async_client`` here -- built the same way ChatAnthropic's own
+    cached_property does, just with a client we own instead of the shared
+    default -- makes every instance permanently exempt from the shared
+    cache, independent of call timing. Best-effort: this reaches into
+    private langchain-anthropic/anthropic internals, so it's wrapped in a
+    broad except -- if those internals change shape, this silently falls
+    back to the shared (racy) default instead of crashing model
+    construction.
+    """
+    try:
+        import anthropic
+
+        client_params = llm._client_params
+        http_client_params: dict = {"base_url": client_params["base_url"]}
+        if "timeout" in client_params:
+            http_client_params["timeout"] = client_params["timeout"]
+        proxy = getattr(llm, "anthropic_proxy", None)
+        if proxy:
+            http_client_params["proxy"] = proxy
+
+        llm.__dict__["_client"] = anthropic.Client(
+            **client_params,
+            http_client=anthropic.DefaultHttpxClient(**http_client_params),
+        )
+        llm.__dict__["_async_client"] = anthropic.AsyncClient(
+            **client_params,
+            http_client=anthropic.DefaultAsyncHttpxClient(**http_client_params),
+        )
+    except Exception:
+        logger.debug(
+            "Could not isolate this Anthropic model's http client; it may "
+            "share a connection pool with other concurrently-running "
+            "subagents (see _isolate_anthropic_http_client docstring).",
+            exc_info=True,
+        )
+
+
 def _resolve_stream_chunk_timeout(model_config: "ModelConfig") -> int | None:
     """Resolve the stream-chunk timeout for an OpenAI/Azure model.
 
@@ -322,6 +412,7 @@ def create_llm_from_config(model_config: ModelConfig):
         return ChatOpenAI(
             api_key=api_key,
             stream_usage=True,
+            **_fresh_openai_http_clients(),
             **kwargs,
         )
 
@@ -374,7 +465,7 @@ def create_llm_from_config(model_config: ModelConfig):
         # (version-safe: kwarg on newer langchain-openai, env var on older).
         _apply_stream_chunk_timeout(AzureChatOpenAI, kwargs, model_config)
 
-        return AzureChatOpenAI(**kwargs)
+        return AzureChatOpenAI(**_fresh_openai_http_clients(), **kwargs)
 
     elif provider == "Anthropic":
         from langchain_anthropic import ChatAnthropic
@@ -425,7 +516,9 @@ def create_llm_from_config(model_config: ModelConfig):
                 max_tokens,
             )
 
-        return ChatAnthropic(**kwargs)
+        llm = ChatAnthropic(**kwargs)
+        _isolate_anthropic_http_client(llm)
+        return llm
 
     elif provider == "Ollama":
         from langchain_community.chat_models import ChatOllama
@@ -482,6 +575,7 @@ def create_llm_from_config(model_config: ModelConfig):
             api_key=get_valid_copilot_token,
             stream_usage=True,
             use_responses_api=copilot_uses_responses_api(model_config.model),
+            **_fresh_openai_http_clients(),
             **kwargs,
         )
 
