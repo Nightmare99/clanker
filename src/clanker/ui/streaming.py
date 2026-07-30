@@ -429,7 +429,9 @@ async def stream_agent_response_async(
                             chat_log = textual_app.get_chat_log()
                             for msg, level, title in _pending_notifies:
                                 if msg:
-                                    chat_log.add_message(msg, MessageType.NOTIFY, title=level)
+                                    chat_log.add_message(
+                                        msg, MessageType.NOTIFY, title=title or "", level=level
+                                    )
                         except Exception:
                             pass
                         _pending_notifies.clear()
@@ -509,24 +511,28 @@ async def stream_agent_response_async(
                     elif event_type == "on_tool_end":
                         tool_name_end = event.get("name", "")
                         if tool_name_end.lower() == "notify":
-                            # Render notify output in TUI chat log from tool result
+                            # Render notify output in TUI chat log from tool result.
+                            # The raw event output may be a dict, a JSON string, a
+                            # Python-repr'd dict (LangChain's default stringification
+                            # of non-string tool returns), or a ToolMessage wrapping
+                            # any of those — normalize_tool_output() handles all of
+                            # that and (for dicts with an "ok" key) hands back valid
+                            # JSON we can parse again.
                             if textual_app:
                                 try:
+                                    import json as _json
+
                                     data = event.get("data", {})
-                                    raw_output = data.get("output", {})
-                                    if isinstance(raw_output, dict):
-                                        msg = raw_output.get("message", "")
-                                        level = raw_output.get("level", "info")
-                                    elif isinstance(raw_output, str):
-                                        import json as _json
-                                        parsed = _json.loads(raw_output) if raw_output.strip() else {}
-                                        msg = parsed.get("message", "") if isinstance(parsed, dict) else raw_output
-                                        level = parsed.get("level", "info") if isinstance(parsed, dict) else "info"
-                                    else:
-                                        msg, level = "", "info"
+                                    normalized = normalize_tool_output(data.get("output"))
+                                    parsed = _json.loads(normalized) if normalized else {}
+                                    msg = parsed.get("message", "") if isinstance(parsed, dict) else ""
+                                    level = parsed.get("level", "info") if isinstance(parsed, dict) else "info"
+                                    title = parsed.get("title") or "" if isinstance(parsed, dict) else ""
                                     if msg:
                                         chat_log = textual_app.get_chat_log()
-                                        chat_log.add_message(msg, MessageType.NOTIFY, title=level)
+                                        chat_log.add_message(
+                                            msg, MessageType.NOTIFY, title=title, level=level
+                                        )
                                 except Exception:
                                     pass
                             _start_loading()

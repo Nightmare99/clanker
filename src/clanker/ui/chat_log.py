@@ -41,6 +41,7 @@ class Message:
     content: str
     type: MessageType = MessageType.ASSISTANT
     title: str = ""
+    level: str = "info"
     code_language: str = ""
 
 
@@ -283,13 +284,16 @@ class ChatLog(VerticalScroll):
             "warning": "rgb(255,220,60)",
             "error": "rgb(255,80,80)",
         }
-        color = level_colors.get(msg.title, level_colors["info"])
+        color = level_colors.get(msg.level, level_colors["info"])
         content = (msg.content or "").strip()
+        if msg.title:
+            heading = f"**{msg.title}**\n\n" if content else f"**{msg.title}**"
+            content = heading + content
         if not content:
             text = Text("  (no message)", style=f"dim {color}")
             return Static(text, classes="msg-notify msg-card")
 
-        md = Markdown(content, classes=f"msg-notify msg-card notify-{msg.title}")
+        md = Markdown(content, classes=f"msg-notify msg-card notify-{msg.level}")
         md.code_indent_guides = False
         return md
 
@@ -509,8 +513,9 @@ class ChatLog(VerticalScroll):
         content: str,
         msg_type: MessageType = MessageType.ASSISTANT,
         title: str = "",
+        level: str = "info",
     ) -> None:
-        msg = Message(content=content, type=msg_type, title=title)
+        msg = Message(content=content, type=msg_type, title=title, level=level)
         widget = self._create_message_widget(msg)
         self.mount(widget)
         self._messages.append(widget)
