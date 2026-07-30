@@ -10,7 +10,11 @@ one-line summary.
 
 from __future__ import annotations
 
+import difflib
 import json
+
+from rich.markup import escape
+from rich.text import Text
 
 
 def parse_tool_json(result: str) -> dict | None:
@@ -225,3 +229,66 @@ def is_failed_tool_result(result: str, tool_name: str, tool_input: dict | None) 
         return True
     parsed = parse_tool_json(result)
     return bool(parsed is not None and parsed.get("ok") is False)
+
+
+def build_edit_diff_text(
+    old_string: str,
+    new_string: str,
+    max_lines: int = 20,
+    max_line_len: int = 120,
+) -> Text | None:
+    """Build a compact unified diff (changed lines + small context) as Rich Text.
+
+    Shared by the CLI console (``Console.print_edit_diff``) and the TUI chat
+    log so ``edit_file`` shows the actual lines changed instead of a generic
+    "patched at line N" summary. Returns ``None`` if the strings are
+    identical (shouldn't normally happen for a real edit).
+    """
+    old_lines = old_string.splitlines() or [""]
+    new_lines = new_string.splitlines() or [""]
+
+    # Small context window so unchanged shared prefix/suffix (common when
+    # old_string/new_string overlap heavily) is collapsed rather than shown
+    # in full.
+    context = 2
+    diff_iter = difflib.unified_diff(old_lines, new_lines, n=context, lineterm="")
+
+    rendered: list[Text] = []
+    for raw in diff_iter:
+        if raw.startswith("---") or raw.startswith("+++"):
+            continue
+        if raw.startswith("@@"):
+            t = Text()
+            t.append(raw, style="dim cyan")
+            rendered.append(t)
+            continue
+        sign = raw[:1]
+        body = raw[1:]
+        if len(body) > max_line_len:
+            body = body[:max_line_len] + "..."
+        if sign == "+":
+            style, prefix = "green", "+ "
+        elif sign == "-":
+            style, prefix = "red", "- "
+        else:
+            style, prefix = "dim", "  "
+        t = Text()
+        t.append(prefix, style=style)
+        t.append(escape(body), style=style)
+        rendered.append(t)
+
+    if not rendered:
+        return None
+
+    shown = rendered[:max_lines]
+    overflow = len(rendered) - len(shown)
+
+    result = Text()
+    for i, line in enumerate(shown):
+        if i > 0:
+            result.append("\n")
+        result.append_text(line)
+    if overflow > 0:
+        result.append(f"\n... (+{overflow} more diff lines)", style="dim")
+
+    return result

@@ -7,6 +7,8 @@ from textual.containers import Horizontal
 from textual.reactive import reactive
 from textual.widgets import Label
 
+_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
 
 class StatusBar(Horizontal):
     """Bottom status bar showing model, tokens, and context gauge."""
@@ -41,22 +43,42 @@ class StatusBar(Horizontal):
         width: 1fr;
         text-align: right;
     }
+
+    #status-subagents {
+        color: rgb(0,240,240);
+    }
     """
 
     model_name = reactive("")
     token_info = reactive("")
     context_info = reactive("")
+    subagent_info = reactive("")
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+        self._subagent_running = 0
+        self._subagent_total = 0
+        self._spinner_idx = 0
+
+    def on_mount(self) -> None:
+        self.set_interval(0.12, self._tick_subagent_spinner)
+
+    def _tick_subagent_spinner(self) -> None:
+        if not self._subagent_running:
+            return
+        self._spinner_idx += 1
+        self._render_subagent_info()
 
     def compose(self) -> ComposeResult:
+        yield Label("", id="status-subagents")
         yield Label("", id="status-model")
         yield Label("", id="status-tokens")
         yield Label("", id="status-context")
 
     def _update_visibility(self) -> None:
-        has_content = bool(self.model_name or self.token_info or self.context_info)
+        has_content = bool(
+            self.model_name or self.token_info or self.context_info or self.subagent_info
+        )
         if has_content:
             self.add_class("visible")
         else:
@@ -80,6 +102,27 @@ class StatusBar(Horizontal):
         else:
             self.query_one("#status-context", Label).update("")
         self._update_visibility()
+
+    def watch_subagent_info(self, value: str) -> None:
+        self.query_one("#status-subagents", Label).update(f"  {value}" if value else "")
+        self._update_visibility()
+
+    def set_subagent_runs(self, running: int, total: int) -> None:
+        """Show a hint that subagents are running/have run, with the hotkey to inspect."""
+        self._subagent_running = running
+        self._subagent_total = total
+        self._render_subagent_info()
+
+    def _render_subagent_info(self) -> None:
+        if self._subagent_total == 0:
+            self.subagent_info = ""
+            return
+        if self._subagent_running:
+            icon = _SPINNER_FRAMES[self._spinner_idx % len(_SPINNER_FRAMES)]
+        else:
+            icon = "✓"
+        n = self._subagent_total
+        self.subagent_info = f"{icon} {n} subagent{'s' if n != 1 else ''} (F2)"
 
     def set_token_usage(
         self,

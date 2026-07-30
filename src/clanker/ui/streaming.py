@@ -483,7 +483,10 @@ async def stream_agent_response_async(
                                 # Fire progress callback for subagent tracking
                                 if progress_callback:
                                     try:
-                                        progress_callback("start", tool_name_ev, arg_str)
+                                        progress_callback(
+                                            "start", tool_name_ev, arg_str,
+                                            tool_input=tool_input,
+                                        )
                                     except Exception:
                                         pass
 

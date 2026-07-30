@@ -99,6 +99,7 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
         get_active_console,
         stream_agent_response_async,
     )
+    from clanker.ui.subagent_history import SubagentRun, SubagentToolCall
 
     # Resolve agent configuration
     agent_config = load_agent_config(agent_name, os.getcwd())
@@ -112,6 +113,12 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
 
     settings = get_settings()
     parent_console = get_active_console()
+    textual_app = getattr(parent_console, "_textual_app", None)
+
+    run_record = SubagentRun(agent_name=agent_name, prompt=prompt)
+    if textual_app is not None:
+        with contextlib.suppress(Exception):
+            textual_app.register_subagent_run(run_record)
 
     # Stop the parent's loading spinner
     parent_spinner_stopped = False
@@ -146,10 +153,16 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
     # Thread-safe queue for progress updates from subagent thread
     _thread_queue: queue.Queue = queue.Queue()
 
-    def _progress_callback(action_type: str, tool_name: str, arg_str: str, tool_output: str = "") -> None:
+    def _progress_callback(
+        action_type: str,
+        tool_name: str,
+        arg_str: str,
+        tool_output: str = "",
+        tool_input: dict | None = None,
+    ) -> None:
         """Called from subagent's streaming thread to report progress."""
         try:
-            _thread_queue.put_nowait((action_type, tool_name, arg_str))
+            _thread_queue.put_nowait((action_type, tool_name, arg_str, tool_output, tool_input))
         except Exception:
             pass
 
@@ -180,7 +193,7 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
             )
             error_container.append(e)
         finally:
-            _thread_queue.put_nowait(("done", "", ""))
+            _thread_queue.put_nowait(("done", "", "", "", None))
             # Cancel any pending tasks (debounce timers, etc.) before closing
             # the loop to avoid "Event loop is closed" errors when multiple
             # subagents run in parallel.
@@ -204,7 +217,6 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
     t.start()
 
     # Create the spawn_subagent tool entry in the parent TUI — use agent name
-    textual_app = getattr(parent_console, "_textual_app", None)
     tool_entry = None
     if textual_app:
         try:
@@ -230,15 +242,31 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
         if not t.is_alive() and _thread_queue.empty():
             break
 
-        # Drain all available items from the queue, keeping only the latest
-        # "start" entry (most informative — shows [tool_name] args)
+        # Drain all available items from the queue. Keep the latest "start"
+        # entry for the live TUI header (most informative — [tool_name] args),
+        # while accumulating every start/end pair into run_record.tool_calls
+        # so the F2 subagent popup can show the full trace after the fact.
         latest_action = None
         try:
             while True:
                 item = _thread_queue.get_nowait()
-                action_type, tool_name, arg_str = item
+                action_type, tool_name, arg_str, tool_output, tool_input_ev = item
                 if action_type == "start":
                     latest_action = f"[{tool_name}] {arg_str}" if arg_str else f"[{tool_name}]"
+                    run_record.tool_calls.append(
+                        SubagentToolCall(
+                            tool_name=tool_name,
+                            args=arg_str,
+                            status="running",
+                            tool_input=tool_input_ev or {},
+                        )
+                    )
+                elif action_type == "end":
+                    for tc in reversed(run_record.tool_calls):
+                        if tc.tool_name == tool_name and tc.status == "running":
+                            tc.output = tool_output
+                            tc.status = "success"
+                            break
         except queue.Empty:
             pass
 
@@ -267,6 +295,11 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
     # Finalize the tool entry
     if error_container:
         error_msg = str(error_container[0])
+        run_record.status = "error"
+        run_record.error = error_msg
+        if textual_app:
+            with contextlib.suppress(Exception):
+                textual_app.refresh_subagent_hint()
         if tool_entry and textual_app:
             try:
                 textual_app.get_chat_log().finalize_subagent(
@@ -287,6 +320,22 @@ async def spawn_subagent(agent_name: str, prompt: str) -> dict:
     sub_output_tokens = result.cumulative_output_tokens or result.output_tokens
     sub_cache_read = result.cumulative_cache_read_tokens or result.cache_read_tokens
     sub_cache_creation = result.cumulative_cache_creation_tokens or result.cache_creation_tokens
+
+    run_record.status = "success"
+    run_record.response = result.response
+    run_record.input_tokens = sub_input_tokens
+    run_record.output_tokens = sub_output_tokens
+    with contextlib.suppress(Exception):
+        from clanker.config import get_default_model
+
+        cm = get_default_model()
+        run_record.cost_usd = (
+            cm.compute_cost(sub_input_tokens, sub_output_tokens, sub_cache_read, sub_cache_creation)
+            if cm else None
+        )
+    if textual_app:
+        with contextlib.suppress(Exception):
+            textual_app.refresh_subagent_hint()
 
     # Add subagent tokens/cost to the parent session tracker (status bar)
     if textual_app and hasattr(textual_app, "add_subagent_tokens"):

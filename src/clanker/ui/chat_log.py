@@ -361,7 +361,17 @@ class ChatLog(VerticalScroll):
         shows the first output line rather than several raw lines rendered as
         Markdown (which can visually break on stray `#`/`*`/backticks in
         arbitrary command output).
+
+        ``edit_file`` is special-cased to show the actual changed lines (a
+        diff) instead of a one-line "patched at line N" summary.
         """
+        if tool_name == "edit_file" and success and tool_input:
+            old_string = tool_input.get("old_string", "")
+            new_string = tool_input.get("new_string", "")
+            diff_text = tool_summary.build_edit_diff_text(old_string, new_string)
+            if diff_text is not None:
+                return Static(diff_text, classes="msg-tool-output tool-card")
+
         summary = tool_summary.compact_result_summary(result, tool_name, tool_input)
         if not summary:
             return None

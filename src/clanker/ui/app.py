@@ -15,6 +15,7 @@ from textual.widgets import Input, Label, Static
 from clanker.ui.chat_log import ChatLog, MessageType
 from clanker.ui.status_bar import StatusBar
 from clanker.ui.completion_menu import CompletionMenu
+from clanker.ui.subagent_history import SubagentHistoryScreen, SubagentRun
 
 if TYPE_CHECKING:
     from clanker.config import Settings
@@ -342,6 +343,7 @@ class ClankerApp(App):
         # both would otherwise pre-empt this action with no user feedback.
         Binding("ctrl+c", "copy_or_interrupt", "Copy/Interrupt", show=True, priority=True),
         Binding("ctrl+d", "quit", "Quit", show=True),
+        Binding("f2", "show_subagents", "Subagents", show=True),
     ]
 
     def __init__(
@@ -359,6 +361,9 @@ class ClankerApp(App):
         self._processing = False
         self._input_history: list[str] = self._load_history()
         self._input_queue: asyncio.Queue[str] = asyncio.Queue()
+        # Subagent runs from the current (or most recently completed) turn —
+        # reset when a new turn starts, so F2 always shows "this turn's" runs.
+        self._subagent_runs: list[SubagentRun] = []
 
     def _load_history(self) -> list[str]:
         """Load input history from file across sessions."""
@@ -482,6 +487,24 @@ class ClankerApp(App):
         self._save_history()
         self.exit()
 
+    def action_show_subagents(self) -> None:
+        # Pass the live list (not a copy) so runs spawned or updated while
+        # the popup is open show up via its polling refresh.
+        self.push_screen(SubagentHistoryScreen(self._subagent_runs))
+
+    def register_subagent_run(self, run: SubagentRun) -> None:
+        """Track a newly spawned subagent run and refresh the status bar hint."""
+        self._subagent_runs.append(run)
+        self.refresh_subagent_hint()
+
+    def refresh_subagent_hint(self) -> None:
+        """Update the status bar's subagent count/running indicator."""
+        try:
+            running = sum(1 for r in self._subagent_runs if r.status == "running")
+            self.get_status_bar().set_subagent_runs(running, len(self._subagent_runs))
+        except Exception:
+            pass
+
     def reset_interrupt(self) -> None:
         from clanker.ui.streaming import reset_interrupted
 
@@ -533,7 +556,7 @@ class ClankerApp(App):
                         token_tracker.total_input,
                         token_tracker.total_output,
                         token_tracker.context_remaining_percent,
-                        turn_cost,
+                        token_tracker.total_cost_usd,
                     )
             except Exception:
                 pass
@@ -652,6 +675,8 @@ class ClankerApp(App):
         from clanker.ui.streaming import stream_agent_response_async
 
         self.reset_interrupt()
+        self._subagent_runs = []
+        self.refresh_subagent_hint()
 
         logger = get_logger("tui")
 
@@ -726,12 +751,11 @@ class ClankerApp(App):
                 result.input_tokens > 0
                 or result.output_tokens > 0
             ) and settings.output.show_token_usage:
-                last_turn = token_tracker.turns[-1] if token_tracker.turns else None
                 status_bar.set_token_usage(
                     result.input_tokens,
                     result.output_tokens,
                     token_tracker.context_remaining_percent,
-                    last_turn.cost_usd if last_turn else None,
+                    token_tracker.total_cost_usd,
                 )
 
             chat_log.add_separator()
