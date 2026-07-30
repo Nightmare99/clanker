@@ -53,6 +53,12 @@ def _cancel_streaming_task() -> None:
     _interrupted = True
 
 
+def reset_interrupted() -> None:
+    """Clear the interrupt flag before starting a new streaming turn."""
+    global _interrupted
+    _interrupted = False
+
+
 def _asyncio_exception_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
     """Custom exception handler to suppress expected cleanup errors."""
     exception = context.get("exception")

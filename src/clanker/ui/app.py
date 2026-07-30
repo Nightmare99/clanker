@@ -472,16 +472,22 @@ class ClankerApp(App):
             self.action_interrupt()
 
     def action_interrupt(self) -> None:
+        from clanker.ui.streaming import _cancel_streaming_task
+
         self.interrupt_requested = True
         self._interrupt_event.set()
+        _cancel_streaming_task()
 
     def action_quit(self) -> None:
         self._save_history()
         self.exit()
 
     def reset_interrupt(self) -> None:
+        from clanker.ui.streaming import reset_interrupted
+
         self.interrupt_requested = False
         self._interrupt_event.clear()
+        reset_interrupted()
 
     def add_subagent_tokens(
         self,
@@ -644,6 +650,8 @@ class ClankerApp(App):
         from clanker.config import get_default_model
         from clanker.logging import get_logger
         from clanker.ui.streaming import stream_agent_response_async
+
+        self.reset_interrupt()
 
         logger = get_logger("tui")
 
