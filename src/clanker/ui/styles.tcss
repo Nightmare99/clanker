@@ -46,9 +46,10 @@ ChatLog .notify-error {
     border-left: thick rgb(255, 80, 80);
 }
 
-ChatLog .msg-thinking {
-    color: rgb(100, 100, 100);
-    width: 1fr;
+ChatLog .thinking-card {
+    background: transparent;
+    border-left: solid rgb(180, 140, 255);
+    padding: 1 0 1 1;
 }
 
 ChatLog .msg-notify {
@@ -120,7 +121,6 @@ StatusBar {
     background: rgb(15, 15, 15);
     visibility: hidden;
     padding: 0 1;
-    margin-top: 1;
 }
 
 StatusBar.visible {

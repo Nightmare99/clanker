@@ -19,7 +19,6 @@ class MessageType(StrEnum):
     USER = "user"
     ASSISTANT = "assistant"
     SYSTEM = "system"
-    THINKING = "thinking"
     NOTIFY = "notify"
     ERROR = "error"
     INFO = "info"
@@ -246,7 +245,6 @@ class ChatLog(VerticalScroll):
         handlers = {
             MessageType.USER: self._user_message,
             MessageType.ASSISTANT: self._assistant_message,
-            MessageType.THINKING: self._thinking_message,
             MessageType.NOTIFY: self._notify_message,
             MessageType.SYSTEM: self._system_message,
             MessageType.ERROR: self._error_message,
@@ -269,13 +267,6 @@ class ChatLog(VerticalScroll):
         md = Markdown(msg.content, classes="msg-assistant msg-card")
         md.code_indent_guides = False
         return md
-
-    def _thinking_message(self, msg: Message) -> Static:
-        display = msg.content[:500] + "..." if len(msg.content) > 500 else msg.content
-        text = Text()
-        text.append("  ", style="dim")
-        text.append(display, style="dim italic rgb(100,100,100)")
-        return Static(text, classes="msg-thinking")
 
     def _notify_message(self, msg: Message) -> Markdown | Static:
         level_colors = {
@@ -513,6 +504,32 @@ class ChatLog(VerticalScroll):
                 entry.output_widget = output_widget
                 self.mount(output_widget, after=header_widget)
                 self._messages.append(output_widget)
+
+        self._scroll_to_bottom()
+
+    # --- Thinking rendering ---
+
+    def _thinking_badge_text(self) -> Text:
+        text = Text()
+        text.append(" Thinking ", style="black on rgb(180,140,255)")
+        return text
+
+    def add_thinking(self, content: str) -> None:
+        """Render a thinking block styled like a tool call: badge header + card body."""
+        content = content.strip()
+        if not content:
+            return
+
+        display = content[:500] + "..." if len(content) > 500 else content
+
+        header_widget = Static(self._thinking_badge_text(), classes="msg-tool")
+        self.mount(header_widget)
+        self._messages.append(header_widget)
+
+        body_text = Text(display, style="dim italic rgb(190,180,220)")
+        body_widget = Static(body_text, classes="msg-tool-output thinking-card")
+        self.mount(body_widget, after=header_widget)
+        self._messages.append(body_widget)
 
         self._scroll_to_bottom()
 

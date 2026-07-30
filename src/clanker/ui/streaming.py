@@ -285,6 +285,13 @@ async def stream_agent_response_async(
     thinking_shown = False
     in_think_tag = False
     think_tag_closed = False
+    # True once current_thinking has received a structured `type: "thinking"`
+    # content block (Anthropic-style extended thinking). Unlike the ad-hoc
+    # string `<think>...</think>` tag format, a structured block is
+    # unambiguously real thinking -- there's no "tag" to have failed to
+    # close -- so it must never be reclassified as response text by the
+    # unclosed-tag fallback in _flush_current_turn_text.
+    structured_thinking = False
 
     # Track TUI tool state per run_id for debounced loading indicators
     from clanker.ui.chat_log import ToolEntry
@@ -350,6 +357,56 @@ async def stream_agent_response_async(
         if textual_app:
             msg = message or console.get_loading_message()
             _update_loading(msg)
+
+    def _flush_current_turn_text() -> str:
+        """Emit the current model call's accumulated response/thinking, then clear it.
+
+        Each model call within a turn (there can be several across a
+        tool-calling loop) streams into the same ``current_response``/
+        ``current_thinking`` buffers. Called both between model calls (so a
+        reasoning step that leads into a tool call isn't silently dropped
+        when the buffers reset for the next call) and once more at the very
+        end of the turn.
+
+        Returns the response text that was just flushed, so the final call
+        (at the end of the turn) can still report it via ``StreamResult``
+        even though the buffer itself is cleared as a side effect.
+        """
+        nonlocal current_response, current_thinking
+
+        # If we buffered thinking via the ad-hoc string `<think>` tag format
+        # but never saw a closing tag, treat it as response text instead of
+        # losing it. Structured `type: "thinking"` blocks are exempt --
+        # they're unambiguously real thinking, with no tag to have failed
+        # to close.
+        if (
+            current_thinking
+            and not structured_thinking
+            and not think_tag_closed
+            and not current_response
+        ):
+            current_response = current_thinking
+            current_thinking = ""
+
+        flushed_response = current_response
+
+        if current_response.strip():
+            console.print_assistant_message(current_response)
+            if textual_app:
+                with suppress(Exception):
+                    textual_app.get_chat_log().add_message(
+                        current_response, MessageType.ASSISTANT
+                    )
+
+        if current_thinking:
+            console.print_thinking(current_thinking)
+            if textual_app:
+                with suppress(Exception):
+                    textual_app.get_chat_log().add_thinking(current_thinking)
+
+        current_response = ""
+        current_thinking = ""
+        return flushed_response
 
     # Unified tool display handler
     tool_handler = ToolDisplayHandler(
@@ -660,12 +717,16 @@ async def stream_agent_response_async(
 
                             if tool_handler.has_pending_tools():
                                 tool_handler.flush_pending_tools()
-                            current_response = ""
-                            current_thinking = ""
+                            # Flush whatever the PREVIOUS model call accumulated
+                            # (e.g. a reasoning step that led into a tool call)
+                            # before wiping the buffers for this new call --
+                            # otherwise that text/thinking is silently dropped.
+                            _flush_current_turn_text()
                             thinking_shown = False
                             first_content_received = False
                             in_think_tag = False
                             think_tag_closed = False
+                            structured_thinking = False
                             current_model_run = run_id
 
                     elif event_type == "on_chat_model_stream":
@@ -684,6 +745,7 @@ async def stream_agent_response_async(
                                             thinking_text = block.get("thinking", "")
                                             if thinking_text:
                                                 current_thinking += thinking_text
+                                                structured_thinking = True
                                                 if not thinking_shown:
                                                     console.print_thinking_start()
                                                     thinking_shown = True
@@ -696,6 +758,7 @@ async def stream_agent_response_async(
                                             thinking_text = getattr(block, "thinking", "")
                                             if thinking_text:
                                                 current_thinking += thinking_text
+                                                structured_thinking = True
                                                 if not thinking_shown:
                                                     console.print_thinking_start()
                                                     thinking_shown = True
@@ -892,30 +955,11 @@ async def stream_agent_response_async(
         set_approval_callback(old_approval)
         _local_state.active_console = old_console
 
-    # If we buffered thinking but never saw </think>, treat as response
-    if current_thinking and not think_tag_closed and not current_response:
-        current_response = current_thinking
-        current_thinking = ""
-
-    # Print final response
-    if current_response.strip():
-        console.print_assistant_message(current_response)
-        if textual_app:
-            with suppress(Exception):
-                textual_app.get_chat_log().add_message(
-                    current_response, MessageType.ASSISTANT
-                )
-
-    if current_thinking:
-        console.print_thinking(current_thinking)
-        if textual_app:
-            with suppress(Exception):
-                textual_app.get_chat_log().add_message(
-                    current_thinking, MessageType.THINKING
-                )
+    # Flush whatever the final model call accumulated (response and/or thinking).
+    final_response = _flush_current_turn_text()
 
     return StreamResult(
-        response=current_response,
+        response=final_response,
         input_tokens=last_input_tokens,
         output_tokens=last_output_tokens,
         cache_read_tokens=last_cache_read_tokens,
