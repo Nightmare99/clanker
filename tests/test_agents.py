@@ -3,6 +3,8 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from clanker.agents import (
     _load_agent_from_file,
     get_agents_catalog,
@@ -11,6 +13,12 @@ from clanker.agents import (
     parse_agent_md,
 )
 from clanker.tools.agent_tools import load_agent as load_agent_tool
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path, monkeypatch):
+    """Point HOME at an empty dir so a real ~/.clanker/agents never leaks in."""
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
 
 
 class TestParseAgentMd:
