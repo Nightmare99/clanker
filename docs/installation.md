@@ -25,6 +25,28 @@ This script:
 CLANKER_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.sh | bash
 ```
 
+### Installing a Specific Version
+
+By default the script installs the latest release. To pin a specific version,
+pass it as an argument (note the `-s --` needed when piping into `bash`) or
+via the `CLANKER_VERSION` env var:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.sh | bash -s -- v0.8.5
+# or
+CLANKER_VERSION=v0.8.5 curl -fsSL https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.sh | bash
+```
+
+The `v` prefix is optional (`0.8.5` works too). The script errors out if the
+requested release doesn't exist.
+
+**Windows (PowerShell):**
+```powershell
+$env:CLANKER_VERSION = "v0.8.5"; irm https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.ps1 | iex
+# or, to pass -Version directly (iex pipelines can't take parameters):
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.ps1))) -Version v0.8.5
+```
+
 ## Manual Download
 
 Download from [GitHub Releases](https://github.com/Nightmare99/clanker/releases):

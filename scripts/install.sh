@@ -2,11 +2,19 @@
 set -e
 
 # Clanker Installation Script
-# Usage: curl -fsSL https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.sh | bash
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.sh | bash -s -- v0.8.5
+#   CLANKER_VERSION=v0.8.5 curl -fsSL https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.sh | bash
+#
+# An optional version (e.g. "v0.8.5" or "0.8.5") installs that release instead
+# of the latest one. Pass it as the first argument (note the `-s --` when
+# piping through bash) or via the CLANKER_VERSION env var.
 
 REPO="Nightmare99/clanker"
 INSTALL_DIR="${CLANKER_INSTALL_DIR:-$HOME/.local/bin}"
 BINARY_NAME="clanker"
+REQUESTED_VERSION="${1:-${CLANKER_VERSION:-}}"
 
 # Colors
 BOLD='\033[1m'
@@ -45,6 +53,13 @@ get_latest_version() {
         sed -E 's/.*"([^"]+)".*/\1/'
 }
 
+release_exists() {
+    local tag="$1"
+    local status
+    status=$(curl -sSL -o /dev/null -w "%{http_code}" "https://api.github.com/repos/${REPO}/releases/tags/${tag}" || echo "000")
+    [ "$status" = "200" ]
+}
+
 get_installed_version() {
     if [ -x "${INSTALL_DIR}/clanker" ]; then
         "${INSTALL_DIR}/clanker" --version 2>&1 | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1
@@ -63,30 +78,41 @@ main() {
     ARCH=$(detect_arch)
     info "Platform: ${BOLD}${OS}-${ARCH}${NC}"
 
-    VERSION=$(get_latest_version)
-    if [ -z "$VERSION" ]; then
-        error "Could not determine latest version. Check your internet connection."
+    if [ -n "$REQUESTED_VERSION" ]; then
+        VERSION="$REQUESTED_VERSION"
+        [[ "$VERSION" != v* ]] && VERSION="v${VERSION}"
+        info "Requested version: ${BOLD}${VERSION}${NC}"
+        if ! release_exists "$VERSION"; then
+            error "Release ${VERSION} not found. Check available releases at https://github.com/${REPO}/releases"
+        fi
+        PINNED=1
+    else
+        VERSION=$(get_latest_version)
+        if [ -z "$VERSION" ]; then
+            error "Could not determine latest version. Check your internet connection."
+        fi
+        PINNED=0
     fi
 
     INSTALLED_VERSION=$(get_installed_version)
     if [ -n "$INSTALLED_VERSION" ]; then
         INSTALLED_CLEAN="${INSTALLED_VERSION#v}"
-        LATEST_CLEAN="${VERSION#v}"
+        TARGET_CLEAN="${VERSION#v}"
 
-        if [ "$INSTALLED_CLEAN" = "$LATEST_CLEAN" ]; then
+        if [ "$INSTALLED_CLEAN" = "$TARGET_CLEAN" ]; then
             echo ""
-            success "Clanker ${GREEN}${VERSION}${NC} is already installed and up to date!"
+            success "Clanker ${GREEN}${VERSION}${NC} is already installed."
             echo ""
             exit 0
         fi
 
         echo ""
         info "Installed: ${YELLOW}v${INSTALLED_CLEAN}${NC}"
-        info "Latest:    ${GREEN}${VERSION}${NC}"
+        info "$([ "$PINNED" = 1 ] && echo "Target:   " || echo "Latest:   ") ${GREEN}${VERSION}${NC}"
         echo ""
 
         if [ -t 0 ]; then
-            read -p "  Upgrade? [Y/n] " -n 1 -r
+            read -p "  $([ "$PINNED" = 1 ] && echo "Install this version?" || echo "Upgrade?") [Y/n] " -n 1 -r
             echo ""
             if [[ $REPLY =~ ^[Nn]$ ]]; then
                 info "Cancelled."

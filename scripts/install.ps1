@@ -1,11 +1,24 @@
 # Clanker Installation Script for Windows
-# Usage: irm https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.ps1 | iex
+# Usage:
+#   irm https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.ps1 | iex
+#   $env:CLANKER_VERSION = "v0.8.5"; irm https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.ps1 | iex
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.ps1))) -Version v0.8.5
+#
+# An optional version (e.g. "v0.8.5" or "0.8.5") installs that release instead
+# of the latest one, via the -Version parameter or the CLANKER_VERSION env var.
+# `iex` pipelines can't take parameters directly, so use the CLANKER_VERSION
+# env var when piping, or the scriptblock form above for -Version.
+
+param(
+    [string]$Version
+)
 
 $ErrorActionPreference = "Stop"
 
 $Repo = "Nightmare99/clanker"
 $BinaryName = "clanker.exe"
 $InstallDir = if ($env:CLANKER_INSTALL_DIR) { $env:CLANKER_INSTALL_DIR } else { "$env:LOCALAPPDATA\clanker\bin" }
+$RequestedVersion = if ($Version) { $Version } elseif ($env:CLANKER_VERSION) { $env:CLANKER_VERSION } else { $null }
 
 function Write-Info    { param($Msg) Write-Host "  ▸ $Msg" -ForegroundColor Cyan }
 function Write-Ok      { param($Msg) Write-Host "  ✓ $Msg" -ForegroundColor Green }
@@ -21,13 +34,25 @@ Write-Host ""
 $Arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { Write-Err "32-bit Windows is not supported." }
 Write-Info "Platform: windows-$Arch"
 
-# Get latest version
-Write-Info "Fetching latest release..."
-try {
-    $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing
-    $Version = $Release.tag_name
-} catch {
-    Write-Err "Could not determine latest version. Check your internet connection."
+# Resolve the version to install
+if ($RequestedVersion) {
+    $Version = if ($RequestedVersion -match '^v') { $RequestedVersion } else { "v$RequestedVersion" }
+    Write-Info "Requested version: $Version"
+    try {
+        Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$Version" -UseBasicParsing | Out-Null
+    } catch {
+        Write-Err "Release $Version not found. Check available releases at https://github.com/$Repo/releases"
+    }
+    $Pinned = $true
+} else {
+    Write-Info "Fetching latest release..."
+    try {
+        $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing
+        $Version = $Release.tag_name
+    } catch {
+        Write-Err "Could not determine latest version. Check your internet connection."
+    }
+    $Pinned = $false
 }
 Write-Info "Version: $Version"
 
@@ -42,16 +67,16 @@ if (Test-Path $ExistingBinary) {
     }
 
     if ($InstalledVersion) {
-        $LatestClean = $Version -replace '^v', ''
-        if ($InstalledVersion -eq $LatestClean) {
+        $TargetClean = $Version -replace '^v', ''
+        if ($InstalledVersion -eq $TargetClean) {
             Write-Host ""
-            Write-Ok "Clanker $Version is already installed and up to date!"
+            Write-Ok "Clanker $Version is already installed."
             Write-Host ""
             exit 0
         }
         Write-Host ""
         Write-Info "Installed: v$InstalledVersion"
-        Write-Info "Latest:    $Version"
+        Write-Info "$(if ($Pinned) { 'Target:   ' } else { 'Latest:   ' })$Version"
         Write-Host ""
     }
 }
