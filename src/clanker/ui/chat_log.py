@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import bisect
 import colorsys
 import contextlib
+import math
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -41,6 +43,21 @@ _GREY = "rgb(100,100,100)"
 _RAINBOW_COL_STEP = 0.02
 _RAINBOW_ROW_STEP = 0.06
 _RAINBOW_PHASE_STEP = 0.02
+
+# Wavy vertical bob applied to the ASCII art: each letter bobs up/down as a
+# whole unit, with a phase delay per letter so the bob cascades left-to-right
+# (see _wave_offset/_rainbow_tick). The glyphs in _CLNKR_ART touch with zero
+# gap between letters, so per-column ripple sheared individual letters apart;
+# bobbing whole letter-column-ranges together keeps each glyph intact.
+# Rows of vertical travel. Unipolar (letters only ever lift up from baseline,
+# never dip below it -- see _wave_offset) so peak-to-peak travel is a single
+# row, not two; that reads as a gentle bounce instead of a big jump.
+_WAVE_AMPLITUDE = 1
+# Column boundaries between letters in _CLNKR_ART -- "C|L|N|K|R". Tuned to the
+# current logo text; update if the ASCII art in app.py changes.
+_WAVE_LETTER_BOUNDS = (1, 9, 17, 26, 35, 43)
+_WAVE_LETTER_PHASE_SHIFT = 0.9  # radians of phase delay between adjacent letters
+_WAVE_PHASE_STEP = 0.6  # radians per tick (time speed)
 
 
 @dataclass
@@ -96,6 +113,7 @@ class ChatLog(VerticalScroll):
         self._hero_is_final: bool = False
         self._rainbow_timer = None
         self._rainbow_phase = 0.0
+        self._wave_phase = 0.0
 
     def on_mount(self) -> None:
         self._rainbow_timer = self.set_interval(0.08, self._rainbow_tick, name="hero-rainbow")
@@ -108,15 +126,49 @@ class ChatLog(VerticalScroll):
         r, g, b = colorsys.hsv_to_rgb(hue, 0.85, 1.0)
         return f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"
 
+    def _wave_offset(self, x: int) -> int:
+        """Vertical row offset (rows) for column *x*'s letter, at the current phase.
+
+        All columns belonging to the same letter (per ``_WAVE_LETTER_BOUNDS``)
+        share one offset, so each letter bobs as a rigid unit -- no in-glyph
+        shearing. Each letter's phase is delayed relative to the previous one,
+        producing a left-to-right bounce cascade. The wave is unipolar --
+        rescaled from sin's [-1, 1] to [0, 1] -- so letters only ever lift up
+        from the baseline rather than swinging both above and below it.
+        """
+        letter_index = bisect.bisect_right(_WAVE_LETTER_BOUNDS, x) - 1
+        letter_index = max(0, min(letter_index, len(_WAVE_LETTER_BOUNDS) - 2))
+        angle = self._wave_phase + letter_index * _WAVE_LETTER_PHASE_SHIFT
+        lift = (math.sin(angle) + 1) / 2  # 0..1
+        return -round(_WAVE_AMPLITUDE * lift)
+
     def _append_rainbow_art(self, full: Text, art_lines: list[str]) -> None:
-        """Append ASCII art lines to *full*, coloring each glyph with the rainbow wash."""
-        for y, line in enumerate(art_lines):
-            for x, ch in enumerate(line):
+        """Append ASCII art lines to *full*, with a rainbow wash and a per-letter bob.
+
+        Each column is resampled from a row shifted by ``_wave_offset(x)`` so
+        each letter appears to bounce up and down. The grid is padded with
+        blank rows top/bottom (by the wave amplitude) so columns pulled from
+        beyond the original art render as blank instead of wrapping to the
+        opposite edge.
+        """
+        if not art_lines:
+            return
+
+        width = max(len(line) for line in art_lines)
+        height = len(art_lines)
+        padded = [line.ljust(width) for line in art_lines]
+        blank_row = " " * width
+        grid = [blank_row] * _WAVE_AMPLITUDE + padded + [blank_row] * _WAVE_AMPLITUDE
+
+        for y in range(_WAVE_AMPLITUDE, _WAVE_AMPLITUDE + height):
+            for x in range(width):
+                src_y = y - self._wave_offset(x)
+                ch = grid[src_y][x]
                 if ch.strip():
                     full.append(ch, style=f"bold {self._rainbow_style(x, y)}")
                 else:
                     full.append(ch)
-            if y < len(art_lines) - 1:
+            if y < _WAVE_AMPLITUDE + height - 1:
                 full.append("\n")
 
     def _build_hero_text(self, art: str, init_text: str = "") -> Text:
@@ -169,10 +221,11 @@ class ChatLog(VerticalScroll):
         return full
 
     def _rainbow_tick(self) -> None:
-        """Advance the rainbow phase and re-render the hero's ASCII art."""
+        """Advance the rainbow/wave phases and re-render the hero's ASCII art."""
         if self._hero_widget is None:
             return
         self._rainbow_phase = (self._rainbow_phase + _RAINBOW_PHASE_STEP) % 1.0
+        self._wave_phase = (self._wave_phase + _WAVE_PHASE_STEP) % math.tau
         if self._hero_is_final:
             self._hero_widget.update(self._build_hero_final(
                 "\n".join(self._hero_art_lines),
