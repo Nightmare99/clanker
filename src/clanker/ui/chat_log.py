@@ -291,6 +291,25 @@ class ChatLog(VerticalScroll):
         self._hero_init_text = ""
         self._hero_is_final = False
 
+    def add_update_banner(self, current: str, latest: str, install_cmd: str) -> None:
+        """Mount a stylized 'update available' card, meant to sit below the hero."""
+        text = Text()
+        text.append(" ⬆  UPDATE AVAILABLE ", style=f"bold black on {_LIME}")
+        text.append("\n\n")
+        text.append("  ", style="")
+        text.append(f"v{current}", style=f"dim {_GREY}")
+        text.append("  ─────▶  ", style=f"bold {_CYAN}")
+        text.append(f"v{latest}", style=f"bold {_LIME}")
+        text.append("\n\n")
+        text.append("  ", style="")
+        text.append("$ ", style=f"dim {_GREY}")
+        text.append(install_cmd, style=f"italic {_WHITE}")
+
+        widget = Static(text, classes="update-banner")
+        self.mount(widget)
+        self._messages.append(widget)
+        self._scroll_to_bottom()
+
     # --- Message rendering ---
 
     def _create_message_widget(self, msg: Message) -> Static | Markdown:

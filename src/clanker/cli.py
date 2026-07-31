@@ -607,14 +607,14 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
     if current_model:
         model_info = f"{current_model.name} ({current_model.provider})"
 
-    update_msg = ""
+    update_info = None
     try:
-        from clanker.update import get_update_message
-        update_msg = get_update_message() or ""
+        from clanker.update import get_update_info
+        update_info = get_update_info()
     except Exception:
         pass
 
-    app = ClankerApp(console, model_info=model_info, update_message=update_msg or None)
+    app = ClankerApp(console, model_info=model_info, update_info=update_info)
 
     # Wire console ↔ app so streaming.py can reach Textual widgets
     console._textual_app = app

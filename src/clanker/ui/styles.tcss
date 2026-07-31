@@ -104,6 +104,15 @@ ChatLog #hero-widget {
     width: 1fr;
 }
 
+/* Update-available banner, mounted below the hero */
+ChatLog .update-banner {
+    background: transparent;
+    border: round rgb(180,255,60);
+    padding: 1 2;
+    margin: 0 0 1 0;
+    width: auto;
+}
+
 /* HR after hero — cyan */
 ChatLog > Rule {
     color: rgb(0, 240, 240);

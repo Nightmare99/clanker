@@ -350,14 +350,14 @@ class ClankerApp(App):
         self,
         console: Console,
         model_info: str = "",
-        update_message: str | None = None,
+        update_info: dict[str, str] | None = None,
     ) -> None:
         super().__init__()
         self.clanker_console = console
         self.interrupt_requested = False
         self._interrupt_event = asyncio.Event()
         self._model_info = model_info
-        self._update_message = update_message
+        self._update_info = update_info
         self._processing = False
         self._input_history: list[str] = self._load_history()
         self._input_queue: asyncio.Queue[str] = asyncio.Queue()
@@ -405,16 +405,14 @@ class ClankerApp(App):
 
         chat_log = self.get_chat_log()
 
-        if self._update_message:
-            chat_log.add_message(
-                f"[Update Available] {self._update_message}",
-                MessageType.INFO,
-            )
-
         self.run_worker(self._play_hero(chat_log))
 
     async def _play_hero(self, chat_log: ChatLog) -> None:
-        """Play the hero animation inside the chat log — persists after reveal."""
+        """Play the hero animation inside the chat log — persists after reveal.
+
+        The update banner (if any) is mounted right after, so it lands below
+        the ASCII art rather than above it.
+        """
         from clanker.runtime import is_yolo_mode
 
         art_lines = _CLNKR_ART.split("\n")
@@ -435,6 +433,13 @@ class ClankerApp(App):
             model_info=self._model_info,
             yolo_mode=is_yolo_mode(),
         )
+
+        if self._update_info:
+            chat_log.add_update_banner(
+                current=self._update_info["current"],
+                latest=self._update_info["latest"],
+                install_cmd=self._update_info["install_cmd"],
+            )
 
     # --- Widget accessors ---
 

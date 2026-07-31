@@ -7,6 +7,7 @@ from clanker import __version__
 
 REPO = "Nightmare99/clanker"
 RELEASES_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
+INSTALL_CMD = f"curl -fsSL https://raw.githubusercontent.com/{REPO}/main/scripts/install.sh | bash"
 
 
 def parse_version(version: str) -> tuple[int, ...]:
@@ -63,13 +64,24 @@ def check_for_update() -> tuple[bool, str | None, str]:
         return False, latest, current
 
 
-def get_update_message() -> str | None:
-    """Get a message if an update is available, otherwise None."""
+def get_update_info() -> dict[str, str] | None:
+    """Get structured update info if an update is available, otherwise None.
+
+    Returns:
+        {"current": ..., "latest": ..., "install_cmd": ...}, or None.
+    """
     update_available, latest, current = check_for_update()
 
     if update_available and latest:
-        return (
-            f"Update available: v{current} -> {latest}\n"
-            f"Run: curl -fsSL https://raw.githubusercontent.com/{REPO}/main/scripts/install.sh | bash"
-        )
+        # GitHub tag names are typically "v0.8.9"; strip the prefix so callers
+        # can uniformly prepend their own "v" without risking "vv0.8.9".
+        return {"current": current.lstrip("vV"), "latest": latest.lstrip("vV"), "install_cmd": INSTALL_CMD}
     return None
+
+
+def get_update_message() -> str | None:
+    """Get a plain-text message if an update is available, otherwise None."""
+    info = get_update_info()
+    if info is None:
+        return None
+    return f"Update available: v{info['current']} -> v{info['latest']}\nRun: {info['install_cmd']}"
