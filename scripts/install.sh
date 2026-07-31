@@ -12,7 +12,10 @@ set -e
 # piping through bash) or via the CLANKER_VERSION env var.
 
 REPO="Nightmare99/clanker"
+DEFAULTS_REPO="Nightmare99/clanker-defaults"
 INSTALL_DIR="${CLANKER_INSTALL_DIR:-$HOME/.local/bin}"
+CLANKER_HOME="${CLANKER_HOME:-$HOME/.clanker}"
+DEFAULTS_STAGING_DIR="${CLANKER_HOME}/.clanker-defaults"
 BINARY_NAME="clanker"
 REQUESTED_VERSION="${1:-${CLANKER_VERSION:-}}"
 
@@ -60,6 +63,26 @@ release_exists() {
     [ "$status" = "200" ]
 }
 
+sync_defaults() {
+    if ! command -v git &>/dev/null; then
+        warn "git not found; skipping default skills/agents sync."
+        return
+    fi
+
+    rm -rf "$DEFAULTS_STAGING_DIR"
+    if ! git clone --depth 1 --quiet "https://github.com/${DEFAULTS_REPO}.git" "$DEFAULTS_STAGING_DIR" 2>/dev/null; then
+        warn "Could not clone ${DEFAULTS_REPO}; skipping default skills/agents sync."
+        rm -rf "$DEFAULTS_STAGING_DIR"
+        return
+    fi
+
+    mkdir -p "${CLANKER_HOME}/agents" "${CLANKER_HOME}/skills"
+    [ -d "${DEFAULTS_STAGING_DIR}/agents" ] && cp -Rf "${DEFAULTS_STAGING_DIR}/agents/." "${CLANKER_HOME}/agents/"
+    [ -d "${DEFAULTS_STAGING_DIR}/skills" ] && cp -Rf "${DEFAULTS_STAGING_DIR}/skills/." "${CLANKER_HOME}/skills/"
+    rm -rf "$DEFAULTS_STAGING_DIR"
+    success "Synced default skills and agents to ${BOLD}${CLANKER_HOME}${NC}"
+}
+
 get_installed_version() {
     if [ -x "${INSTALL_DIR}/clanker" ]; then
         "${INSTALL_DIR}/clanker" --version 2>&1 | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1
@@ -102,6 +125,7 @@ main() {
         if [ "$INSTALLED_CLEAN" = "$TARGET_CLEAN" ]; then
             echo ""
             success "Clanker ${GREEN}${VERSION}${NC} is already installed."
+            sync_defaults
             echo ""
             exit 0
         fi
@@ -156,6 +180,8 @@ main() {
 
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
     success "Installed to ${BOLD}${INSTALL_DIR}/${BINARY_NAME}${NC}"
+
+    sync_defaults
 
     if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
         echo ""

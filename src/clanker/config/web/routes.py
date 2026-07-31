@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from clanker.agents import list_personal_agents, set_agent_model
 from clanker.config import CONFIG_PATH, Settings, reload_settings
 from clanker.config.copilot_auth import (
     CopilotAuthError,
@@ -23,8 +24,8 @@ from clanker.config.copilot_auth import (
 from clanker.config.models import (
     MODELS_CONFIG_PATH,
     ModelConfig,
-    copilot_uses_responses_api,
     add_model,
+    copilot_uses_responses_api,
     get_model_by_name,
     get_models_config,
     remove_model,
@@ -540,6 +541,67 @@ async def test_model_config(name: str) -> MessageResponse:
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Connection failed: {str(e)}") from e
+
+
+# ==================== Global Agents API ====================
+#
+# Only ~/.clanker/agents/ (personal/global agents) is exposed here. This
+# config server has no project working-directory context, so project agents
+# (<workspace>/.clanker/agents/) aren't resolvable here and are edited by
+# hand in the repo instead.
+
+
+class AgentSummary(BaseModel):
+    """Summary of a personal agent, for the global config UI."""
+
+    name: str
+    description: str
+    model: str | None = None
+    tools: list[str]
+
+
+class AgentsResponse(BaseModel):
+    """List of global (personal) agents."""
+
+    agents: list[AgentSummary]
+
+
+class AgentModelRequest(BaseModel):
+    """Set-model request body."""
+
+    model: str | None = None
+
+
+@router.get("/agents", response_model=AgentsResponse)
+async def get_agents() -> AgentsResponse:
+    """List global (personal) agents available for model configuration."""
+    agents = list_personal_agents()
+    return AgentsResponse(
+        agents=[
+            AgentSummary(name=a.name, description=a.description, model=a.model, tools=a.tools)
+            for a in agents.values()
+        ]
+    )
+
+
+@router.put("/agents/{name}/model", response_model=MessageResponse)
+async def update_agent_model(name: str, request: AgentModelRequest) -> MessageResponse:
+    """Set or clear the model override for a global agent.
+
+    Passing a null/empty model clears the override, falling back to the
+    session's default model.
+    """
+    if request.model:
+        models_config = get_models_config()
+        if not any(m.name == request.model for m in models_config.models):
+            raise HTTPException(
+                status_code=400, detail=f"Model '{request.model}' is not configured"
+            )
+
+    if set_agent_model(name, request.model):
+        label = f"'{request.model}'" if request.model else "session default"
+        return MessageResponse(message=f"Agent '{name}' model set to {label}", success=True)
+    raise HTTPException(status_code=404, detail=f"Global agent '{name}' not found")
 
 
 # ==================== GitHub Copilot native provider ====================

@@ -40,6 +40,7 @@ import {
   PlayOutline,
   StarOutline,
   Star,
+  PeopleOutline,
 } from '@vicons/ionicons5'
 import { h } from 'vue'
 
@@ -91,6 +92,13 @@ interface Config {
   }
 }
 
+interface GlobalAgent {
+  name: string
+  description: string
+  model: string | null
+  tools: string[]
+}
+
 interface ModelConfig {
   name: string
   provider: string
@@ -130,6 +138,11 @@ const hasChanges = ref(false)
 // Models management
 const models = ref<ModelConfig[]>([])
 const defaultModel = ref<string | null>(null)
+
+// Global agents management
+const globalAgents = ref<GlobalAgent[]>([])
+const agentsLoading = ref(false)
+const savingAgentModel = ref<string | null>(null)
 
 // GitHub Copilot connect flow
 const copilotConnected = ref(false)
@@ -179,6 +192,7 @@ const testingServer = ref<string | null>(null)
 // Menu items
 const menuOptions: MenuOption[] = [
   { label: 'Models', key: 'model', icon: () => h(NIcon, null, { default: () => h(HardwareChipOutline) }) },
+  { label: 'Agents', key: 'agents', icon: () => h(NIcon, null, { default: () => h(PeopleOutline) }) },
   { label: 'Context', key: 'context', icon: () => h(NIcon, null, { default: () => h(ColorPaletteOutline) }) },
   { label: 'Safety', key: 'safety', icon: () => h(NIcon, null, { default: () => h(ShieldCheckmarkOutline) }) },
   { label: 'Tools', key: 'tools', icon: () => h(NIcon, null, { default: () => h(CreateOutline) }) },
@@ -254,6 +268,48 @@ async function fetchModels() {
     modelsConfigPath.value = data.config_path
   } catch (error) {
     console.error('Failed to load models:', error)
+  }
+}
+
+// Global agents API functions
+async function fetchGlobalAgents() {
+  agentsLoading.value = true
+  try {
+    const response = await fetch('/api/agents')
+    const data = await response.json()
+    globalAgents.value = data.agents
+  } catch (error) {
+    message.error('Failed to load global agents')
+    console.error(error)
+  } finally {
+    agentsLoading.value = false
+  }
+}
+
+async function updateAgentModel(agent: GlobalAgent, model: string | null) {
+  savingAgentModel.value = agent.name
+  const previous = agent.model
+  agent.model = model
+  try {
+    const response = await fetch(`/api/agents/${encodeURIComponent(agent.name)}/model`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    })
+
+    if (response.ok) {
+      message.success(model ? `${agent.name} now uses ${model}` : `${agent.name} reset to session default`)
+    } else {
+      agent.model = previous
+      const error = await response.json()
+      message.error(error.detail || 'Failed to update agent model')
+    }
+  } catch (error) {
+    agent.model = previous
+    message.error('Failed to update agent model')
+    console.error(error)
+  } finally {
+    savingAgentModel.value = null
   }
 }
 
@@ -492,6 +548,17 @@ function getProviderStyle(provider: string) {
   return providerStyles[provider] || { color: '#888', bgColor: 'rgba(136, 136, 136, 0.1)' }
 }
 
+// Model dropdown options for the Agents tab: configured models + a "session
+// default" entry that clears the agent's override.
+const agentModelOptions = computed(() => [
+  { label: 'Session default', value: '__default__' },
+  ...models.value.map(m => ({ label: m.name, value: m.name })),
+])
+
+function onAgentModelChange(agent: GlobalAgent, value: string) {
+  updateAgentModel(agent, value === '__default__' ? null : value)
+}
+
 async function saveConfig() {
   if (!config.value) return
 
@@ -654,6 +721,7 @@ async function testMcpServer(name: string) {
 onMounted(() => {
   fetchConfig()
   fetchModels()
+  fetchGlobalAgents()
   fetchCopilotStatus()
 })
 
@@ -688,7 +756,7 @@ onUnmounted(() => {
         <div v-if="config" class="content-wrapper">
           <!-- Header -->
           <div class="content-header">
-            <h1>{{ activeKey === 'model' ? 'Models' : menuOptions.find(m => m.key === activeKey)?.label + ' Settings' }}</h1>
+            <h1>{{ activeKey === 'model' || activeKey === 'agents' ? menuOptions.find(m => m.key === activeKey)?.label : menuOptions.find(m => m.key === activeKey)?.label + ' Settings' }}</h1>
             <NSpace>
               <NButton
                 v-if="hasChanges"
@@ -698,7 +766,7 @@ onUnmounted(() => {
               >
                 Save Changes
               </NButton>
-              <NButton v-if="activeKey !== 'model'" quaternary @click="resetConfig">Reset to Defaults</NButton>
+              <NButton v-if="activeKey !== 'model' && activeKey !== 'agents'" quaternary @click="resetConfig">Reset to Defaults</NButton>
             </NSpace>
           </div>
 
@@ -904,6 +972,78 @@ onUnmounted(() => {
               <strong>Note:</strong> If no models are configured above, Clanker falls back to settings in
               <code>config.yaml</code>. Add models here for easier switching with the <code>/model</code> command.
             </NAlert>
+          </div>
+
+          <!-- Global Agents -->
+          <div v-if="activeKey === 'agents'" class="agents-section">
+            <div class="models-header">
+              <div class="models-header-text">
+                <p class="models-description">
+                  Global subagents from <code>~/.clanker/agents/</code>. Pin each one to a specific
+                  model, or leave it on the session default. Project agents
+                  (<code>.clanker/agents/</code> in a repo) aren't shown here — edit those files directly.
+                </p>
+              </div>
+            </div>
+
+            <NSpin :show="agentsLoading">
+              <div v-if="globalAgents.length > 0" class="models-grid">
+                <NCard
+                  v-for="agent in globalAgents"
+                  :key="agent.name"
+                  class="agent-card"
+                  :class="{ 'agent-card-pinned': !!agent.model }"
+                >
+                  <template #header>
+                    <div class="model-card-header">
+                      <div class="model-info">
+                        <NIcon size="18" class="agent-icon"><PeopleOutline /></NIcon>
+                        <span class="model-name">{{ agent.name }}</span>
+                      </div>
+                    </div>
+                  </template>
+
+                  <div class="agent-details">
+                    <p class="agent-description">{{ agent.description }}</p>
+
+                    <div v-if="agent.tools.length" class="agent-tools">
+                      <NTag v-for="tool in agent.tools" :key="tool" size="small" :bordered="false" class="agent-tool-tag">
+                        {{ tool }}
+                      </NTag>
+                    </div>
+                    <div v-else class="agent-tools">
+                      <NTag size="small" :bordered="false" class="agent-tool-tag">all default tools</NTag>
+                    </div>
+                  </div>
+
+                  <template #footer>
+                    <div class="agent-model-row">
+                      <span class="detail-label">Model:</span>
+                      <NSelect
+                        :value="agent.model || '__default__'"
+                        :options="agentModelOptions"
+                        :loading="savingAgentModel === agent.name"
+                        :disabled="savingAgentModel === agent.name"
+                        size="small"
+                        style="flex: 1"
+                        @update:value="(v: string) => onAgentModelChange(agent, v)"
+                      />
+                    </div>
+                  </template>
+                </NCard>
+              </div>
+
+              <NCard v-else class="empty-models-card">
+                <NEmpty description="No global agents found">
+                  <template #extra>
+                    <span class="form-hint" style="margin: 0">
+                      Add one at <code>~/.clanker/agents/&lt;name&gt;.md</code> — see the
+                      built-in <code>agent-creation</code> skill for the format.
+                    </span>
+                  </template>
+                </NEmpty>
+              </NCard>
+            </NSpin>
           </div>
 
           <!-- Add/Edit Model Modal -->
@@ -1856,5 +1996,89 @@ onUnmounted(() => {
   padding: 48px 24px;
   background: var(--oled-surface) !important;
   border: 1px dashed rgba(255, 43, 214, 0.3);
+}
+
+/* Agents Section */
+.agents-section {
+  max-width: 100%;
+}
+
+.agent-card {
+  background: var(--oled-surface) !important;
+  border: 1px solid rgba(182, 255, 26, 0.2);
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--neon-lime), var(--neon-cyan), transparent);
+  opacity: 0.6;
+}
+
+.agent-card:hover {
+  border-color: var(--neon-lime);
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 0 1px rgba(182, 255, 26, 0.3),
+    0 8px 32px rgba(182, 255, 26, 0.12);
+}
+
+.agent-card-pinned {
+  border-color: var(--neon-lime) !important;
+  box-shadow:
+    0 0 0 1px rgba(182, 255, 26, 0.35),
+    0 0 20px rgba(182, 255, 26, 0.15);
+}
+
+.agent-card-pinned::before {
+  opacity: 1;
+  height: 2px;
+}
+
+.agent-icon {
+  color: var(--neon-lime);
+  filter: drop-shadow(0 0 4px rgba(182, 255, 26, 0.6));
+}
+
+.agent-details {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-description {
+  margin: 0;
+  color: #ccc;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.agent-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.agent-tool-tag {
+  background: var(--oled-surface-2) !important;
+  color: var(--neon-cyan) !important;
+  border: 1px solid rgba(0, 240, 255, 0.15) !important;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px !important;
+}
+
+.agent-model-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 </style>

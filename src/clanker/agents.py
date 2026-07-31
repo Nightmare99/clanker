@@ -221,6 +221,75 @@ def load_agent(name: str, working_directory: str | None = None) -> Agent | None:
     return None
 
 
+def list_personal_agents() -> dict[str, Agent]:
+    """Discover agents from ``~/.clanker/agents/`` only, ignoring project agents.
+
+    Used by the global config UI, which edits the user-level agent set and has
+    no project working-directory context to resolve project agents against.
+    """
+    personal_dir = Path.home() / ".clanker" / AGENTS_DIR
+    agents: dict[str, Agent] = {}
+    if not personal_dir.is_dir():
+        return agents
+
+    for entry in sorted(personal_dir.iterdir()):
+        if not entry.is_file() or entry.suffix.lower() != AGENT_FILE_EXT:
+            continue
+        agent = _load_agent_from_file(entry, "personal")
+        if agent is None:
+            continue
+        agents[agent.name] = agent
+
+    return dict(sorted(agents.items()))
+
+
+def set_agent_model(name: str, model: str | None) -> bool:
+    """Set (or clear, if ``model`` is falsy) the ``model`` field on a personal agent.
+
+    Only ``~/.clanker/agents/`` is searched -- this never touches project
+    agents, matching ``list_personal_agents``. Rewrites just the frontmatter,
+    preserving the rest of the file's fields and the system-prompt body.
+
+    Returns:
+        True if a matching personal agent file was found and updated, False
+        if no personal agent has that name.
+    """
+    personal_dir = Path.home() / ".clanker" / AGENTS_DIR
+    if not personal_dir.is_dir():
+        return False
+
+    lowered = name.strip().lower()
+    target: Path | None = None
+    for entry in sorted(personal_dir.iterdir()):
+        if not entry.is_file() or entry.suffix.lower() != AGENT_FILE_EXT:
+            continue
+        parsed = parse_agent_md(entry)
+        if parsed is None:
+            continue
+        meta, _ = parsed
+        entry_name = meta.get("name") or entry.stem
+        if isinstance(entry_name, str) and entry_name.strip().lower() == lowered:
+            target = entry
+            break
+
+    if target is None:
+        return False
+
+    parsed = parse_agent_md(target)
+    if parsed is None:
+        return False
+    meta, body = parsed
+
+    if model:
+        meta["model"] = model
+    else:
+        meta.pop("model", None)
+
+    new_frontmatter = yaml.safe_dump(meta, sort_keys=False, default_flow_style=False).strip()
+    target.write_text(f"---\n{new_frontmatter}\n---\n\n{body}\n", encoding="utf-8")
+    return True
+
+
 def get_agents_catalog(working_directory: str | None = None) -> str:
     """Build the always-on agents catalog for the system prompt.
 

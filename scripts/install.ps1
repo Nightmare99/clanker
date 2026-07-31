@@ -16,14 +16,50 @@ param(
 $ErrorActionPreference = "Stop"
 
 $Repo = "Nightmare99/clanker"
+$DefaultsRepo = "Nightmare99/clanker-defaults"
 $BinaryName = "clanker.exe"
 $InstallDir = if ($env:CLANKER_INSTALL_DIR) { $env:CLANKER_INSTALL_DIR } else { "$env:LOCALAPPDATA\clanker\bin" }
+$ClankerHome = if ($env:CLANKER_HOME) { $env:CLANKER_HOME } else { "$HOME\.clanker" }
+$DefaultsStagingDir = Join-Path $ClankerHome ".clanker-defaults"
 $RequestedVersion = if ($Version) { $Version } elseif ($env:CLANKER_VERSION) { $env:CLANKER_VERSION } else { $null }
 
 function Write-Info    { param($Msg) Write-Host "  ▸ $Msg" -ForegroundColor Cyan }
 function Write-Ok      { param($Msg) Write-Host "  ✓ $Msg" -ForegroundColor Green }
 function Write-Warn    { param($Msg) Write-Host "  ! $Msg" -ForegroundColor Yellow }
 function Write-Err     { param($Msg) Write-Host "  ✗ $Msg" -ForegroundColor Red; exit 1 }
+
+function Sync-Defaults {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-Warn "git not found; skipping default skills/agents sync."
+        return
+    }
+
+    if (Test-Path $DefaultsStagingDir) {
+        Remove-Item -Recurse -Force $DefaultsStagingDir -ErrorAction SilentlyContinue
+    }
+
+    try {
+        git clone --depth 1 --quiet "https://github.com/$DefaultsRepo.git" $DefaultsStagingDir 2>$null | Out-Null
+        if (-not (Test-Path $DefaultsStagingDir)) { throw "clone failed" }
+    } catch {
+        Write-Warn "Could not clone $DefaultsRepo; skipping default skills/agents sync."
+        Remove-Item -Recurse -Force $DefaultsStagingDir -ErrorAction SilentlyContinue
+        return
+    }
+
+    $AgentsDir = Join-Path $ClankerHome "agents"
+    $SkillsDir = Join-Path $ClankerHome "skills"
+    New-Item -ItemType Directory -Path $AgentsDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $SkillsDir -Force | Out-Null
+
+    $SrcAgents = Join-Path $DefaultsStagingDir "agents"
+    $SrcSkills = Join-Path $DefaultsStagingDir "skills"
+    if (Test-Path $SrcAgents) { Copy-Item -Path "$SrcAgents\*" -Destination $AgentsDir -Recurse -Force }
+    if (Test-Path $SrcSkills) { Copy-Item -Path "$SrcSkills\*" -Destination $SkillsDir -Recurse -Force }
+    Remove-Item -Recurse -Force $DefaultsStagingDir -ErrorAction SilentlyContinue
+
+    Write-Ok "Synced default skills and agents to $ClankerHome"
+}
 
 Write-Host ""
 Write-Host "  ⚙  Clanker Installer" -ForegroundColor Cyan
@@ -71,6 +107,7 @@ if (Test-Path $ExistingBinary) {
         if ($InstalledVersion -eq $TargetClean) {
             Write-Host ""
             Write-Ok "Clanker $Version is already installed."
+            Sync-Defaults
             Write-Host ""
             exit 0
         }
@@ -106,6 +143,8 @@ try {
     Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
 }
 Write-Ok "Installed to $InstallDir\$BinaryName"
+
+Sync-Defaults
 
 # Check if install dir is in PATH
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
