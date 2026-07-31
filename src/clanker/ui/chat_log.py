@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import colorsys
 import contextlib
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -34,7 +35,12 @@ _GREEN = "rgb(180,255,60)"
 _LIME = "rgb(180,255,60)"
 _WHITE = "white"
 _GREY = "rgb(100,100,100)"
-_BLINK_CHARS = ("█", " ")
+
+# Rainbow wash over the ASCII art: how fast the hue shifts across columns/rows,
+# and how far the phase advances per tick (see _rainbow_style/_rainbow_tick).
+_RAINBOW_COL_STEP = 0.02
+_RAINBOW_ROW_STEP = 0.06
+_RAINBOW_PHASE_STEP = 0.02
 
 
 @dataclass
@@ -88,27 +94,37 @@ class ChatLog(VerticalScroll):
         self._hero_final_model: str = ""
         self._hero_final_yolo: bool = False
         self._hero_is_final: bool = False
-        self._blink_timer = None
-        self._blink_state = 0  # 0 = visible, 1 = hidden
-        self._blink_running = False
+        self._rainbow_timer = None
+        self._rainbow_phase = 0.0
 
     def on_mount(self) -> None:
-        self._blink_timer = self.set_interval(
-            0.5, self._blink_tick, name="hero-blink", repeat=0, pause=True
-        )
+        self._rainbow_timer = self.set_interval(0.08, self._rainbow_tick, name="hero-rainbow")
 
     # --- Hero rendering ---
+
+    def _rainbow_style(self, x: int, y: int) -> str:
+        """RGB style string for a lolcat-style rainbow wash at grid position (x, y)."""
+        hue = (x * _RAINBOW_COL_STEP + y * _RAINBOW_ROW_STEP + self._rainbow_phase) % 1.0
+        r, g, b = colorsys.hsv_to_rgb(hue, 0.85, 1.0)
+        return f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"
+
+    def _append_rainbow_art(self, full: Text, art_lines: list[str]) -> None:
+        """Append ASCII art lines to *full*, coloring each glyph with the rainbow wash."""
+        for y, line in enumerate(art_lines):
+            for x, ch in enumerate(line):
+                if ch.strip():
+                    full.append(ch, style=f"bold {self._rainbow_style(x, y)}")
+                else:
+                    full.append(ch)
+            if y < len(art_lines) - 1:
+                full.append("\n")
 
     def _build_hero_text(self, art: str, init_text: str = "") -> Text:
         """Build a Rich Text for the hero with per-section colors."""
         full = Text()
 
-        # ASCII art — cyan
-        art_lines = art.split("\n")
-        for i, line in enumerate(art_lines):
-            full.append(line, style=f"bold {_CYAN}")
-            if i < len(art_lines) - 1:
-                full.append("\n")
+        # ASCII art — rainbow wash
+        self._append_rainbow_art(full, art.split("\n"))
 
         full.append("\n")
 
@@ -123,23 +139,8 @@ class ChatLog(VerticalScroll):
         """Build the final persistent hero with colored sections."""
         full = Text()
 
-        # ASCII art — cyan with blinking cursor on last non-empty line
-        art_lines = art.split("\n")
-        cursor_char = _BLINK_CHARS[self._blink_state]
-
-        # Find the last non-empty line to place the cursor next to
-        last_content_idx = -1
-        for i in range(len(art_lines) - 1, -1, -1):
-            if art_lines[i].strip():
-                last_content_idx = i
-                break
-
-        for i, line in enumerate(art_lines):
-            full.append(line, style=f"bold {_CYAN}")
-            if i == last_content_idx:
-                full.append(f" {cursor_char * 8}", style=f"bold {_LIME}")
-            if i < len(art_lines) - 1:
-                full.append("\n")
+        # ASCII art — rainbow wash
+        self._append_rainbow_art(full, art.split("\n"))
 
         full.append("\n")
 
@@ -167,16 +168,20 @@ class ChatLog(VerticalScroll):
 
         return full
 
-    def _blink_tick(self) -> None:
-        """Toggle the blinking cursor in the hero."""
+    def _rainbow_tick(self) -> None:
+        """Advance the rainbow phase and re-render the hero's ASCII art."""
         if self._hero_widget is None:
             return
-        self._blink_state = 1 - self._blink_state
+        self._rainbow_phase = (self._rainbow_phase + _RAINBOW_PHASE_STEP) % 1.0
         if self._hero_is_final:
             self._hero_widget.update(self._build_hero_final(
                 "\n".join(self._hero_art_lines),
                 self._hero_final_model,
                 self._hero_final_yolo,
+            ))
+        else:
+            self._hero_widget.update(self._build_hero_text(
+                "\n".join(self._hero_art_lines), self._hero_init_text
             ))
 
     def update_hero_art(self, art: str, init_text: str = "") -> None:
@@ -215,10 +220,6 @@ class ChatLog(VerticalScroll):
 
         self._hero_widget.update(self._build_hero_final(art, model_info, yolo_mode))
 
-        if self._blink_timer and not self._blink_running:
-            self._blink_running = True
-            self._blink_timer.resume()
-
     def clear_hero(self) -> None:
         """Remove the hero widget and rule."""
         if self._hero_widget is not None:
@@ -232,10 +233,6 @@ class ChatLog(VerticalScroll):
             if self._hero_rule in self._messages:
                 self._messages.remove(self._hero_rule)
             self._hero_rule = None
-
-        if self._blink_timer:
-            self._blink_running = False
-            self._blink_timer.pause()
 
         self._hero_art_lines = []
         self._hero_init_text = ""
