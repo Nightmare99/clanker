@@ -41,6 +41,7 @@ import {
   StarOutline,
   Star,
   PeopleOutline,
+  SearchOutline,
 } from '@vicons/ionicons5'
 import { h } from 'vue'
 
@@ -138,6 +139,8 @@ const hasChanges = ref(false)
 // Models management
 const models = ref<ModelConfig[]>([])
 const defaultModel = ref<string | null>(null)
+const modelSearch = ref('')
+const modelSortBy = ref<'name' | 'provider' | 'default'>('name')
 
 // Global agents management
 const globalAgents = ref<GlobalAgent[]>([])
@@ -217,6 +220,12 @@ const providerStyles: Record<string, { color: string; bgColor: string }> = {
   'Ollama': { color: '#ffe600', bgColor: 'rgba(255, 230, 0, 0.12)' },
   'GitHubCopilot': { color: '#8957e5', bgColor: 'rgba(137, 87, 229, 0.12)' },
 }
+
+const modelSortOptions = [
+  { label: 'Name (A–Z)', value: 'name' },
+  { label: 'Provider', value: 'provider' },
+  { label: 'Default first', value: 'default' },
+]
 
 const logLevelOptions = [
   { label: 'DEBUG', value: 'DEBUG' },
@@ -548,6 +557,37 @@ function getProviderStyle(provider: string) {
   return providerStyles[provider] || { color: '#888', bgColor: 'rgba(136, 136, 136, 0.1)' }
 }
 
+// Filtered + sorted view of the models list for the Models tab: search
+// matches name, provider, and model ID; sort never mutates the source array.
+const visibleModels = computed(() => {
+  const query = modelSearch.value.trim().toLowerCase()
+  let list = models.value
+  if (query) {
+    list = list.filter(m =>
+      m.name.toLowerCase().includes(query) ||
+      m.provider.toLowerCase().includes(query) ||
+      (m.model?.toLowerCase().includes(query) ?? false)
+    )
+  }
+
+  const sorted = [...list]
+  switch (modelSortBy.value) {
+    case 'provider':
+      sorted.sort((a, b) => a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name))
+      break
+    case 'default':
+      sorted.sort((a, b) => {
+        const aDefault = a.name === defaultModel.value ? 0 : 1
+        const bDefault = b.name === defaultModel.value ? 0 : 1
+        return aDefault - bDefault || a.name.localeCompare(b.name)
+      })
+      break
+    default:
+      sorted.sort((a, b) => a.name.localeCompare(b.name))
+  }
+  return sorted
+})
+
 // Model dropdown options for the Agents tab: configured models + a "session
 // default" entry that clears the agent's override.
 const agentModelOptions = computed(() => [
@@ -789,6 +829,25 @@ onUnmounted(() => {
               </NButton>
             </div>
 
+            <!-- Search + Sort -->
+            <div v-if="models.length > 0" class="models-toolbar">
+              <NInput
+                v-model:value="modelSearch"
+                placeholder="Search models by name, provider, or model ID..."
+                clearable
+                class="models-search"
+              >
+                <template #prefix>
+                  <NIcon><SearchOutline /></NIcon>
+                </template>
+              </NInput>
+              <NSelect
+                v-model:value="modelSortBy"
+                :options="modelSortOptions"
+                class="models-sort"
+              />
+            </div>
+
             <!-- GitHub Copilot Connect -->
             <NCard class="copilot-card" :style="{ borderColor: providerStyles['GitHubCopilot'].color + '40' }">
               <div class="copilot-card-content">
@@ -827,9 +886,9 @@ onUnmounted(() => {
             </NCard>
 
             <!-- Models Grid -->
-            <div v-if="models.length > 0" class="models-grid">
+            <div v-if="visibleModels.length > 0" class="models-grid">
               <NCard
-                v-for="model in models"
+                v-for="model in visibleModels"
                 :key="model.name"
                 class="model-card"
                 :class="{ 'model-card-default': model.name === defaultModel }"
@@ -953,8 +1012,8 @@ onUnmounted(() => {
               </NCard>
             </div>
 
-            <!-- Empty State -->
-            <NCard v-else class="empty-models-card">
+            <!-- Empty State: no models configured at all -->
+            <NCard v-else-if="models.length === 0" class="empty-models-card">
               <NEmpty description="No models configured">
                 <template #extra>
                   <NButton type="primary" @click="openAddModel">
@@ -963,6 +1022,15 @@ onUnmounted(() => {
                     </template>
                     Add Your First Model
                   </NButton>
+                </template>
+              </NEmpty>
+            </NCard>
+
+            <!-- Empty State: search matched nothing -->
+            <NCard v-else class="empty-models-card">
+              <NEmpty description="No models match your search">
+                <template #extra>
+                  <NButton @click="modelSearch = ''">Clear Search</NButton>
                 </template>
               </NEmpty>
             </NCard>
@@ -1841,6 +1909,22 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--neon-lime);
   border: 1px solid rgba(182, 255, 26, 0.25);
+}
+
+.models-toolbar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.models-search {
+  flex: 1;
+  min-width: 200px;
+}
+
+.models-sort {
+  width: 190px;
+  flex-shrink: 0;
 }
 
 .copilot-card {
