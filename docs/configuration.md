@@ -75,6 +75,7 @@ The recommended way to configure LLM providers is using the JSON-based models co
 | `thinking_budget_tokens` | No | Token budget for thinking (default: 10000) |
 | `reasoning_effort` | No | Reasoning effort: `low`, `medium`, `high` (AzureOpenAI o1/o3 only) |
 | `stream_chunk_timeout` | No | Seconds to wait for the next stream chunk before erroring (OpenAI/Azure). Default 600; `0` disables. Raise for high-reasoning models that pause silently. |
+| `use_responses_api` | No | Route through OpenAI's `/responses` endpoint instead of `/chat/completions` (OpenAI only). Off by default — most OpenAI-compatible endpoints (OpenRouter, local proxies, etc.) only implement `/chat/completions`. GitHub Copilot models set this automatically per-model (only the GPT-5.x family supports it); no need to set it manually for `copilot:*` entries. |
 
 ### Switching Models
 
@@ -143,12 +144,21 @@ refreshed limits.
 
 ## User Instructions
 
-You can provide custom instructions that are included in every conversation's system prompt. Create a file at `.clanker/instructions.md` in your workspace (the same `.clanker` directory that stores memories and conversations):
+You can provide custom instructions that are included in every conversation's system prompt. Clanker reads instructions from two locations:
+
+| Location | Scope | Use for |
+|----------|-------|---------|
+| `.clanker/instructions.md` | **Project** (this workspace only) | Project-specific conventions |
+| `~/.clanker/instructions.md` | **Personal** (every project) | Standing instructions that apply everywhere |
 
 ```bash
-# Create the instructions file
+# Project instructions
 mkdir -p .clanker
 echo "Always use TypeScript for new files. Prefer functional components in React." > .clanker/instructions.md
+
+# Personal instructions, applied in every workspace
+mkdir -p ~/.clanker
+echo "Keep responses concise. Never use emojis." > ~/.clanker/instructions.md
 ```
 
 The contents are automatically injected into the system prompt under a `# USER INSTRUCTIONS` section. This is useful for:
@@ -157,7 +167,7 @@ The contents are automatically injected into the system prompt under a `# USER I
 - Setting project-specific conventions the agent should follow
 - Providing standing instructions that apply to every interaction
 
-**Character limit**: Only the first **250 characters** are used. Content beyond 250 characters is silently truncated. Keep instructions concise and focused.
+**Character limit**: Only the first **250 characters** of each file are used. Content beyond 250 characters is silently truncated. Keep instructions concise and focused.
 
 **Example** `.clanker/instructions.md`:
 
@@ -168,7 +178,7 @@ Prefer pathlib over os.path.
 When writing tests, use pytest fixtures and parametrize where appropriate.
 ```
 
-> **Note**: User instructions are per-workspace. Different projects can have different instructions. If the file doesn't exist or is empty, no extra instructions are added.
+> **Note**: When both files exist, personal instructions are listed first and project instructions after, so project-specific guidance takes precedence if the two conflict. If neither file exists or both are empty, no extra instructions are added.
 
 ## General Settings
 

@@ -16,6 +16,26 @@ output. The main agent spawns an agent to delegate a subtask.
    event loop. Its full output streams live to the user terminal. The return
    value to the parent agent is only a brief summary.
 
+## Output conciseness
+
+Every subagent's system prompt has conciseness instructions appended
+automatically, asking it to keep its final response short and to the point.
+This is backed by a hard limit: if a subagent's final response exceeds 800
+words, Clanker truncates it before returning it to the parent agent, writes
+the full untruncated text to a temporary file, and appends a note with the
+word count and file path so the parent (or you) can read the rest if needed.
+The full response still streams live to your terminal regardless — only what
+goes back to the parent agent's context is capped.
+
+## Progress and history
+
+While a subagent is running, its tool calls and progress are tracked and
+shown live. Press **F2** at any time to open the **Subagents** panel — a list
+of past and in-flight subagent runs for the session. Selecting a run shows
+its status, the prompt it was given, and a log of the tool calls it made
+(including diffs for file edits), so you can inspect what a subagent did
+without scrolling back through the full chat log.
+
 ## Locations
 
 Agents are discovered from two places:
@@ -45,6 +65,7 @@ Each agent is a markdown file with YAML frontmatter:
 name: code-explorer
 description: Explores and explains codebases. Use when the user wants to understand project structure, how code works, or trace data flow.
 tools: [read_file, glob_search, grep_search]
+model: claude-haiku  # optional; uses the session's default model if omitted
 ---
 
 # Code Explorer
@@ -67,8 +88,14 @@ When exploring:
 | `name` | No* | Canonical agent id. Defaults to the filename (without `.md`). |
 | `description` | **Yes** | What the agent does and when to use it. This is the trigger signal the main agent matches against. |
 | `tools` | No | List of tool names the agent should have access to. If omitted or empty, the agent gets all default tools. |
+| `model` | No | Name of a model configured in `~/.clanker/models.json` to run this agent with. If omitted, the agent uses the session's default model. |
 
 \* `name` is optional but recommended; without it the filename is used.
+
+Pinning a `model` is useful for giving a fast/cheap model to simple, high-volume
+subagents (e.g. an exploration agent) while keeping the main conversation on a
+stronger model. If the named model isn't found in `models.json`, the agent
+falls back to the session default and a warning is logged.
 
 ### Body
 

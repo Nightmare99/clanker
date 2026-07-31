@@ -89,6 +89,30 @@ Switched to model: GPT-4o (AzureOpenAI)
 
 Models are configured in `~/.clanker/models.json` or via `clanker config`.
 
+## Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `Tab` | While typing a slash command (e.g. `/model `, `/workflow `, `/skill `, `/restore `), opens the completion menu and gives it keyboard control. Press `Tab` again to accept the highlighted match. |
+| `↑` / `↓` | Navigate input history, or — once the completion menu has keyboard control (after pressing `Tab`) — move the highlight up/down within it. |
+| `Alt+↑` / `Alt+↓` | Navigate input history even while the completion menu has keyboard control. |
+| `Enter` | Submit the input, or — with the completion menu engaged — accept the highlighted match. |
+| `Ctrl+C` | Copy the current text selection, if any (in-field or screen-wide). If nothing is selected, interrupts the agent instead. |
+| `Ctrl+D` | Quit Clanker. |
+| `F2` | Open the **Subagents** panel — view past and in-flight subagent runs, their prompts, status, and tool call history for the session (see [Agents → Progress and history](agents.md#progress-and-history)). |
+| `Esc` | Cancel an open menu or approval prompt. |
+
+Input history is persisted across sessions to `~/.clanker/input_history.txt`
+(last 500 entries).
+
+### Sending Messages While the Agent Is Working
+
+You can type and submit a follow-up message while the agent is still
+processing a previous turn — it doesn't need to finish first. The message is
+queued (shown above the input bar) and injected as soon as the agent reaches
+its next step, rather than being dropped or requiring you to wait. Slash
+commands are not queued this way; they still require the agent to be idle.
+
 ## Examples
 
 ### Reading and Understanding Code

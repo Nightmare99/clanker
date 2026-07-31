@@ -107,6 +107,7 @@ Clanker supports multiple providers via a unified interface:
 - **OpenAI** - Direct OpenAI API
 - **Anthropic** - Claude models with extended thinking support
 - **Ollama** - Local models
+- **GitHubCopilot** - Models via a connected GitHub Copilot subscription (`/copilot-login`)
 
 Provider choice should not affect agent behavior, only model quality.
 

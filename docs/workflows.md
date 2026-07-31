@@ -1,13 +1,21 @@
 # Workflows
 
-Workflows are stored prompts that let you program repeatable tasks into Clanker. They live as markdown files in the `.clanker/workflows/` directory of your workspace.
+Workflows are stored prompts that let you program repeatable tasks into Clanker. They live as markdown files and are discovered from two locations:
+
+| Location | Scope | Use for |
+|----------|-------|---------|
+| `.clanker/workflows/` | **Project** (committed to the repo) | Workflows specific to this codebase |
+| `~/.clanker/workflows/` | **Personal** (apply to every project) | Your own reusable workflows across all projects |
+
+If a project workflow and a personal workflow share the same name, the **project** workflow wins.
 
 ## Setup
 
 Create the workflows directory and add markdown files:
 
 ```bash
-mkdir -p .clanker/workflows
+mkdir -p .clanker/workflows        # project workflows
+mkdir -p ~/.clanker/workflows      # personal workflows, available everywhere
 ```
 
 Each `.md` file is a workflow. The filename (without extension) becomes the workflow name.
@@ -83,12 +91,18 @@ The `/workflow` command supports tab completion. Type `/workflow ` and press Tab
 ## File Structure
 
 ```
-.clanker/
+.clanker/                  # project
 ├── workflows/
 │   ├── test.md
 │   ├── review.md
 │   └── deploy-check.md
 ├── conversations/
 ├── memories/
+└── instructions.md
+
+~/.clanker/                # personal (global, applies to every project)
+├── workflows/
+├── skills/
+├── agents/
 └── instructions.md
 ```
