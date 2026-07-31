@@ -7,32 +7,42 @@ INSTRUCTIONS_FILE = "instructions.md"
 MAX_INSTRUCTION_CHARS = 250
 
 
-def load_user_instructions(working_directory: str | None = None) -> str:
-    """Load user instructions from .clanker/instructions.md in the workspace.
+def _read_instructions_file(path: Path) -> str:
+    """Read and truncate an instructions.md file, or "" if missing/empty."""
+    if not path.is_file():
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return text[:MAX_INSTRUCTION_CHARS]
 
-    Reads the file and truncates to the first MAX_INSTRUCTION_CHARS characters.
+
+def load_user_instructions(working_directory: str | None = None) -> str:
+    """Load user instructions from project and personal instructions.md files.
+
+    Reads ``~/.clanker/instructions.md`` (personal, applies to every project)
+    and ``<workspace>/.clanker/instructions.md`` (project-specific), each
+    truncated to the first MAX_INSTRUCTION_CHARS characters. Personal
+    instructions are listed first, project instructions after -- so
+    project-specific guidance takes precedence when the two conflict.
 
     Args:
         working_directory: Workspace root. Defaults to current directory.
 
     Returns:
-        User instructions string, or empty string if file doesn't exist.
+        Combined user instructions string, or empty string if neither file exists.
     """
     workspace = Path(working_directory or os.getcwd())
-    instructions_path = workspace / ".clanker" / INSTRUCTIONS_FILE
+    personal_path = Path.home() / ".clanker" / INSTRUCTIONS_FILE
+    project_path = workspace / ".clanker" / INSTRUCTIONS_FILE
 
-    if not instructions_path.is_file():
-        return ""
+    personal_text = _read_instructions_file(personal_path)
+    project_text = _read_instructions_file(project_path)
 
-    try:
-        text = instructions_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
-
-    if not text:
-        return ""
-
-    return text[:MAX_INSTRUCTION_CHARS]
+    if personal_text and project_text:
+        return f"## Personal (all projects)\n{personal_text}\n\n## Project\n{project_text}"
+    return personal_text or project_text
 
 
 def load_skills_catalog(working_directory: str | None = None) -> str:

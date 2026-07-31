@@ -449,7 +449,10 @@ def handle_command(
             lines = []
             if not workflows:
                 lines.append("No workflows found.")
-                lines.append("Create .md files in .clanker/workflows/ to add workflows.")
+                lines.append(
+                    "Create .md files in .clanker/workflows/ (project) or "
+                    "~/.clanker/workflows/ (personal) to add workflows."
+                )
                 for line in lines:
                     console.print_info(line)
             else:

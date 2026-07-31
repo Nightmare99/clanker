@@ -5,6 +5,14 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path, monkeypatch):
+    """Point HOME at an empty dir so a real ~/.clanker/workflows never leaks in."""
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+
 
 def _load_workflows_module():
     """Load workflows module directly without triggering heavy imports."""
@@ -114,6 +122,66 @@ class TestLoadWorkflow:
         (wf_dir / "full.md").write_text(content)
         result = mod.load_workflow("full", str(tmp_path))
         assert result == content
+
+
+class TestPersonalWorkflows:
+    """Tests for personal (global, ~/.clanker/workflows) workflows."""
+
+    def test_lists_personal_workflows(self, tmp_path, monkeypatch) -> None:
+        """Personal workflows are listed alongside project ones."""
+        mod = _load_workflows_module()
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        personal_dir = home / ".clanker" / "workflows"
+        personal_dir.mkdir(parents=True)
+        (personal_dir / "morning.md").write_text("Daily standup summary")
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        result = mod.list_workflows(str(workspace))
+        assert result == ["morning"]
+
+    def test_merges_project_and_personal(self, tmp_path, monkeypatch) -> None:
+        """Project and personal workflow names are merged and de-duplicated."""
+        mod = _load_workflows_module()
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        personal_dir = home / ".clanker" / "workflows"
+        personal_dir.mkdir(parents=True)
+        (personal_dir / "morning.md").write_text("Daily standup summary")
+        workspace = tmp_path / "workspace"
+        wf_dir = workspace / ".clanker" / "workflows"
+        wf_dir.mkdir(parents=True)
+        (wf_dir / "deploy.md").write_text("Deploy to prod")
+        result = mod.list_workflows(str(workspace))
+        assert result == ["deploy", "morning"]
+
+    def test_loads_personal_workflow_content(self, tmp_path, monkeypatch) -> None:
+        """A personal workflow's content can be loaded when no project workflow shadows it."""
+        mod = _load_workflows_module()
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        personal_dir = home / ".clanker" / "workflows"
+        personal_dir.mkdir(parents=True)
+        (personal_dir / "morning.md").write_text("Daily standup summary")
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        result = mod.load_workflow("morning", str(workspace))
+        assert result == "Daily standup summary"
+
+    def test_project_workflow_shadows_personal(self, tmp_path, monkeypatch) -> None:
+        """A project workflow with the same name takes precedence over personal."""
+        mod = _load_workflows_module()
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        personal_dir = home / ".clanker" / "workflows"
+        personal_dir.mkdir(parents=True)
+        (personal_dir / "deploy.md").write_text("Personal deploy steps")
+        workspace = tmp_path / "workspace"
+        wf_dir = workspace / ".clanker" / "workflows"
+        wf_dir.mkdir(parents=True)
+        (wf_dir / "deploy.md").write_text("Project deploy steps")
+        result = mod.load_workflow("deploy", str(workspace))
+        assert result == "Project deploy steps"
 
 
 class TestGetWorkflowsDir:

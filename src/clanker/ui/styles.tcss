@@ -25,7 +25,7 @@ ChatLog .msg-assistant {
 }
 
 ChatLog .msg-card {
-    background: rgb(18, 18, 24);
+    background: transparent;
     padding: 1 1 0 1;
     margin: 0 0 0 0;
 }

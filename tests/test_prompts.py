@@ -174,23 +174,26 @@ def _get_load_user_instructions():
 
 
 class TestUserInstructions:
-    """Tests for user instructions loaded from .clanker/instructions.md."""
+    """Tests for user instructions loaded from project and personal instructions.md."""
 
-    def test_no_file_returns_empty(self, tmp_path) -> None:
+    def test_no_file_returns_empty(self, tmp_path, monkeypatch) -> None:
         """Returns empty string when instructions.md doesn't exist."""
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
         load = _get_load_user_instructions()
         assert load(str(tmp_path)) == ""
 
-    def test_reads_instructions_file(self, tmp_path) -> None:
+    def test_reads_instructions_file(self, tmp_path, monkeypatch) -> None:
         """Reads content from .clanker/instructions.md."""
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
         load = _get_load_user_instructions()
         clanker_dir = tmp_path / ".clanker"
         clanker_dir.mkdir()
         (clanker_dir / "instructions.md").write_text("Always respond in French.")
         assert load(str(tmp_path)) == "Always respond in French."
 
-    def test_truncates_to_250_characters(self, tmp_path) -> None:
+    def test_truncates_to_250_characters(self, tmp_path, monkeypatch) -> None:
         """Truncates instructions to first 250 characters."""
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
         load = _get_load_user_instructions()
         clanker_dir = tmp_path / ".clanker"
         clanker_dir.mkdir()
@@ -199,8 +202,9 @@ class TestUserInstructions:
         result = load(str(tmp_path))
         assert len(result) == 250
 
-    def test_under_250_chars_unchanged(self, tmp_path) -> None:
+    def test_under_250_chars_unchanged(self, tmp_path, monkeypatch) -> None:
         """Instructions under 250 characters are returned in full."""
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
         load = _get_load_user_instructions()
         clanker_dir = tmp_path / ".clanker"
         clanker_dir.mkdir()
@@ -208,16 +212,44 @@ class TestUserInstructions:
         (clanker_dir / "instructions.md").write_text(text)
         assert load(str(tmp_path)) == text
 
-    def test_empty_file_returns_empty(self, tmp_path) -> None:
+    def test_empty_file_returns_empty(self, tmp_path, monkeypatch) -> None:
         """Empty instructions file returns empty string."""
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
         load = _get_load_user_instructions()
         clanker_dir = tmp_path / ".clanker"
         clanker_dir.mkdir()
         (clanker_dir / "instructions.md").write_text("   \n  \n  ")
         assert load(str(tmp_path)) == ""
 
-    def test_injected_into_system_prompt(self, tmp_path) -> None:
+    def test_reads_personal_instructions_file(self, tmp_path, monkeypatch) -> None:
+        """Reads content from ~/.clanker/instructions.md when no project file exists."""
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        load = _get_load_user_instructions()
+        personal_dir = home / ".clanker"
+        personal_dir.mkdir(parents=True)
+        (personal_dir / "instructions.md").write_text("Always respond in French.")
+        assert load(str(tmp_path)) == "Always respond in French."
+
+    def test_merges_personal_and_project(self, tmp_path, monkeypatch) -> None:
+        """Both personal and project instructions are included, project last."""
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        load = _get_load_user_instructions()
+        personal_dir = home / ".clanker"
+        personal_dir.mkdir(parents=True)
+        (personal_dir / "instructions.md").write_text("Always respond in French.")
+        project_dir = tmp_path / ".clanker"
+        project_dir.mkdir()
+        (project_dir / "instructions.md").write_text("Always use TypeScript.")
+        result = load(str(tmp_path))
+        assert "Always respond in French." in result
+        assert "Always use TypeScript." in result
+        assert result.index("French") < result.index("TypeScript")
+
+    def test_injected_into_system_prompt(self, tmp_path, monkeypatch) -> None:
         """User instructions appear in system prompt under USER INSTRUCTIONS."""
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
         get_system_prompt = _get_system_prompt_fn()
         clanker_dir = tmp_path / ".clanker"
         clanker_dir.mkdir()
@@ -226,8 +258,9 @@ class TestUserInstructions:
         assert "# USER INSTRUCTIONS" in prompt
         assert "Always use TypeScript." in prompt
 
-    def test_not_injected_when_no_file(self, tmp_path) -> None:
+    def test_not_injected_when_no_file(self, tmp_path, monkeypatch) -> None:
         """USER INSTRUCTIONS section absent when no instructions file."""
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
         get_system_prompt = _get_system_prompt_fn()
         prompt = get_system_prompt(working_directory=str(tmp_path))
         assert "# USER INSTRUCTIONS" not in prompt

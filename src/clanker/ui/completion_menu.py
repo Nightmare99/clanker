@@ -36,7 +36,10 @@ class CompletionMenu(Static):
         self._all_commands = commands
         self._matches: list[str] = []
         self._highlight_index = 0
-        self._render_cache: Text = Text()
+        # Named distinctly from Widget's own internal `_render_cache` (a
+        # `_RenderCache` object set during Textual's render cycle) -- reusing
+        # that name causes render() to intermittently return the wrong type.
+        self._menu_text: Text = Text()
         # Signature: (cmd: str, arg_prefix: str) -> list[str]
         self._subcommand_completer: Callable[[str, str], list[str]] | None = None
         # Whether the user has taken keyboard control of the menu (via Tab).
@@ -116,14 +119,14 @@ class CompletionMenu(Static):
 
     def _build_render(self) -> None:
         """Build cached Rich Text (avoids allocation on render())."""
-        self._render_cache = Text()
+        self._menu_text = Text()
         for i, item in enumerate(self._matches):
             if i == self._highlight_index:
-                self._render_cache.append(f"> {item}\n", style="bold rgb(0,240,240)")
+                self._menu_text.append(f"> {item}\n", style="bold rgb(0,240,240)")
             else:
-                self._render_cache.append(f"  {item}\n")
+                self._menu_text.append(f"  {item}\n")
         if not self._engaged:
-            self._render_cache.append("Tab to select", style="dim italic rgb(120,120,120)")
+            self._menu_text.append("Tab to select", style="dim italic rgb(120,120,120)")
 
     def _position(self) -> None:
         """Position immediately above the input bar, left-aligned."""
@@ -138,4 +141,4 @@ class CompletionMenu(Static):
         self.offset = Offset(2, y)
 
     def render(self) -> Text:
-        return self._render_cache
+        return self._menu_text
