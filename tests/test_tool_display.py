@@ -46,6 +46,9 @@ class FakeConsole:
     def print_parallel_tools(self, tools: list) -> None:
         self.calls.append(("parallel", tools))
 
+    def print_todo_checklist(self, todos: list) -> None:
+        self.calls.append(("todo_checklist", todos))
+
 
 def test_notify_tool_output_is_suppressed_in_generic_tool_display() -> None:
     module = _load_tool_display_module()
@@ -69,6 +72,32 @@ def test_notify_tool_output_is_suppressed_in_generic_tool_display() -> None:
     assert starts == ["start"]
     assert ends == ["end"]
     assert console.calls == []
+
+
+def test_todo_write_renders_checklist_not_generic_result() -> None:
+    """The console has no pinned todo panel (that's TUI-only), so
+    handle_tool_end must render the full checklist there instead of the
+    generic one-line "N/M done" result."""
+    module = _load_tool_display_module()
+    ToolDisplayHandler = module.ToolDisplayHandler
+
+    console = FakeConsole()
+    handler = ToolDisplayHandler(console=console)
+
+    handler.handle_tool_start("todo_write", {"todos": [{"content": "A", "status": "pending"}]})
+    handler.handle_tool_end(
+        "todo_write",
+        json.dumps({
+            "ok": True,
+            "todos": [{"content": "A", "status": "pending", "active_form": "A"}],
+            "summary": {"total": 1, "completed": 0, "in_progress": 0, "pending": 1},
+        }),
+    )
+
+    kinds = [c[0] for c in console.calls]
+    assert "use" in kinds  # header still shown
+    assert "todo_checklist" in kinds
+    assert "result" not in kinds  # no generic one-liner alongside it
 
 
 class TestToolDisplayHandler:

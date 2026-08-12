@@ -182,6 +182,20 @@ def compact_result_summary(
             return f"{len(items)} item{'s' if len(items) != 1 else ''}"
         return None
 
+    if tool_name in ("todo_write", "todo_read"):
+        # Full checklist is rendered separately (see build_todo_checklist_text);
+        # this one-liner is only the fallback for renderers that don't call it.
+        if parsed and parsed.get("ok"):
+            summary = parsed.get("summary", {})
+            total = summary.get("total", 0)
+            completed = summary.get("completed", 0)
+            if total == 0:
+                return "no todos yet"
+            return f"{completed}/{total} done"
+        if parsed and not parsed.get("ok"):
+            return str(parsed.get("error", "error"))[:max_chars]
+        return None
+
     if tool_name == "remember":
         if parsed and parsed.get("ok"):
             return parsed.get("message", "saved")[:max_chars]
@@ -229,6 +243,62 @@ def is_failed_tool_result(result: str, tool_name: str, tool_input: dict | None) 
         return True
     parsed = parse_tool_json(result)
     return bool(parsed is not None and parsed.get("ok") is False)
+
+
+_TODO_STATUS_ICONS = {
+    "completed": ("✓", "green"),
+    "in_progress": ("▶", "bold cyan"),
+    "pending": ("☐", "dim"),
+}
+
+
+def build_todo_checklist_text(
+    todos: list[dict], indent: str = "  ", max_items: int | None = None
+) -> Text | None:
+    """Build a checklist card (Rich Text) from a todo_write/todo_read result.
+
+    Shared by the CLI console and the TUI's pinned todo panel so the agent's
+    plan renders as an actual checklist -- one line per item with a status
+    icon and the active item called out -- instead of a one-line count
+    summary. Returns None for an empty list (nothing to show yet).
+
+    ``max_items`` caps how many item lines are shown (with a "+N more" line
+    for the rest) -- for the pinned panel, which has bounded screen space;
+    pass None (default) to always show every item, as the console does.
+    """
+    if not todos:
+        return None
+
+    total = len(todos)
+    completed = sum(1 for t in todos if t.get("status") == "completed")
+
+    result = Text()
+    result.append(f"{indent}Plan  ", style="bold")
+    result.append(f"{completed}/{total} done", style="bold green" if completed == total else "bold cyan")
+
+    shown = todos if max_items is None else todos[:max_items]
+    for item in shown:
+        status = item.get("status", "pending")
+        icon, icon_style = _TODO_STATUS_ICONS.get(status, _TODO_STATUS_ICONS["pending"])
+        if status == "in_progress":
+            label = item.get("active_form") or item.get("content", "")
+            text_style = "bold"
+        elif status == "completed":
+            label = item.get("content", "")
+            text_style = "dim strike"
+        else:
+            label = item.get("content", "")
+            text_style = "dim"
+
+        result.append("\n")
+        result.append(f"{indent}{icon} ", style=icon_style)
+        result.append(label, style=text_style)
+
+    overflow = total - len(shown)
+    if overflow > 0:
+        result.append(f"\n{indent}… +{overflow} more", style="dim")
+
+    return result
 
 
 def build_edit_diff_text(

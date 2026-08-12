@@ -8,6 +8,7 @@ import itertools
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -565,6 +566,49 @@ class MessageQueue(Static):
         self.update("\n".join(lines))
 
 
+class TodoPanel(Static):
+    """Pinned checklist of the agent's current plan, docked above the input bar.
+
+    Mirrors MessageQueue's dock/hide pattern above: hidden (``display: none``)
+    until ``todo_write``/``todo_read`` puts at least one item on the board,
+    and hidden again once every item is completed (or the list is cleared)
+    so it doesn't linger as clutter once the work is actually done.
+    """
+
+    DEFAULT_CSS = """
+    TodoPanel {
+        dock: bottom;
+        background: black;
+        color: rgb(180, 180, 180);
+        padding: 0 1;
+        display: none;
+        max-height: 10;
+    }
+    """
+
+    # Bounded so a long plan can't eat the whole screen -- overflow items
+    # collapse into a "+N more" line (see tool_summary.build_todo_checklist_text).
+    MAX_VISIBLE_ITEMS = 8
+
+    def set_todos(self, todos: list[dict]) -> None:
+        """Refresh the panel from a todo_write/todo_read result's `todos` list.
+
+        Hides the panel when there's nothing to show (empty list) or nothing
+        left to do (every item completed).
+        """
+        if not todos or all(t.get("status") == "completed" for t in todos):
+            self.display = False
+            return
+
+        from clanker.ui import tool_summary
+
+        text = tool_summary.build_todo_checklist_text(
+            todos, indent=" ", max_items=self.MAX_VISIBLE_ITEMS
+        )
+        self.update(text if text is not None else Text(""))
+        self.display = True
+
+
 class PromptBar(Horizontal):
     """Bottom input bar with > prompt symbol, Input widget, and completion menu."""
 
@@ -667,6 +711,7 @@ class ClankerApp(App):
         yield ChatLog(id="chat-log")
         yield StatusBar(id="status-bar")
         yield MessageQueue(id="message-queue")
+        yield TodoPanel(id="todo-panel")
         yield PromptBar(id="prompt-bar")
         yield CompletionMenu(_SLASH_COMMANDS)
 
@@ -726,6 +771,9 @@ class ClankerApp(App):
 
     def get_status_bar(self) -> StatusBar:
         return self.query_one("#status-bar", StatusBar)
+
+    def get_todo_panel(self) -> TodoPanel:
+        return self.query_one("#todo-panel", TodoPanel)
 
     def get_prompt_input(self) -> PromptInput:
         return self.query_one("#prompt-input", PromptInput)

@@ -128,6 +128,7 @@ At conversation start, call `read_project_instructions` to load AGENTS.md. These
 
 # TOOLS
 
+__TODO_TOOLS__
 ## File Operations
 - `read_file(path)` - Read with line numbers. Always read before editing.
 - `write_file(path, content)` - Create or overwrite files.
@@ -189,6 +190,14 @@ Format your responses using beautiful, clean Markdown (including headers, lists,
 # a __SECTION_NAME__ marker in SYSTEM_PROMPT when the corresponding tool flag
 # is enabled. When disabled, the marker is simply stripped from the prompt.
 
+TODO_TOOLS_SECTION = """\
+## Planning
+- `todo_write(todos)` - Write or update a checklist for the current task. Pass the FULL list every time — it replaces, not appends. Each item: `content` (imperative, e.g. "Fix the login bug"), `status` (`pending` | `in_progress` | `completed`), optional `active_form` (present-continuous, e.g. "Fixing the login bug", shown while in_progress).
+- `todo_read()` - Re-read the current checklist, e.g. after a long detour or before deciding what's next.
+- Optional — use it for multi-step or non-trivial work (roughly 4+ distinct steps) so progress stays visible to the user. Skip it for trivial one- or two-step tasks. Keep exactly one item `in_progress` at a time, and mark items `completed` immediately when done, not batched at the end.
+
+"""
+
 WEB_TOOLS_SECTION = """\
 - `web_search(query, max_results, fetch_top)` - Search the web via DuckDuckGo. Use for docs, errors, libraries. Set `fetch_top` (0-3) to also pull full page content for the top results instead of a separate web_read call.
 - `web_read(url, max_length)` - Extract clean text content from a web page. If a webpage gives HTTP errors, try one or two more other pages from the search results. If not possible, mention what error occured.
@@ -249,6 +258,7 @@ AGENTS_TOOLS_SECTION = """\
 
 # Mapping of marker -> (section_content, settings_flag_attribute)
 _PROMPT_SECTIONS = {
+    "__TODO_TOOLS__": (TODO_TOOLS_SECTION, "tools.todo"),
     "__WEB_TOOLS__": (WEB_TOOLS_SECTION, "tools.web_browsing"),
     "__COMMUNICATION_TOOLS__": (COMMUNICATION_TOOLS_SECTION, "tools.communication"),
     "__MEMORY_TOOLS__": (MEMORY_TOOLS_SECTION, "tools.memory"),

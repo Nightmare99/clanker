@@ -23,6 +23,7 @@ from clanker.tools.bash_tools import (
     set_approval_callback,
 )
 from clanker.tools.notify_tools import get_notify_callback, set_notify_callback
+from clanker.ui import tool_summary
 from clanker.ui.tool_display import ToolDisplayHandler, normalize_tool_output
 
 _local_state = threading.local()
@@ -235,6 +236,9 @@ def _get_tool_arg_summary(tool_name: str, tool_input: dict) -> str:
         return str(args.get("url", ""))[:80]
     elif tool_name == "load_skill":
         return str(args.get("name", ""))
+    elif tool_name == "todo_write":
+        n = len(args.get("todos", []) or [])
+        return f"{n} item{'s' if n != 1 else ''}"
     else:
         for key in ["query", "path", "url", "input", "text", "command", "name"]:
             if key in args:
@@ -547,7 +551,11 @@ async def stream_agent_response_async(
                                     except Exception:
                                         pass
 
-                                if textual_app:
+                                # todo_write/todo_read never get a transcript entry in the
+                                # TUI -- the pinned panel above the input bar (updated at
+                                # tool_end below) is the single source of truth for todo
+                                # state, so skip registering a debounce/loader for them.
+                                if textual_app and tool_name_ev not in ("todo_write", "todo_read"):
                                     try:
                                         # Store pending tool info — debounce timer will
                                         # mount the LoadingIndicator if the tool takes >200ms
@@ -617,9 +625,22 @@ async def stream_agent_response_async(
                                 except Exception:
                                     pass
 
-                            if textual_app:
+                            if textual_app and tool_name_end in ("todo_write", "todo_read"):
+                                # No transcript entry -- the pinned panel above the input
+                                # bar (updated here) is the single source of truth for
+                                # todo state, so nothing gets mounted in the chat log.
+                                try:
+                                    parsed_todo = tool_summary.parse_tool_json(tool_output)
+                                    if parsed_todo and parsed_todo.get("ok"):
+                                        textual_app.get_todo_panel().set_todos(
+                                            parsed_todo.get("todos", [])
+                                        )
+                                except Exception:
+                                    pass
+                            elif textual_app:
                                 try:
                                     chat_log = textual_app.get_chat_log()
+
                                     is_error = console._is_failed_tool_result(
                                         tool_output, tool_name_end,
                                         tool_handler._pending_inputs[0][2] if tool_handler._pending_inputs else None

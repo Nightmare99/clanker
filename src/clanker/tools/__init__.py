@@ -23,6 +23,7 @@ from clanker.tools.notify_tools import notify
 from clanker.tools.search_tools import glob_search, grep_search
 from clanker.tools.skill_tools import load_skill
 from clanker.tools.subagent import spawn_subagent
+from clanker.tools.todo_tools import todo_read, todo_write
 from clanker.tools.web_tools import web_read, web_search
 
 # All available tools
@@ -41,6 +42,9 @@ ALL_TOOLS = [
     bash_kill,
     glob_search,
     grep_search,
+    # Planning tools
+    todo_write,
+    todo_read,
     # Communication tools
     notify,
     ask_user,
@@ -81,6 +85,8 @@ def get_tools() -> list:
         excluded.extend([load_agent, spawn_subagent])
     if not settings.tools.communication:
         excluded.extend([notify, ask_user])
+    if not settings.tools.todo:
+        excluded.extend([todo_write, todo_read])
     if excluded:
         return [t for t in ALL_TOOLS if t not in excluded]
     return list(ALL_TOOLS)
@@ -103,6 +109,8 @@ __all__ = [
     "bash_kill",
     "glob_search",
     "grep_search",
+    "todo_write",
+    "todo_read",
     "notify",
     "ask_user",
     "load_skill",

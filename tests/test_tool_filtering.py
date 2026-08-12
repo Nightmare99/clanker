@@ -20,6 +20,8 @@ from clanker.tools import (
     recall,
     remember,
     spawn_subagent,
+    todo_read,
+    todo_write,
     web_read,
     web_search,
     write_file,
@@ -140,6 +142,24 @@ class TestGetToolsCommunication:
         assert ask_user in tools
 
 
+class TestGetToolsTodo:
+    """todo flag controls todo_write and todo_read."""
+
+    def test_todo_tools_excluded_when_disabled(self) -> None:
+        settings = _mock_settings(todo=False)
+        with patch("clanker.config.settings.get_settings", return_value=settings):
+            tools = get_tools()
+        assert todo_write not in tools
+        assert todo_read not in tools
+
+    def test_todo_tools_included_when_enabled(self) -> None:
+        settings = _mock_settings()
+        with patch("clanker.config.settings.get_settings", return_value=settings):
+            tools = get_tools()
+        assert todo_write in tools
+        assert todo_read in tools
+
+
 class TestGetToolsCoreAlwaysPresent:
     """Core tools are never filtered out."""
 
@@ -150,6 +170,7 @@ class TestGetToolsCoreAlwaysPresent:
             skills=False,
             subagents=False,
             communication=False,
+            todo=False,
         )
         with patch("clanker.config.settings.get_settings", return_value=settings):
             tools = get_tools()
@@ -191,6 +212,7 @@ class TestGetToolsMultipleCategoriesDisabled:
             skills=False,
             subagents=False,
             communication=False,
+            todo=False,
         )
         with patch("clanker.config.settings.get_settings", return_value=settings):
             tools = get_tools()
@@ -203,6 +225,8 @@ class TestGetToolsMultipleCategoriesDisabled:
         assert spawn_subagent not in tools
         assert notify not in tools
         assert ask_user not in tools
+        assert todo_write not in tools
+        assert todo_read not in tools
         # Core tools remain
         core_present = all(t in tools for t in [
             read_file, write_file, execute_shell, glob_search, grep_search,

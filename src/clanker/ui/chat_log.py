@@ -523,6 +523,9 @@ class ChatLog(VerticalScroll):
             if diff_text is not None:
                 return Static(diff_text, classes="msg-tool-output tool-card")
 
+        # todo_write/todo_read render as a live pinned panel above the input
+        # bar instead (see TodoPanel in app.py) -- the inline transcript just
+        # gets the one-line "N/M done" summary like any other tool result.
         summary = tool_summary.compact_result_summary(result, tool_name, tool_input)
         if not summary:
             return None

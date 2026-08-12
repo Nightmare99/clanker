@@ -108,6 +108,14 @@ def handle_command(
     elif cmd == "/clear":
         console.clear()
         session_manager.new_session()
+
+        from clanker.tools.todo_tools import get_todo_store
+
+        get_todo_store().clear()
+        if chat_log:
+            with contextlib.suppress(Exception):
+                chat_log.app.get_todo_panel().set_todos([])
+
         logger.info("Conversation cleared, new session started")
         console.print("[bold cyan]*WHIRR*[/bold cyan] Memory banks wiped. Fresh slate initialized. [bold cyan]*CLANK*[/bold cyan]")
         if chat_log:

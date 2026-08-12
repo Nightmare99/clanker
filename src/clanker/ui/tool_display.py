@@ -169,6 +169,14 @@ class ToolDisplayHandler:
             return False
         self._shown_results.add(result_key)
 
+        if matched_name in ("todo_write", "todo_read") and result and result.strip():
+            from clanker.ui import tool_summary
+
+            parsed = tool_summary.parse_tool_json(result)
+            if parsed and parsed.get("ok"):
+                self._console.print_todo_checklist(parsed.get("todos", []))
+                return True
+
         # Let print_tool_result extract path from result JSON or tool_input
         if result and result.strip():
             self._console.print_tool_result(result, tool_name=matched_name, tool_input=matched_input)
@@ -257,6 +265,9 @@ class ToolDisplayHandler:
             arg = str(args.get("url", "") or "")[:80]
         elif tool_name == "load_skill":
             arg = str(args.get("name", "") or "?")
+        elif tool_name == "todo_write":
+            n = len(args.get("todos", []) or [])
+            arg = f"{n} item{'s' if n != 1 else ''}"
         else:
             arg = ""
             for key in ["query", "path", "url", "input", "text", "command", "name"]:
@@ -375,24 +386,35 @@ class ToolDisplayHandler:
         # Print header + result together (permanent output)
         self._console.print_tool_use(tool_name, tool_input)
 
-        # Show diffs for file modification tools
-        if tool_name == "edit_file":
-            old_str = tool_input.get("old_string", "")
-            new_str = tool_input.get("new_string", "")
-            if old_str or new_str:
-                self._console.print_edit_diff(old_str, new_str)
-        elif tool_name == "write_file":
-            content = tool_input.get("content", "")
-            if content:
-                self._console.print_write_content(content, is_append=False)
-        elif tool_name == "append_file":
-            content = tool_input.get("content", "")
-            if content:
-                self._console.print_write_content(content, is_append=True)
+        if tool_name in ("todo_write", "todo_read"):
+            # No file-op diff, no generic one-line result -- the console has no
+            # pinned panel (that's TUI-only), so this checklist print is its
+            # only view into plan state.
+            if result and result.strip():
+                from clanker.ui import tool_summary
 
-        # Show result
-        if result and result.strip():
-            self._console.print_tool_result(result, tool_name=tool_name, tool_input=tool_input)
+                parsed = tool_summary.parse_tool_json(result)
+                if parsed and parsed.get("ok"):
+                    self._console.print_todo_checklist(parsed.get("todos", []))
+        else:
+            # Show diffs for file modification tools
+            if tool_name == "edit_file":
+                old_str = tool_input.get("old_string", "")
+                new_str = tool_input.get("new_string", "")
+                if old_str or new_str:
+                    self._console.print_edit_diff(old_str, new_str)
+            elif tool_name == "write_file":
+                content = tool_input.get("content", "")
+                if content:
+                    self._console.print_write_content(content, is_append=False)
+            elif tool_name == "append_file":
+                content = tool_input.get("content", "")
+                if content:
+                    self._console.print_write_content(content, is_append=True)
+
+            # Show result
+            if result and result.strip():
+                self._console.print_tool_result(result, tool_name=tool_name, tool_input=tool_input)
 
         # Remove from pending
         if tool_id and tool_id in self._pending_calls:

@@ -377,6 +377,9 @@ class Console:
             return self._truncate(str(args.get("url", "")), 70)
         elif tool_name == "load_skill":
             return str(args.get("name", ""))
+        elif tool_name == "todo_write":
+            n = len(args.get("todos", []) or [])
+            return f"{n} item{'s' if n != 1 else ''}"
         elif tool_name in ("remember", "recall"):
             return self._truncate(str(args.get("topic", "") or args.get("query", "")), 40)
         elif tool_name == "notify":
@@ -622,6 +625,16 @@ class Console:
             self._console.print(
                 Text(f"    ... (+{len(rendered) - max_lines} more diff lines)", style="dim")
             )
+
+    def print_todo_checklist(self, todos: list[dict]) -> None:
+        """Print the agent's current plan as a checklist (todo_write/todo_read)."""
+        if not self._settings.output.show_tool_calls:
+            return
+
+        text = tool_summary.build_todo_checklist_text(todos, indent="    ")
+        if text is None:
+            return
+        self._console.print(text)
 
     def print_write_content(self, content: str, is_append: bool = False) -> None:
         """Print a preview of content being written to a file."""

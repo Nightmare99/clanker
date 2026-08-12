@@ -145,6 +145,8 @@ class ToolSettings(BaseModel):
     subagents: bool = True
     # Communication tools (notify, ask_user)
     communication: bool = True
+    # Todo/plan checklist (todo_write, todo_read)
+    todo: bool = True
 
 
 class Settings(BaseSettings):
@@ -234,6 +236,7 @@ tools:
   skills: true         # load_skill
   subagents: true      # load_agent, spawn_subagent
   communication: true  # notify, ask_user
+  todo: true           # todo_write, todo_read
 
 safety:
   require_confirmation: true
