@@ -7,6 +7,7 @@ import itertools
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
@@ -63,6 +64,11 @@ class PromptInput(Input):
         # Tracks previous value so watch_value can detect the "/" transition
         self._previous_value: str = ""
         self._on_history_add: callable | None = None
+        # Multi-line pastes: Input is strictly single-line, so a pasted block
+        # is collapsed to a "[pasted N lines]" placeholder in the visible
+        # value, and the real text is stashed here (in placeholder-insertion
+        # order) until submission, when pop_expanded_value() swaps it back in.
+        self._pending_pastes: list[tuple[str, str]] = []
 
     def set_completion_menu(self, menu: CompletionMenu) -> None:
         self._completion_menu = menu
@@ -124,7 +130,68 @@ class PromptInput(Input):
         # Plain Escape (no menu): clear input
         if key == "escape":
             self.value = ""
+            self._pending_pastes = []
             event.stop()
+
+    # -- paste handling ----------------------------------------------------------
+
+    def _on_paste(self, event: events.Paste) -> None:
+        """Collapse a multi-line paste to a placeholder instead of losing all but line 1.
+
+        Textual's ``Input`` is strictly single-line -- its default paste
+        handler (``Input._on_paste``) takes only ``event.text.splitlines()[0]``
+        and silently drops the rest, since embedded newlines can't render
+        sanely in a height-1 field. Rather than lose the pasted content, a
+        multi-line paste is shown as a single ``[pasted N lines]`` token and
+        the real text is stashed in ``_pending_pastes``, swapped back in by
+        ``pop_expanded_value()`` when the input is actually submitted.
+
+        ``event.prevent_default()`` is required here, not just ``event.stop()``:
+        Textual dispatches same-named handlers across the *entire* class MRO,
+        not just the most-derived override, so without it ``Input``'s own
+        ``_on_paste`` would ALSO run right after ours -- inserting its
+        first-line-only text a second time at the cursor we just advanced
+        past the placeholder. ``prevent_default()`` is the documented way to
+        suppress those base-class handlers; ``stop()`` only suppresses
+        bubbling to the parent widget, a separate mechanism.
+        """
+        if not event.text:
+            return
+
+        event.prevent_default()
+
+        lines = event.text.splitlines()
+        if len(lines) <= 1:
+            super()._on_paste(event)
+            return
+
+        event.stop()
+        placeholder = f"[pasted {len(lines)} lines]"
+        # Normalize to "\n" -- terminals vary in what they actually send for
+        # line breaks in a bracketed paste (e.g. bare "\r"), and Rich's Text
+        # (which renders the expanded message in the chat log) only treats
+        # "\n" as a line break. Left un-normalized, other separators render
+        # as nothing or as a stray control character instead of a new line,
+        # squashing the whole paste onto one visual line.
+        self._pending_pastes.append((placeholder, "\n".join(lines)))
+
+        selection = self.selection
+        if selection.is_empty:
+            self.insert_text_at_cursor(placeholder)
+        else:
+            self.replace(placeholder, *selection)
+
+    def pop_expanded_value(self) -> str:
+        """Return the current value with paste placeholders swapped back to full text.
+
+        Clears ``_pending_pastes`` -- meant to be called once, right before
+        the input is actually sent (submitted or queued), not for display.
+        """
+        text = self.value
+        for placeholder, full_text in self._pending_pastes:
+            text = text.replace(placeholder, full_text, 1)
+        self._pending_pastes = []
+        return text
 
     # -- auto-show menu on "/" transition --------------------------------------
 
@@ -577,12 +644,17 @@ class ClankerApp(App):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
-        text = event.value.strip()
-        if not text:
-            return
-
         prompt_input = self.get_prompt_input()
-        prompt_input.add_to_history(text)
+
+        # History/recall keep the placeholder form -- Input can't safely
+        # redisplay embedded newlines -- while everything actually sent to
+        # the agent/chat log gets the real pasted text swapped back in.
+        raw = prompt_input.value.strip()
+        if not raw:
+            return
+        text = prompt_input.pop_expanded_value().strip()
+
+        prompt_input.add_to_history(raw)
         prompt_input.value = ""
 
         if self._processing and not text.startswith("/"):
