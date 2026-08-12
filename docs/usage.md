@@ -100,6 +100,7 @@ Models are configured in `~/.clanker/models.json` or via `clanker config`.
 | `Ctrl+C` | Copy the current text selection, if any (in-field or screen-wide). If nothing is selected, interrupts the agent instead. |
 | `Ctrl+D` | Quit Clanker. |
 | `F2` | Open the **Subagents** panel — view past and in-flight subagent runs, their prompts, status, and tool call history for the session (see [Agents → Progress and history](agents.md#progress-and-history)). |
+| `F3` | Open the **History** panel — the full conversation so far, independent of how much the chat log has trimmed from view (see [TUI Performance](configuration.md#tui-performance)) and populated even after `/restore`, when the restored turns aren't replayed into the chat log. |
 | `Esc` | Cancel an open menu or approval prompt. |
 
 Input history is persisted across sessions to `~/.clanker/input_history.txt`

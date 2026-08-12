@@ -34,6 +34,7 @@ import {
   ExtensionPuzzleOutline,
   HardwareChipOutline,
   ColorPaletteOutline,
+  SpeedometerOutline,
   AddOutline,
   CreateOutline,
   TrashOutline,
@@ -61,6 +62,7 @@ interface Config {
     show_tool_calls: boolean
     stream_responses: boolean
     show_token_usage: boolean
+    chat_log_max_widgets: number
   }
   context: {
     summarization_threshold: number
@@ -197,6 +199,7 @@ const menuOptions: MenuOption[] = [
   { label: 'Models', key: 'model', icon: () => h(NIcon, null, { default: () => h(HardwareChipOutline) }) },
   { label: 'Agents', key: 'agents', icon: () => h(NIcon, null, { default: () => h(PeopleOutline) }) },
   { label: 'Context', key: 'context', icon: () => h(NIcon, null, { default: () => h(ColorPaletteOutline) }) },
+  { label: 'Interface', key: 'interface', icon: () => h(NIcon, null, { default: () => h(SpeedometerOutline) }) },
   { label: 'Safety', key: 'safety', icon: () => h(NIcon, null, { default: () => h(ShieldCheckmarkOutline) }) },
   { label: 'Tools', key: 'tools', icon: () => h(NIcon, null, { default: () => h(CreateOutline) }) },
   { label: 'MCP Servers', key: 'mcp', icon: () => h(NIcon, null, { default: () => h(ExtensionPuzzleOutline) }) },
@@ -1412,6 +1415,37 @@ onUnmounted(() => {
                 tools) to this many tokens. Oversized results are truncated at
                 the tool boundary so one large output cannot overflow the
                 context window. Set to <strong>0</strong> to disable truncation.
+              </div>
+            </NForm>
+          </NCard>
+
+          <!-- Interface Settings -->
+          <NCard v-if="activeKey === 'interface'" class="settings-card">
+            <NAlert type="info" style="margin-bottom: 16px">
+              Controls for the terminal UI's rendering behavior — separate
+              from <strong>Context</strong>, which governs what's sent to the
+              model.
+            </NAlert>
+
+            <NForm label-placement="left" label-width="200">
+              <NFormItem label="Chat Log Widget Limit">
+                <NInputNumber
+                  v-model:value="config.output.chat_log_max_widgets"
+                  :min="50"
+                  :max="5000"
+                  :step="50"
+                  style="width: 100%"
+                  @update:value="markChanged"
+                />
+              </NFormItem>
+              <div class="form-hint">
+                Maximum number of messages, tool calls, and thinking blocks
+                the TUI keeps rendered at once. In very long sessions, older
+                entries beyond this limit are folded into a single "N earlier
+                entries hidden" marker to keep the interface responsive.
+                Lower this if the TUI feels sluggish after a long session;
+                raise it to keep more scrollback directly visible. Takes
+                effect on the next TUI session.
               </div>
             </NForm>
           </NCard>

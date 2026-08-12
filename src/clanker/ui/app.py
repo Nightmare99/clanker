@@ -15,6 +15,7 @@ from textual.widgets import Input, Label, Static
 from clanker.ui.chat_log import ChatLog, MessageType
 from clanker.ui.status_bar import StatusBar
 from clanker.ui.completion_menu import CompletionMenu
+from clanker.ui.history_modal import HistoryScreen
 from clanker.ui.subagent_history import SubagentHistoryScreen, SubagentRun
 
 if TYPE_CHECKING:
@@ -344,6 +345,7 @@ class ClankerApp(App):
         Binding("ctrl+c", "copy_or_interrupt", "Copy/Interrupt", show=True, priority=True),
         Binding("ctrl+d", "quit", "Quit", show=True),
         Binding("f2", "show_subagents", "Subagents", show=True),
+        Binding("f3", "show_history", "History", show=True),
     ]
 
     def __init__(
@@ -496,6 +498,9 @@ class ClankerApp(App):
         # Pass the live list (not a copy) so runs spawned or updated while
         # the popup is open show up via its polling refresh.
         self.push_screen(SubagentHistoryScreen(self._subagent_runs))
+
+    def action_show_history(self) -> None:
+        self.push_screen(HistoryScreen(self._conversation_messages))
 
     def register_subagent_run(self, run: SubagentRun) -> None:
         """Track a newly spawned subagent run and refresh the status bar hint."""
@@ -653,7 +658,13 @@ class ClankerApp(App):
                 if conversation_messages:
                     session_manager.save_conversation_snapshot(conversation_messages)
                 session_manager.resume_session(session_id)
-                conversation_messages = list(messages)
+                # Mutate in place rather than rebinding -- `conversation_messages`
+                # is the SAME list object as `self._conversation_messages`, which
+                # `_run_agent` keeps appending to and using for future snapshot
+                # saves, and which the history modal (F3) reads directly. A
+                # rebind here would silently drop the restored history from both.
+                conversation_messages.clear()
+                conversation_messages.extend(messages)
                 self._pending_restore_messages = list(messages)
                 chat_log.add_message(
                     f"Restored session {session_id} with {len(messages)} messages",

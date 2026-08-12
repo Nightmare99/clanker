@@ -35,6 +35,7 @@ class TestSettings:
         assert output.show_tool_calls is True
         assert output.stream_responses is True
         assert output.show_token_usage is True
+        assert output.chat_log_max_widgets == 400
 
     def test_context_settings_validation(self) -> None:
         """Test context settings validation."""

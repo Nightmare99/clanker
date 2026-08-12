@@ -202,6 +202,7 @@ output:
   show_tool_calls: true
   stream_responses: true
   show_token_usage: true
+  chat_log_max_widgets: 400  # TUI history cap -- see "TUI Performance" below
 
 # Context management (automatic summarization)
 context:
@@ -218,6 +219,29 @@ memory:
 web_search:
   enabled: true
 ```
+
+### TUI Performance
+
+The terminal UI keeps every message, tool call, and thinking block rendered
+as a live widget in the chat log. In very long-running sessions this history
+can grow into the thousands of entries, which can make the interface feel
+sluggish since the terminal has to account for all of them on every update.
+
+`output.chat_log_max_widgets` (default `400`, editable via the **Interface**
+tab in the web UI or directly in `config.yaml`) caps how much history stays
+live. Once a session passes the limit, the oldest entries are folded into a
+single "N earlier entries hidden" marker at the top of the log — nothing is
+lost from the underlying conversation (the model still has it, subject to
+the `context` settings above), only the TUI's rendered scrollback is
+trimmed. Lower the limit if the TUI feels sluggish in long sessions; raise
+it to keep more scrollback directly visible.
+
+Press **F3** at any time to open the full conversation history in a popup —
+it reads straight from the conversation's message list rather than the chat
+log's widgets, so it isn't affected by trimming and shows everything the
+model has actually seen so far (see [Keyboard Shortcuts](usage.md#keyboard-shortcuts)).
+The same view works right after `/restore`, since a restored session's prior
+turns are loaded for the model but aren't replayed into the chat log itself.
 
 ## Tool Feature Flags
 
@@ -312,7 +336,7 @@ The web UI provides:
 - **Max Tokens**: Configure token limits per model
 - **Set Default Model**: Choose which model to use by default
 - **MCP Server Management**: Add, edit, delete, and test MCP server connections
-- **Output Settings**: Toggle tool call display, token usage, and syntax highlighting
+- **Interface Settings**: Tune the TUI chat log widget limit (see "TUI Performance" below)
 - **Safety Settings**: Configure confirmation prompts and command sandboxing
 - **Tools**: Enable or disable tool categories (web browsing, memory, skills, subagents, communication)
 - **Logging Configuration**: Set log levels, file rotation, and console output

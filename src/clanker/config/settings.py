@@ -35,6 +35,15 @@ class OutputSettings(BaseModel):
     show_tool_calls: bool = True
     stream_responses: bool = True
     show_token_usage: bool = True
+    # Maximum number of live widgets (messages, tool calls, thinking blocks)
+    # the TUI keeps mounted in the chat log. Textual has to re-measure every
+    # mounted widget whenever the log's layout is invalidated, which normal
+    # activity (streaming, spinners) does constantly -- so cost scales with
+    # total history size. Once a session exceeds this many entries, the
+    # oldest are folded into a single "N earlier entries hidden" marker to
+    # keep the TUI responsive in long-running sessions. Lower this if the
+    # TUI feels sluggish; raise it to keep more scrollback live on screen.
+    chat_log_max_widgets: int = Field(default=400, ge=50, le=5000)
 
 
 class ContextSettings(BaseModel):
@@ -246,6 +255,10 @@ output:
   show_tool_calls: true
   stream_responses: true
   show_token_usage: true  # Show token count and context remaining after each response
+  # Max widgets (messages/tool calls/thinking blocks) kept live in the TUI chat
+  # log before older entries are folded away. Lower this if the TUI gets
+  # sluggish in very long sessions; raise it to keep more scrollback live.
+  chat_log_max_widgets: 400
 
 # Context management (automatic summarization via SummarizationMiddleware)
 # When conversation exceeds the threshold % of the model's context window,
