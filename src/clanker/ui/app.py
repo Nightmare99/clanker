@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import itertools
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from textual import events
 from textual.app import App, ComposeResult
@@ -14,6 +15,11 @@ from textual.containers import Horizontal
 from textual.widgets import Input, Label, Static
 
 from clanker.ui.chat_log import ChatLog, MessageType
+from clanker.ui.clipboard_image import (
+    ClipboardImage,
+    clipboard_image_tool_available,
+    read_clipboard_image,
+)
 from clanker.ui.status_bar import StatusBar
 from clanker.ui.completion_menu import CompletionMenu
 from clanker.ui.history_modal import HistoryScreen
@@ -43,6 +49,53 @@ _SLASH_COMMANDS = [
 ]
 
 
+def _build_user_message_content(text: str, images: list[ClipboardImage]) -> str | list[dict]:
+    """Build HumanMessage content, attaching any pasted images.
+
+    Plain string when there are no images -- the common case, and the exact
+    shape every other code path already expects. With images, switches to
+    the standard multimodal content-block list (text block, then one
+    image_url block per image as a base64 data URL) -- the same shape
+    ``MultimodalToolResultsMiddleware`` already produces for tool results
+    (see ``clanker/agent/middleware.py``), so summarization and the
+    provider-facing request path handle a pasted image identically to one
+    that came back from ``read_file``.
+    """
+    if not images:
+        return text
+
+    content: list[dict] = [{"type": "text", "text": text}]
+    for image in images:
+        b64_data = base64.b64encode(image.data).decode("utf-8")
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:{image.mime_type};base64,{b64_data}"},
+        })
+    return content
+
+
+def _remove_nth_matching(items: list[tuple[str, Any]], key: str, n: int) -> list[tuple[str, Any]]:
+    """Return *items* with its nth (0-indexed) ``key``-matching entry dropped.
+
+    Used to forget one specific pasted-content entry out of
+    ``_pending_pastes``/``_pending_images`` when its placeholder text isn't
+    unique (e.g. two "[pasted 2 lines]" pastes) -- removing "the nth match"
+    rather than "the first match" or "all matches" is what lets each
+    occurrence in the input text map back to the paste it actually came
+    from.
+    """
+    result = []
+    seen = 0
+    for item_key, value in items:
+        if item_key == key:
+            if seen == n:
+                seen += 1
+                continue
+            seen += 1
+        result.append((item_key, value))
+    return result
+
+
 class PromptInput(Input):
     """Input widget with Tab completion menu and Alt+Up/Down history navigation."""
 
@@ -69,6 +122,14 @@ class PromptInput(Input):
         # value, and the real text is stashed here (in placeholder-insertion
         # order) until submission, when pop_expanded_value() swaps it back in.
         self._pending_pastes: list[tuple[str, str]] = []
+        # Pasted images: bracketed paste can't carry image bytes at all, so
+        # these come from a fallback OS-clipboard check (see _on_paste /
+        # action_paste), shown as a "[Image #N]" placeholder the same way.
+        self._pending_images: list[tuple[str, ClipboardImage]] = []
+        self._image_counter = 0
+        # Shown once per session so a missing clipboard tool doesn't warn on
+        # every empty paste (most of which are just an empty clipboard).
+        self._warned_no_clipboard_tool = False
 
     def set_completion_menu(self, menu: CompletionMenu) -> None:
         self._completion_menu = menu
@@ -131,6 +192,8 @@ class PromptInput(Input):
         if key == "escape":
             self.value = ""
             self._pending_pastes = []
+            self._pending_images = []
+            self._image_counter = 0
             event.stop()
 
     # -- paste handling ----------------------------------------------------------
@@ -156,6 +219,12 @@ class PromptInput(Input):
         bubbling to the parent widget, a separate mechanism.
         """
         if not event.text:
+            # Bracketed paste has no text to deliver -- either the clipboard
+            # is genuinely empty, or (since bracketed paste can't carry
+            # binary data at all) it holds an image and the terminal forwarded
+            # an empty paste rather than nothing. Check the OS clipboard
+            # directly rather than assume either way.
+            self._start_clipboard_image_check()
             return
 
         event.prevent_default()
@@ -181,17 +250,157 @@ class PromptInput(Input):
         else:
             self.replace(placeholder, *selection)
 
-    def pop_expanded_value(self) -> str:
-        """Return the current value with paste placeholders swapped back to full text.
+    def pop_expanded_value(self) -> tuple[str, list[ClipboardImage]]:
+        """Return (text with paste placeholders expanded, pending images in order).
 
-        Clears ``_pending_pastes`` -- meant to be called once, right before
-        the input is actually sent (submitted or queued), not for display.
+        Clears both ``_pending_pastes`` and ``_pending_images`` -- meant to
+        be called once, right before the input is actually sent (submitted
+        or queued), not for display. "[Image #N]" placeholders are left in
+        the returned text as-is (they read fine as a label); the images
+        themselves come back separately since they can't be spliced into a
+        plain string.
         """
         text = self.value
         for placeholder, full_text in self._pending_pastes:
             text = text.replace(placeholder, full_text, 1)
         self._pending_pastes = []
-        return text
+
+        images = [image for _placeholder, image in self._pending_images]
+        self._pending_images = []
+        self._image_counter = 0
+        return text, images
+
+    # -- atomic placeholder deletion ---------------------------------------------
+
+    def action_delete_left(self) -> None:
+        """Backspace: delete a pending placeholder as one block, not char-by-char.
+
+        A "[pasted N lines]"/"[Image #N]" token stands in for content that
+        isn't meaningfully editable a character at a time -- eating into it
+        would corrupt the placeholder text so it no longer matches what
+        ``pop_expanded_value`` looks for, silently leaving mangled text in
+        the sent message instead of either fully keeping or fully dropping
+        the paste. When the cursor overlaps a still-pending placeholder,
+        this removes the whole token (and forgets the paste/image it stood
+        for) in one keystroke instead.
+        """
+        if self.selection.is_empty:
+            span = self._placeholder_span_at_cursor(edge="left")
+            if span is not None:
+                start, end, placeholder = span
+                self._forget_placeholder_occurrence(placeholder, start)
+                self.delete(start, end)
+                return
+        super().action_delete_left()
+
+    def action_delete_right(self) -> None:
+        """Delete (forward): same atomic-placeholder handling as action_delete_left."""
+        if self.selection.is_empty:
+            span = self._placeholder_span_at_cursor(edge="right")
+            if span is not None:
+                start, end, placeholder = span
+                self._forget_placeholder_occurrence(placeholder, start)
+                self.delete(start, end)
+                return
+        super().action_delete_right()
+
+    def _all_placeholder_texts(self) -> list[str]:
+        return [ph for ph, _ in self._pending_pastes] + [ph for ph, _ in self._pending_images]
+
+    def _placeholder_span_at_cursor(self, edge: str) -> tuple[int, int, str] | None:
+        """Find a pending placeholder overlapping the cursor for a delete in *edge* direction.
+
+        ``edge="left"`` (backspace) matches when the cursor sits anywhere
+        from just past the placeholder's start through its end -- i.e. the
+        common case (cursor right after it) plus the cursor having been
+        moved into its middle via the arrow keys. ``edge="right"`` (forward
+        delete) is the mirror: start through just before the end.
+        """
+        pos = self.cursor_position
+        text = self.value
+        for placeholder in self._all_placeholder_texts():
+            search_from = 0
+            while True:
+                idx = text.find(placeholder, search_from)
+                if idx == -1:
+                    break
+                end = idx + len(placeholder)
+                if edge == "left" and idx < pos <= end:
+                    return idx, end, placeholder
+                if edge == "right" and idx <= pos < end:
+                    return idx, end, placeholder
+                search_from = idx + 1
+        return None
+
+    def _forget_placeholder_occurrence(self, placeholder: str, start: int) -> None:
+        """Drop the pending paste/image for the placeholder occurrence starting at *start*.
+
+        The same placeholder text can appear more than once (e.g. two
+        "[pasted 2 lines]" pastes) -- ``_pending_pastes``/``_pending_images``
+        are ordered lists matching left-to-right text occurrence order (the
+        same assumption ``pop_expanded_value`` relies on), so counting how
+        many occurrences of this placeholder appear before *start* picks out
+        the exact matching entry rather than an arbitrary one.
+        """
+        occurrence_index = self.value[:start].count(placeholder)
+        self._pending_pastes = _remove_nth_matching(
+            self._pending_pastes, placeholder, occurrence_index
+        )
+        self._pending_images = _remove_nth_matching(
+            self._pending_images, placeholder, occurrence_index
+        )
+
+    # -- image paste (OS clipboard fallback) ------------------------------------
+
+    def action_paste(self) -> None:
+        """Ctrl+V: Input's own binding, overridden to add an image fallback.
+
+        The base implementation pastes from Textual's *internal* text
+        clipboard (``self.app.clipboard``), which is only ever populated by
+        an explicit in-app copy -- it's empty by default. An empty clipboard
+        here is also what you'd see if the terminal swallowed Ctrl+V for its
+        own OS-level paste and simply sent nothing (no ``Paste`` event at
+        all) because the OS clipboard held an image with no text
+        representation. Either way, an empty internal clipboard is worth a
+        check for an image before doing nothing.
+        """
+        if not self.app.clipboard:
+            self._start_clipboard_image_check()
+            return
+        super().action_paste()
+
+    def _start_clipboard_image_check(self) -> None:
+        self.run_worker(self._try_paste_image(), exclusive=False, group="clipboard-image")
+
+    async def _try_paste_image(self) -> None:
+        """Best-effort: look for an image on the OS clipboard.
+
+        Runs the (subprocess-based) clipboard read off the event loop so a
+        slow/hanging clipboard tool can't freeze the UI.
+        """
+        loop = asyncio.get_running_loop()
+        image = await loop.run_in_executor(None, read_clipboard_image)
+
+        if image is None:
+            if not self._warned_no_clipboard_tool and not clipboard_image_tool_available():
+                self._warned_no_clipboard_tool = True
+                self.notify(
+                    "Image paste isn't available on this system -- install "
+                    "xclip (X11) or wl-clipboard (Wayland) to enable it.",
+                    severity="warning",
+                    timeout=6,
+                )
+            return
+
+        self._image_counter += 1
+        placeholder = f"[Image #{self._image_counter}]"
+        self._pending_images.append((placeholder, image))
+
+        selection = self.selection
+        if selection.is_empty:
+            self.insert_text_at_cursor(placeholder)
+        else:
+            self.replace(placeholder, *selection)
 
     # -- auto-show menu on "/" transition --------------------------------------
 
@@ -648,16 +857,29 @@ class ClankerApp(App):
 
         # History/recall keep the placeholder form -- Input can't safely
         # redisplay embedded newlines -- while everything actually sent to
-        # the agent/chat log gets the real pasted text swapped back in.
+        # the agent/chat log gets the real pasted text/images swapped back in.
         raw = prompt_input.value.strip()
         if not raw:
             return
-        text = prompt_input.pop_expanded_value().strip()
+        text, images = prompt_input.pop_expanded_value()
+        text = text.strip()
 
         prompt_input.add_to_history(raw)
         prompt_input.value = ""
 
         if self._processing and not text.startswith("/"):
+            if images:
+                # The follow-up queue only carries plain text today (see
+                # streaming.py's on_chat_model_start handling) -- rather
+                # than silently drop the image, say so; the "[Image #N]"
+                # label stays in the sent text either way, so at least it's
+                # visible that something was left out.
+                self.get_chat_log().add_message(
+                    "Pasted image(s) can't be attached to a queued follow-up "
+                    "yet -- sending the text only. Wait for the current turn "
+                    "to finish to attach an image.",
+                    MessageType.WARNING,
+                )
             self._input_queue.put_nowait(text)
             self._add_user_message_to_ui(text)
             self.get_message_queue().add_pending(text)
@@ -677,7 +899,7 @@ class ClankerApp(App):
 
         self._set_processing(True)
         self._add_user_message_to_ui(text)
-        self.run_worker(self._run_agent(text), exclusive=True)
+        self.run_worker(self._run_agent(text, images), exclusive=True)
 
     def _add_user_message_to_ui(self, text: str) -> None:
         chat_log = self.get_chat_log()
@@ -755,7 +977,9 @@ class ClankerApp(App):
 
     # --- Agent execution ---
 
-    async def _run_agent(self, user_input: str) -> None:
+    async def _run_agent(
+        self, user_input: str, images: list[ClipboardImage] | None = None
+    ) -> None:
         from langchain_core.messages import AIMessage, HumanMessage
 
         from clanker.config import get_default_model
@@ -779,7 +1003,7 @@ class ClankerApp(App):
         chat_log = self.get_chat_log()
         status_bar = self.get_status_bar()
 
-        user_msg = HumanMessage(content=user_input)
+        user_msg = HumanMessage(content=_build_user_message_content(user_input, images or []))
         conversation_messages.append(user_msg)
 
         if pending_restore_messages:

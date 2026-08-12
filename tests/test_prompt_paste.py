@@ -94,9 +94,10 @@ async def test_carriage_return_line_endings_are_normalized_to_newline() -> None:
         await _paste(prompt, pilot, "def foo():\r    return 1\r\rprint(foo())")
 
         assert prompt.value == "[pasted 4 lines]"
-        expanded = prompt.pop_expanded_value()
+        expanded, images = prompt.pop_expanded_value()
         assert expanded == "def foo():\n    return 1\n\nprint(foo())"
         assert "\r" not in expanded
+        assert images == []
 
 
 async def test_pop_expanded_value_swaps_placeholder_for_full_text() -> None:
@@ -109,9 +110,10 @@ async def test_pop_expanded_value_swaps_placeholder_for_full_text() -> None:
         await _paste(prompt, pilot, pasted)
         assert prompt.value == "[pasted 3 lines]"
 
-        expanded = prompt.pop_expanded_value()
+        expanded, images = prompt.pop_expanded_value()
 
         assert expanded == pasted
+        assert images == []
         assert prompt._pending_pastes == []
 
 
@@ -127,9 +129,10 @@ async def test_pop_expanded_value_preserves_surrounding_typed_text() -> None:
 
         assert prompt.value == "please review:\n[pasted 3 lines] -- thanks"
 
-        expanded = prompt.pop_expanded_value()
+        expanded, images = prompt.pop_expanded_value()
 
         assert expanded == "please review:\na\nb\nc -- thanks"
+        assert images == []
 
 
 async def test_multiple_pastes_each_get_own_placeholder_and_expand_in_order() -> None:
@@ -144,9 +147,10 @@ async def test_multiple_pastes_each_get_own_placeholder_and_expand_in_order() ->
 
         assert prompt.value == "[pasted 2 lines] and [pasted 2 lines]"
 
-        expanded = prompt.pop_expanded_value()
+        expanded, images = prompt.pop_expanded_value()
 
         assert expanded == "x\ny and p\nq"
+        assert images == []
 
 
 async def test_escape_clears_pending_pastes() -> None:
@@ -162,6 +166,7 @@ async def test_escape_clears_pending_pastes() -> None:
 
         assert prompt.value == ""
         assert prompt._pending_pastes == []
+        assert prompt._pending_images == []
 
 
 async def test_empty_paste_is_noop() -> None:

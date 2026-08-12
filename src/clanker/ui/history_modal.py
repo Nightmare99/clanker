@@ -22,6 +22,8 @@ from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
+from clanker.memory.checkpointer import message_content_to_text
+
 _USER_STYLE = "bold rgb(0,240,240)"
 _ASSISTANT_STYLE = "bold rgb(180,255,60)"
 _RULE_STYLE = "dim rgb(60,60,60)"
@@ -81,7 +83,8 @@ class HistoryScreen(ModalScreen[None]):
         return [
             m
             for m in self._messages
-            if isinstance(m, (HumanMessage, AIMessage)) and str(m.content or "").strip()
+            if isinstance(m, (HumanMessage, AIMessage))
+            and message_content_to_text(m.content).strip()
         ]
 
     def _render_header(self) -> Text:
@@ -102,7 +105,7 @@ class HistoryScreen(ModalScreen[None]):
 
         parts: list[RenderableType] = []
         for msg in turns:
-            content = str(msg.content)
+            content = message_content_to_text(msg.content)
             if isinstance(msg, HumanMessage):
                 if parts:
                     parts.append(Rule(style=_RULE_STYLE))

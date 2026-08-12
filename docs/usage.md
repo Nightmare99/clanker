@@ -99,12 +99,39 @@ Models are configured in `~/.clanker/models.json` or via `clanker config`.
 | `Enter` | Submit the input, or — with the completion menu engaged — accept the highlighted match. |
 | `Ctrl+C` | Copy the current text selection, if any (in-field or screen-wide). If nothing is selected, interrupts the agent instead. |
 | `Ctrl+D` | Quit Clanker. |
+| `Ctrl+V` / paste | Paste text or an image — see [Pasting](#pasting) below. |
 | `F2` | Open the **Subagents** panel — view past and in-flight subagent runs, their prompts, status, and tool call history for the session (see [Agents → Progress and history](agents.md#progress-and-history)). |
 | `F3` | Open the **History** panel — the full conversation so far, independent of how much the chat log has trimmed from view (see [TUI Performance](configuration.md#tui-performance)) and populated even after `/restore`, when the restored turns aren't replayed into the chat log. |
 | `Esc` | Cancel an open menu or approval prompt. |
 
 Input history is persisted across sessions to `~/.clanker/input_history.txt`
 (last 500 entries).
+
+### Pasting
+
+The input field is single-line, so both multi-line text and images are
+shown as a compact placeholder rather than dropped or garbled:
+
+- **Multi-line text** collapses to `[pasted N lines]`. The real text is
+  swapped back in when you submit — the placeholder is just what's shown in
+  the field.
+- **Images** — pasting an image (e.g. a screenshot) shows `[Image #N]`.
+  Terminal paste can only ever carry text, so this works by checking the OS
+  clipboard directly when a paste delivers nothing usable, via `osascript`
+  on macOS or `xclip`/`wl-clipboard` on Linux (not installed by default on
+  many distros — Clanker warns once per session if neither is found). The
+  image is sent to the model alongside your message; Windows/WSL isn't
+  supported. Pasting an image while the agent is mid-turn (i.e. it would be
+  queued as a follow-up) isn't supported yet — the text is sent, with a
+  warning that the image was left out.
+- Both placeholders can hold **multiple** pastes in one message
+  (`[pasted 3 lines] and [pasted 5 lines]`, `[Image #1]` and `[Image #2]`,
+  or a mix) and expand back in order.
+- **Backspace/Delete** removes a whole placeholder in one keystroke rather
+  than eating into it character by character — including when the cursor
+  has been moved into the middle of one.
+- Input history (↑/↓ recall) keeps the placeholder form, since the field
+  can't safely redisplay an already-expanded multi-line paste.
 
 ### Sending Messages While the Agent Is Working
 

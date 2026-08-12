@@ -69,3 +69,43 @@ def test_content_text_present_for_each_turn() -> None:
     texts = [p.plain for p in body.renderables if isinstance(p, Text)]
 
     assert "what's the capital of France?" in texts
+
+
+def test_multimodal_message_shows_placeholder_not_raw_base64() -> None:
+    """Regression: a pasted-image HumanMessage has list content (text +
+    image_url blocks). str(msg.content) on that dumps the full base64 blob
+    as a Python repr -- this must reduce to text + a short placeholder
+    instead, the same way the session-snapshot writer does."""
+    huge_b64 = "A" * 500_000
+    messages = [
+        HumanMessage(content=[
+            {"type": "text", "text": "what's in this screenshot?"},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{huge_b64}"}},
+        ]),
+        AIMessage(content="I see a terminal window."),
+    ]
+    screen = _make_screen(messages)
+
+    body = screen._render_body()
+    texts = [p.plain for p in body.renderables if isinstance(p, Text)]
+    rendered = "\n".join(texts)
+
+    assert "what's in this screenshot?" in rendered
+    assert "[image omitted]" in rendered
+    assert "base64" not in rendered
+    assert huge_b64 not in rendered
+    assert len(rendered) < 1000  # nowhere near the ~500KB of base64 that went in
+
+
+def test_multimodal_message_counted_in_header() -> None:
+    messages = [
+        HumanMessage(content=[
+            {"type": "text", "text": "look at this"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        ]),
+    ]
+    screen = _make_screen(messages)
+
+    header = screen._render_header()
+
+    assert "1 message" in header.plain

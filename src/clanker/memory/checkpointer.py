@@ -51,6 +51,37 @@ def generate_session_id() -> str:
     return str(uuid.uuid4())[:8]
 
 
+def message_content_to_text(content) -> str:
+    """Reduce message content to plain text.
+
+    Multimodal content (a list of content blocks, e.g. a pasted-image
+    message: text + image_url blocks) is summarized to its text parts plus
+    an "[image omitted]" placeholder per image, instead of falling through
+    to ``str(content)`` -- which would dump the full base64 image data as a
+    raw Python repr, whether that lands in the session snapshot file
+    (written on every turn, growing without bound) or the F3 history popup
+    (a wall of base64 instead of a readable transcript). Public/shared: used
+    by both ``SessionManager.save_conversation_snapshot`` (via
+    ``_message_to_dict`` below -- ``_dict_to_message`` only ever
+    reconstructs plain-text messages anyway, so there's nothing lost by not
+    persisting the image data) and ``clanker.ui.history_modal.HistoryScreen``.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                if block.get("type") == "text":
+                    parts.append(block.get("text", ""))
+                elif block.get("type") == "image_url":
+                    parts.append("[image omitted]")
+        return "\n".join(p for p in parts if p)
+    return str(content)
+
+
 def _message_to_dict(msg) -> dict:
     """Convert a LangChain message to a serializable dict."""
     msg_type = "unknown"
@@ -65,7 +96,7 @@ def _message_to_dict(msg) -> dict:
 
     result = {
         "type": msg_type,
-        "content": msg.content if isinstance(msg.content, str) else str(msg.content),
+        "content": message_content_to_text(msg.content),
     }
 
     # Include tool calls for AI messages
