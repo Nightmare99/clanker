@@ -1107,6 +1107,13 @@ class ClankerApp(App):
                     result.output_tokens,
                 )
 
+            if result.summarization_occurred:
+                from clanker.cli import sync_conversation_after_auto_compaction
+
+                sync_conversation_after_auto_compaction(
+                    conversation_messages, session_manager, settings, console, chat_log
+                )
+
             if (
                 result.input_tokens > 0
                 or result.output_tokens > 0

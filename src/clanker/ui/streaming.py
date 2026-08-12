@@ -282,6 +282,26 @@ async def stream_agent_response_async(
         settings, checkpointer, tools=tools, middleware=middleware, system_prompt=system_prompt, model_name=model_name
     )
 
+    # Snapshot `compaction_count` (see RobustSummarizationMiddleware.state_schema)
+    # before this turn runs, so we can tell precisely -- not by guessing from
+    # model-call counts -- whether auto-compaction fired during it. The caller
+    # uses this to keep its own `conversation_messages` view in sync with what
+    # the graph actually retains, exactly like the manual `/compact` command
+    # already does.
+    _compaction_count_before = 0
+    try:
+        _snapshot = await graph.aget_state(config)
+        _compaction_count_before = (_snapshot.values or {}).get("compaction_count", 0)
+    except Exception:
+        pass
+
+    async def _compaction_occurred() -> bool:
+        try:
+            snapshot = await graph.aget_state(config)
+            return (snapshot.values or {}).get("compaction_count", 0) > _compaction_count_before
+        except Exception:
+            return False
+
     current_response = ""
     current_thinking = ""
     shown_tool_calls: set[str] = set()
@@ -306,10 +326,11 @@ async def stream_agent_response_async(
     # Loading state
     first_content_received = False
 
-    # Summarization detection
+    # Live "Compressing memory banks..." spinner heuristic. Best-effort/cosmetic
+    # only -- the authoritative post-turn signal is `_compaction_occurred()`
+    # above, which diffs the real `compaction_count` state instead of guessing.
     model_call_count = 0
     tools_started = False
-    summarization_detected = False
     summarization_spinner_shown = False
 
     # Debounced tool loader: mounts LoadingIndicator after delay if tool still running
@@ -522,7 +543,7 @@ async def stream_agent_response_async(
                             cumulative_cache_read_tokens=cumulative_cache_read_tokens,
                             cumulative_cache_creation_tokens=cumulative_cache_creation_tokens,
                             model_name=model_name,
-                            summarization_occurred=summarization_detected,
+                            summarization_occurred=await _compaction_occurred(),
                         )
 
                     if event_type == "on_tool_start":
@@ -730,7 +751,6 @@ async def stream_agent_response_async(
                             model_call_count += 1
 
                             if model_call_count == 2 and not tools_started and not summarization_spinner_shown:
-                                summarization_detected = True
                                 summarization_spinner_shown = True
                                 _stop_loading()
                                 console.print_info("*WHIRR* Compressing memory banks...")
@@ -892,7 +912,7 @@ async def stream_agent_response_async(
             cumulative_cache_read_tokens=cumulative_cache_read_tokens,
             cumulative_cache_creation_tokens=cumulative_cache_creation_tokens,
             model_name=model_name,
-            summarization_occurred=summarization_detected,
+            summarization_occurred=await _compaction_occurred(),
         )
 
     except GraphRecursionError:
@@ -917,7 +937,7 @@ async def stream_agent_response_async(
             cumulative_cache_read_tokens=cumulative_cache_read_tokens,
             cumulative_cache_creation_tokens=cumulative_cache_creation_tokens,
             model_name=model_name,
-            summarization_occurred=summarization_detected,
+            summarization_occurred=await _compaction_occurred(),
         )
 
     except (KeyboardInterrupt, asyncio.CancelledError):
@@ -938,7 +958,7 @@ async def stream_agent_response_async(
             cumulative_cache_read_tokens=cumulative_cache_read_tokens,
             cumulative_cache_creation_tokens=cumulative_cache_creation_tokens,
             model_name=model_name,
-            summarization_occurred=summarization_detected,
+            summarization_occurred=await _compaction_occurred(),
         )
 
     except Exception as exc:  # noqa: BLE001
@@ -967,7 +987,7 @@ async def stream_agent_response_async(
             cumulative_cache_read_tokens=cumulative_cache_read_tokens,
             cumulative_cache_creation_tokens=cumulative_cache_creation_tokens,
             model_name=model_name,
-            summarization_occurred=summarization_detected,
+            summarization_occurred=await _compaction_occurred(),
         )
 
     finally:
@@ -990,7 +1010,7 @@ async def stream_agent_response_async(
         cumulative_cache_read_tokens=cumulative_cache_read_tokens,
         cumulative_cache_creation_tokens=cumulative_cache_creation_tokens,
         model_name=model_name,
-        summarization_occurred=summarization_detected,
+        summarization_occurred=await _compaction_occurred(),
     )
 
 

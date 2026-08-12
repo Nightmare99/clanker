@@ -33,6 +33,13 @@ class FakeModel:
     def invoke(self, *args, **kwargs):
         return FakeResponse(self.text)
 
+    def with_retry(self, *args, **kwargs):
+        # SummarizationMiddleware.__init__ calls model.with_retry() to build
+        # its internal retrying summary model. Our overridden summary
+        # pipeline never uses that attribute (it calls self.model directly),
+        # so just returning self satisfies construction.
+        return self
+
 
 @pytest.fixture
 def console():

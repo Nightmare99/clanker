@@ -36,11 +36,14 @@ never return an empty string or one of the stock "could not summarize" markers.
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, NotRequired
 
 from langchain.agents.middleware import SummarizationMiddleware
-from langchain_core.messages import AnyMessage, HumanMessage
+from langchain.agents.middleware.types import AgentState
+from langchain_core.messages import AnyMessage, HumanMessage, RemoveMessage
 from langchain_core.messages.utils import get_buffer_string
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from clanker.context import is_context_length_error
 from clanker.logging import get_logger
@@ -132,6 +135,47 @@ _IMAGE_PLACEHOLDER = "[image omitted from summary]"
 _TRUNCATION_MARKER = "\n... [content truncated for summarization] ...\n"
 
 
+class CompactionAgentState(AgentState[Any]):
+    """Agent state extended with a counter that increments on every compaction.
+
+    Lets callers outside the graph (the streaming loop) detect "compaction
+    just happened" precisely -- by diffing this counter before/after a turn
+    -- instead of guessing from call-count heuristics.
+    """
+
+    compaction_count: NotRequired[int]
+
+
+@dataclass
+class CompactionResult:
+    """The outcome of one compaction pass: a summary plus what it replaces.
+
+    Shared return type for :meth:`RobustSummarizationMiddleware.compact` /
+    :meth:`~RobustSummarizationMiddleware.acompact`, used identically by the
+    automatic (`before_model`) trigger and the manual `/compact` command so
+    both produce the same shape of result.
+    """
+
+    new_messages: list[AnyMessage]
+    preserved_messages: list[AnyMessage]
+    summarized_count: int
+
+    @property
+    def compacted_messages(self) -> list[AnyMessage]:
+        """The full replacement list: summary message(s) + preserved tail."""
+        return [*self.new_messages, *self.preserved_messages]
+
+    @property
+    def graph_state_update(self) -> dict[str, Any]:
+        """A LangGraph state update dict that replaces the message history."""
+        return {
+            "messages": [
+                RemoveMessage(id=REMOVE_ALL_MESSAGES),
+                *self.compacted_messages,
+            ]
+        }
+
+
 class RobustSummarizationMiddleware(SummarizationMiddleware):
     """Summarization middleware that never silently discards conversation history.
 
@@ -140,7 +184,15 @@ class RobustSummarizationMiddleware(SummarizationMiddleware):
     only the summary-generation step (:meth:`_create_summary` /
     :meth:`_acreate_summary`) with a sanitize -> chunk -> map-reduce pipeline that
     degrades gracefully instead of returning a placeholder string.
+
+    :meth:`before_model`/:meth:`abefore_model` route through the public
+    :meth:`compact`/:meth:`acompact` methods so the exact same trigger/cutoff/
+    summarize pipeline is reachable from outside the graph (see the `/compact`
+    command in ``cli.py``, which calls ``compact(..., force=True)`` directly
+    instead of duplicating this logic against a throwaway instance).
     """
+
+    state_schema = CompactionAgentState
 
     def __init__(
         self,
@@ -168,6 +220,105 @@ class RobustSummarizationMiddleware(SummarizationMiddleware):
         self._chunk_token_target = chunk_token_target
         self._per_message_token_cap = per_message_token_cap
         self._max_transient_retries = max_transient_retries
+
+    # ------------------------------------------------------------------
+    # Shared compaction entry point -- the single implementation behind both
+    # the automatic trigger (before_model/abefore_model) and the manual
+    # `/compact` command.
+    # ------------------------------------------------------------------
+    def compact(
+        self, messages: list[AnyMessage], *, force: bool = False
+    ) -> CompactionResult | None:
+        """Summarize the older portion of `messages`, synchronously.
+
+        With ``force=False`` (the automatic path), this is exactly the parent
+        class's ``before_model`` trigger/cutoff logic, just exposed as a
+        reusable result instead of a bare graph-update dict: returns `None`
+        when the configured trigger hasn't fired, or when the retention
+        window already covers everything.
+
+        With ``force=True`` (the manual `/compact` path), the trigger check
+        is skipped -- a manual request always compacts -- and a cutoff of 0
+        (nothing over the `keep` threshold) falls back to summarizing
+        everything but the last message, so the command always does
+        *something* even on a short conversation.
+        """
+        self._ensure_message_ids(messages)
+
+        if not force:
+            total_tokens = self.token_counter(messages)
+            if not self._should_summarize(messages, total_tokens):
+                return None
+
+        cutoff_index = self._determine_cutoff_index(messages)
+        if cutoff_index <= 0:
+            if not force:
+                return None
+            cutoff_index = max(1, len(messages) - 1)
+
+        messages_to_summarize, preserved_messages = self._partition_messages(messages, cutoff_index)
+        if not messages_to_summarize:
+            return None
+
+        summary = self._create_summary(messages_to_summarize)
+        new_messages = self._build_new_messages(summary)
+        return CompactionResult(
+            new_messages=new_messages,
+            preserved_messages=preserved_messages,
+            summarized_count=len(messages_to_summarize),
+        )
+
+    async def acompact(
+        self, messages: list[AnyMessage], *, force: bool = False
+    ) -> CompactionResult | None:
+        """Async variant of :meth:`compact` (uses :meth:`_acreate_summary`)."""
+        self._ensure_message_ids(messages)
+
+        if not force:
+            total_tokens = self.token_counter(messages)
+            if not self._should_summarize(messages, total_tokens):
+                return None
+
+        cutoff_index = self._determine_cutoff_index(messages)
+        if cutoff_index <= 0:
+            if not force:
+                return None
+            cutoff_index = max(1, len(messages) - 1)
+
+        messages_to_summarize, preserved_messages = self._partition_messages(messages, cutoff_index)
+        if not messages_to_summarize:
+            return None
+
+        summary = await self._acreate_summary(messages_to_summarize)
+        new_messages = self._build_new_messages(summary)
+        return CompactionResult(
+            new_messages=new_messages,
+            preserved_messages=preserved_messages,
+            summarized_count=len(messages_to_summarize),
+        )
+
+    def before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        """Process messages before model invocation (overrides parent).
+
+        Routes through :meth:`compact` instead of duplicating the parent's
+        body, and stamps `compaction_count` onto the update so the streaming
+        loop can detect that a compaction happened without guessing.
+        """
+        result = self.compact(state["messages"], force=False)
+        if result is None:
+            return None
+        update = result.graph_state_update
+        update["compaction_count"] = state.get("compaction_count", 0) + 1
+        return update
+
+    async def abefore_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        """Async variant of :meth:`before_model` (overrides parent)."""
+        result = await self.acompact(state["messages"], force=False)
+        if result is None:
+            return None
+        update = result.graph_state_update
+        update["compaction_count"] = state.get("compaction_count", 0) + 1
+        return update
 
     # ------------------------------------------------------------------
     # Overridden generation entry points (called by parent before_model)
@@ -551,3 +702,28 @@ class RobustSummarizationMiddleware(SummarizationMiddleware):
         """Human-readable role label for a message."""
         mapping = {"human": "User", "ai": "Assistant", "tool": "Tool", "system": "System"}
         return mapping.get(getattr(message, "type", ""), getattr(message, "type", "Message"))
+
+
+def run_compaction(
+    messages: list[AnyMessage],
+    model: Any,
+    settings: Any,
+    *,
+    force: bool = False,
+) -> CompactionResult | None:
+    """Build a middleware instance from settings and run one compaction pass.
+
+    Convenience wrapper around ``RobustSummarizationMiddleware(...).compact(...)``
+    for callers outside the graph -- the `/compact` command and the post-turn
+    auto-compaction sync in the streaming layer -- so both configure the
+    middleware identically (same trigger/keep settings) rather than each
+    duplicating the construction.
+    """
+    trigger_fraction = settings.context.summarization_threshold / 100.0
+    keep_count = settings.context.keep_recent_turns * 2
+    middleware = RobustSummarizationMiddleware(
+        model=model,
+        trigger=("fraction", trigger_fraction),
+        keep=("messages", keep_count),
+    )
+    return middleware.compact(messages, force=force)

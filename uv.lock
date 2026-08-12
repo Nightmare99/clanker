@@ -335,7 +335,7 @@ wheels = [
 
 [[package]]
 name = "clanker"
-version = "0.9"
+version = "0.9.1"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },

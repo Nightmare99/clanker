@@ -62,6 +62,13 @@ class FakeModel:
         self.calls.append(prompt)
         return FakeResponse(self._responder(prompt, n))
 
+    def with_retry(self, *args, **kwargs):
+        # SummarizationMiddleware.__init__ calls model.with_retry() to build
+        # its internal retrying summary model. Our overridden summary
+        # pipeline never uses that attribute (it calls self.model directly),
+        # so just returning self satisfies construction.
+        return self
+
 
 def _char_token_counter(messages) -> int:
     """Deterministic token counter: ~1 token per 4 chars of content."""

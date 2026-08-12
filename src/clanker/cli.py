@@ -70,6 +70,50 @@ _preload_tool_dependencies()
 logger = get_logger("cli")
 
 
+def sync_conversation_after_auto_compaction(
+    conversation_messages: list,
+    session_manager: SessionManager,
+    settings: Settings,
+    console: Console,
+    chat_log=None,
+) -> None:
+    """Keep `conversation_messages` in sync after the middleware auto-compacts mid-turn.
+
+    The middleware compacts the graph's own internal message list (which
+    includes tool calls/results) from deep inside LangGraph -- it has no way
+    to reach this app-layer, simplified per-turn transcript. Without this,
+    `conversation_messages` (and therefore F3 history, session snapshots, and
+    `/restore`) would keep growing forever, silently diverging from what the
+    model actually retains after a turn that triggered auto-compaction.
+
+    Mirrors the manual `/compact` command exactly: same `run_compaction` call,
+    same summary pipeline, same UI feedback -- called from both the TUI
+    (`app.py`, after `stream_agent_response_async`) and the legacy `--no-tui`
+    REPL below, so the two entry points behave identically.
+    """
+    from clanker.agent.summarization import run_compaction
+
+    try:
+        model = create_model(settings)
+        result = run_compaction(conversation_messages, model, settings, force=True)
+        if result is None:
+            return
+
+        conversation_messages.clear()
+        conversation_messages.extend(result.compacted_messages)
+        session_manager.save_conversation_snapshot(conversation_messages)
+
+        msg = (
+            f"Auto-compacted conversation history ({result.summarized_count} "
+            "messages summarized) to stay within the model's context window."
+        )
+        console.print_info(msg)
+        if chat_log:
+            chat_log.add_message(msg, MessageType.INFO)
+    except Exception as e:
+        logger.warning("Failed to sync conversation_messages after auto-compaction: %s", e)
+
+
 def handle_command(
     command: str,
     console: Console,
@@ -330,7 +374,7 @@ def handle_command(
             console.print_info(msg)
             _mirror(msg)
             return None
-        from clanker.agent.summarization import RobustSummarizationMiddleware
+        from clanker.agent.summarization import run_compaction
 
         settings = get_settings()
         try:
@@ -341,42 +385,30 @@ def handle_command(
             _mirror(msg, MessageType.ERROR)
             return None
 
-        keep_count = settings.context.keep_recent_turns * 2
-        trigger_fraction = settings.context.summarization_threshold / 100.0
-        summarization = RobustSummarizationMiddleware(
-            model=model,
-            trigger=("fraction", trigger_fraction),
-            keep=("messages", keep_count),
-        )
-        summarization._ensure_message_ids(conversation_messages)
-        cutoff_index = summarization._determine_cutoff_index(conversation_messages)
-        if cutoff_index <= 0:
-            cutoff_index = max(1, len(conversation_messages) - 1)
-
         console.print_info("Compacting conversation history...")
         if chat_log:
             chat_log.add_message("Compacting conversation history...", MessageType.INFO)
-        messages_to_summarize, preserved_messages = summarization._partition_messages(
-            conversation_messages, cutoff_index
-        )
-        try:
-            summary = summarization._create_summary(messages_to_summarize)
-            new_messages = summarization._build_new_messages(summary)
-            compacted_messages = [*new_messages, *preserved_messages]
-            from langchain_core.messages import RemoveMessage
-            from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
+        try:
             from clanker.agent.graph import create_agent_graph
+
+            result = run_compaction(conversation_messages, model, settings, force=True)
+            if result is None:
+                msg = "Nothing to compact."
+                console.print_info(msg)
+                _mirror(msg)
+                return None
 
             graph = create_agent_graph(settings, checkpointer=session_manager.checkpointer)
             config = session_manager.get_config()
-            graph.update_state(config, {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *compacted_messages]})
+            graph.update_state(config, result.graph_state_update)
+
             conversation_messages.clear()
-            conversation_messages.extend(compacted_messages)
-            session_manager.save_conversation_snapshot(compacted_messages)
+            conversation_messages.extend(result.compacted_messages)
+            session_manager.save_conversation_snapshot(conversation_messages)
             success_msg = (
-                f"Successfully compacted conversation! Condensed {len(messages_to_summarize)} messages "
-                f"into a summary. History now contains {len(compacted_messages)} message(s)."
+                f"Successfully compacted conversation! Condensed {result.summarized_count} messages "
+                f"into a summary. History now contains {len(result.compacted_messages)} message(s)."
             )
             console.print_success(success_msg)
             _mirror(success_msg, MessageType.SUCCESS)
@@ -979,6 +1011,11 @@ def run_interactive_legacy(console: Console, settings: Settings, resume_session:
                 if result.response:
                     conversation_messages.append(AIMessage(content=result.response))
                     session_manager.save_conversation_snapshot(conversation_messages)
+
+                if result.summarization_occurred:
+                    sync_conversation_after_auto_compaction(
+                        conversation_messages, session_manager, settings, console
+                    )
 
                 if (result.input_tokens > 0 or result.output_tokens > 0) and settings.output.show_token_usage:
                     last_turn = token_tracker.turns[-1] if token_tracker.turns else None
