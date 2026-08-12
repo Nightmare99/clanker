@@ -16,6 +16,13 @@ logger = get_logger("tools.web")
 MAX_RESULTS = 10
 DEFAULT_RESULTS = 5
 MAX_PAGE_LENGTH = 20_000
+MAX_PER_DOMAIN = 3
+MAX_FETCH_TOP = 3
+FETCH_TOP_MAX_LENGTH = 4000
+
+# Retry
+MAX_SEARCH_ATTEMPTS = 3
+RETRY_BASE_DELAY = 0.3
 
 _BROWSER_HEADERS = {
     "User-Agent": (
@@ -101,8 +108,129 @@ def _get_trafilatura_config():
     return config
 
 
+def _dedup_and_diversify(results: list[dict], max_per_domain: int = MAX_PER_DOMAIN) -> list[dict]:
+    """Drop duplicate URLs and cap how many results a single domain can occupy.
+
+    DDGS aggregates across several backend engines and already dedupes exact
+    href collisions internally, but near-duplicate mirrors from the same
+    domain (or slightly differing URL formatting) can still slip through.
+    """
+    from urllib.parse import urlparse
+
+    seen_urls: set[str] = set()
+    domain_counts: dict[str, int] = {}
+    deduped = []
+    for result in results:
+        url = result.get("href", result.get("link", ""))
+        normalized = url.rstrip("/").lower()
+        if normalized and normalized in seen_urls:
+            continue
+        domain = urlparse(url).netloc.lower()
+        if domain and domain_counts.get(domain, 0) >= max_per_domain:
+            continue
+        if normalized:
+            seen_urls.add(normalized)
+        if domain:
+            domain_counts[domain] = domain_counts.get(domain, 0) + 1
+        deduped.append(result)
+    return deduped
+
+
+def _tokenize(text: str) -> set[str]:
+    import re
+
+    return {t for t in re.split(r"\W+", text.lower()) if len(t) >= 3}
+
+
+def _rerank(results: list[dict], query: str) -> list[dict]:
+    """Reorder results by query-term overlap in the title and body/snippet.
+
+    DDGS's built-in ranker only sorts into coarse buckets (title+body hit,
+    title-only, body-only, neither) and unconditionally floats any
+    wikipedia.org result to the very top regardless of relevance -- not
+    ideal for the docs/library/error-message lookups this tool targets.
+    This rescoring uses proportional token-overlap counts instead, weighting
+    title matches higher than body matches. Sort is stable, so results with
+    equal scores keep their original relative order.
+    """
+    tokens = _tokenize(query)
+    if not tokens:
+        return results
+
+    def score(result: dict) -> int:
+        title = result.get("title", "").lower()
+        body = result.get("body", result.get("snippet", "")).lower()
+        title_hits = sum(1 for t in tokens if t in title)
+        body_hits = sum(1 for t in tokens if t in body)
+        return title_hits * 3 + body_hits
+
+    return sorted(results, key=score, reverse=True)
+
+
+def _fetch_and_extract(url: str, max_length: int) -> tuple[str | None, str | None]:
+    """Fetch a URL and extract clean text content.
+
+    Returns (content, error_message) -- exactly one of the two is set.
+    """
+    try:
+        import trafilatura
+    except ImportError:
+        return None, "trafilatura package is not installed. Install it with: pip install trafilatura"
+
+    try:
+        downloaded = _fetch_with_browser_headers(url)
+    except Exception as e:
+        logger.debug("Browser-header fetch failed for %s: %s", url, e)
+        downloaded = None
+        fetch_error = e
+    else:
+        fetch_error = None
+
+    # Fallback to trafilatura's own fetcher (different session/retry logic)
+    if downloaded is None:
+        try:
+            downloaded = trafilatura.fetch_url(url)
+        except Exception as e:
+            logger.error("All fetch methods failed for %s: %s", url, e)
+            return None, f"Failed to fetch URL: {e}"
+
+    if downloaded is None:
+        # Report the original HTTP error if we have one
+        if fetch_error is not None:
+            import urllib.error
+
+            if isinstance(fetch_error, urllib.error.HTTPError):
+                return None, (
+                    f"HTTP {fetch_error.code} fetching {url}. "
+                    f"The site may block automated requests."
+                )
+            return None, f"Could not fetch content from {url} ({fetch_error})"
+        return None, f"Could not fetch content from {url}"
+
+    try:
+        content = trafilatura.extract(downloaded, config=_get_trafilatura_config())
+    except Exception as e:
+        logger.error("Failed to extract content from %s: %s", url, e)
+        return None, f"Failed to extract content: {e}"
+
+    if not content:
+        # trafilatura targets HTML articles and returns nothing for raw text
+        # files (e.g. a .py/.md/.json fetched from raw.githubusercontent.com).
+        # If the download looks like plain text/code rather than an HTML page,
+        # return it directly instead of reporting "no content".
+        if _looks_like_plain_text(downloaded):
+            content = downloaded
+        else:
+            return None, f"No meaningful content could be extracted from {url}"
+
+    if len(content) > max_length:
+        content = content[:max_length] + "\n\n... (content truncated)"
+
+    return content, None
+
+
 @tool
-def web_search(query: str, max_results: int = DEFAULT_RESULTS) -> str:
+def web_search(query: str, max_results: int = DEFAULT_RESULTS, fetch_top: int = 0) -> str:
     """Search the web for current information using DuckDuckGo.
 
     Use this to find documentation, look up error messages, check library
@@ -112,28 +240,60 @@ def web_search(query: str, max_results: int = DEFAULT_RESULTS) -> str:
     Args:
         query: Search query string. Be specific for best results.
         max_results: Number of results to return (1-10, default 5).
+        fetch_top: Also fetch and include full extracted page content (not
+            just the snippet) for the top N results (0-3, default 0). Use
+            this instead of a follow-up web_read call when snippets alone
+            won't be enough detail.
 
     Returns:
-        Search results with titles, URLs, and content snippets.
+        Search results with titles, URLs, and content snippets (plus full
+        content for the top `fetch_top` results, if requested).
     """
     max_results = max(1, min(max_results, MAX_RESULTS))
+    fetch_top = max(0, min(fetch_top, MAX_FETCH_TOP))
 
     try:
         from ddgs import DDGS
+        from ddgs.exceptions import DDGSException
     except ImportError:
         return (
             "Error: ddgs package is not installed. "
             "Install it with: pip install ddgs"
         )
 
-    try:
-        results = DDGS().text(query, max_results=max_results)
-    except Exception as e:
-        logger.error("Web search failed: %s", e)
-        return f"Error: Web search failed: {e}"
+    import random
+    import time
+
+    results = None
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_SEARCH_ATTEMPTS + 1):
+        try:
+            results = DDGS().text(query, max_results=max_results)
+            break
+        except DDGSException as e:
+            # Rate limits and per-engine timeouts are transient -- worth a
+            # couple of quick retries before giving up.
+            last_error = e
+            logger.warning(
+                "Web search attempt %d/%d failed: %s", attempt, MAX_SEARCH_ATTEMPTS, e
+            )
+            if attempt < MAX_SEARCH_ATTEMPTS:
+                time.sleep(RETRY_BASE_DELAY * (2 ** (attempt - 1)) + random.uniform(0, 0.2))
+        except Exception as e:
+            logger.error("Web search failed: %s", e)
+            return f"Error: Web search failed: {e}"
+
+    if results is None:
+        logger.error(
+            "Web search failed after %d attempts: %s", MAX_SEARCH_ATTEMPTS, last_error
+        )
+        return f"Error: Web search failed after {MAX_SEARCH_ATTEMPTS} attempts: {last_error}"
 
     if not results:
         return f"No results found for: {query}"
+
+    results = _dedup_and_diversify(results)
+    results = _rerank(results, query)
 
     # Format results for LLM consumption
     lines = [f'Web search results for: "{query}"\n']
@@ -145,6 +305,12 @@ def web_search(query: str, max_results: int = DEFAULT_RESULTS) -> str:
         lines.append(f"{i}. [{title}]({url})")
         if snippet:
             lines.append(f"   {snippet}")
+        if fetch_top and i <= fetch_top and url:
+            content, error = _fetch_and_extract(url, FETCH_TOP_MAX_LENGTH)
+            if content:
+                lines.append(f"   Full content:\n{content}")
+            else:
+                lines.append(f"   (Could not fetch full content: {error})")
         lines.append("")
 
     return "\n".join(lines).strip()
@@ -170,62 +336,9 @@ def web_read(url: str, max_length: int = MAX_PAGE_LENGTH) -> str:
     if not url.startswith(("http://", "https://")):
         return "Error: URL must start with http:// or https://"
 
-    try:
-        import trafilatura
-    except ImportError:
-        return (
-            "Error: trafilatura package is not installed. "
-            "Install it with: pip install trafilatura"
-        )
-
-    try:
-        downloaded = _fetch_with_browser_headers(url)
-    except Exception as e:
-        logger.debug("Browser-header fetch failed for %s: %s", url, e)
-        downloaded = None
-        fetch_error = e
-    else:
-        fetch_error = None
-
-    # Fallback to trafilatura's own fetcher (different session/retry logic)
-    if downloaded is None:
-        try:
-            downloaded = trafilatura.fetch_url(url)
-        except Exception as e:
-            logger.error("All fetch methods failed for %s: %s", url, e)
-            return f"Error: Failed to fetch URL: {e}"
-
-    if downloaded is None:
-        # Report the original HTTP error if we have one
-        if fetch_error is not None:
-            import urllib.error
-            if isinstance(fetch_error, urllib.error.HTTPError):
-                return (
-                    f"Error: HTTP {fetch_error.code} fetching {url}. "
-                    f"The site may block automated requests."
-                )
-            return f"Error: Could not fetch content from {url} ({fetch_error})"
-        return f"Error: Could not fetch content from {url}"
-
-    try:
-        content = trafilatura.extract(downloaded, config=_get_trafilatura_config())
-    except Exception as e:
-        logger.error("Failed to extract content from %s: %s", url, e)
-        return f"Error: Failed to extract content: {e}"
-
-    if not content:
-        # trafilatura targets HTML articles and returns nothing for raw text
-        # files (e.g. a .py/.md/.json fetched from raw.githubusercontent.com).
-        # If the download looks like plain text/code rather than an HTML page,
-        # return it directly instead of reporting "no content".
-        if _looks_like_plain_text(downloaded):
-            content = downloaded
-        else:
-            return f"Error: No meaningful content could be extracted from {url}"
-
-    # Truncate if needed
-    if len(content) > max_length:
-        content = content[:max_length] + "\n\n... (content truncated)"
+    content, error = _fetch_and_extract(url, max_length)
+    if error:
+        return f"Error: {error}"
 
     return f"Content from {url}:\n\n{content}"
 

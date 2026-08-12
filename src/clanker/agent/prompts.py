@@ -190,7 +190,7 @@ Format your responses using beautiful, clean Markdown (including headers, lists,
 # is enabled. When disabled, the marker is simply stripped from the prompt.
 
 WEB_TOOLS_SECTION = """\
-- `web_search(query, max_results)` - Search the web via DuckDuckGo. Use for docs, errors, libraries.
+- `web_search(query, max_results, fetch_top)` - Search the web via DuckDuckGo. Use for docs, errors, libraries. Set `fetch_top` (0-3) to also pull full page content for the top results instead of a separate web_read call.
 - `web_read(url, max_length)` - Extract clean text content from a web page. If a webpage gives HTTP errors, try one or two more other pages from the search results. If not possible, mention what error occured.
 
 """

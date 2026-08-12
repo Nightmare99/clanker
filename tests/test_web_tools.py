@@ -109,6 +109,117 @@ class TestWebSearch:
         assert "No Body" in result
         assert "https://example.com" in result
 
+    def test_search_retries_on_ddgs_exception(self) -> None:
+        """Transient DDGS errors (rate limits, timeouts) are retried."""
+        from ddgs.exceptions import RatelimitException
+
+        mock_results = [{"title": "Result", "href": "https://example.com", "body": "Body"}]
+
+        with patch("ddgs.DDGS") as mock_ddgs_class, patch("time.sleep"):
+            mock_instance = MagicMock()
+            mock_instance.text.side_effect = [
+                RatelimitException("rate limited"),
+                RatelimitException("rate limited"),
+                mock_results,
+            ]
+            mock_ddgs_class.return_value = mock_instance
+
+            result = web_search.invoke({"query": "test"})
+
+        assert mock_instance.text.call_count == 3
+        assert "Result" in result
+
+    def test_search_gives_up_after_max_attempts(self) -> None:
+        """Persistent DDGS errors surface as an error after retries are exhausted."""
+        from ddgs.exceptions import TimeoutException
+
+        with patch("ddgs.DDGS") as mock_ddgs_class, patch("time.sleep"):
+            mock_instance = MagicMock()
+            mock_instance.text.side_effect = TimeoutException("timed out")
+            mock_ddgs_class.return_value = mock_instance
+
+            result = web_search.invoke({"query": "test"})
+
+        assert mock_instance.text.call_count == 3
+        assert "Error" in result
+        assert "timed out" in result
+
+    def test_search_dedupes_and_caps_per_domain(self) -> None:
+        """Duplicate URLs are dropped and a single domain can't flood results."""
+        mock_results = [
+            {"title": f"Same domain {i}", "href": f"https://example.com/{i}", "body": ""}
+            for i in range(5)
+        ] + [
+            {"title": "Dup", "href": "https://example.com/0/", "body": ""},  # trailing-slash dup
+            {"title": "Other domain", "href": "https://other.com/x", "body": ""},
+        ]
+
+        with patch("ddgs.DDGS") as mock_ddgs_class:
+            mock_instance = MagicMock()
+            mock_instance.text.return_value = mock_results
+            mock_ddgs_class.return_value = mock_instance
+
+            result = web_search.invoke({"query": "test", "max_results": 10})
+
+        # Only MAX_PER_DOMAIN (3) example.com results should survive, plus other.com.
+        assert result.count("example.com") == 3
+        assert "other.com" in result
+
+    def test_search_reranks_by_token_overlap(self) -> None:
+        """Results with more query-term matches in the title rank first."""
+        mock_results = [
+            {"title": "Unrelated", "href": "https://a.example.com", "body": "nothing relevant"},
+            {"title": "asyncio python guide", "href": "https://b.example.com", "body": "python asyncio tutorial"},
+        ]
+
+        with patch("ddgs.DDGS") as mock_ddgs_class:
+            mock_instance = MagicMock()
+            mock_instance.text.return_value = mock_results
+            mock_ddgs_class.return_value = mock_instance
+
+            result = web_search.invoke({"query": "python asyncio"})
+
+        assert result.index("asyncio python guide") < result.index("Unrelated")
+
+    def test_search_fetch_top_includes_full_content(self) -> None:
+        """fetch_top pulls full extracted content for the top N results."""
+        mock_results = [
+            {"title": "Result 1", "href": "https://example.com/1", "body": "Body 1"},
+            {"title": "Result 2", "href": "https://example.com/2", "body": "Body 2"},
+        ]
+
+        with patch("ddgs.DDGS") as mock_ddgs_class, \
+             patch("clanker.tools.web_tools._fetch_and_extract") as mock_fetch_extract:
+            mock_instance = MagicMock()
+            mock_instance.text.return_value = mock_results
+            mock_ddgs_class.return_value = mock_instance
+            mock_fetch_extract.return_value = ("Full extracted text", None)
+
+            result = web_search.invoke({"query": "test", "fetch_top": 1})
+
+        assert mock_fetch_extract.call_count == 1
+        assert "Full extracted text" in result
+
+    def test_search_fetch_top_clamped(self) -> None:
+        """fetch_top is clamped to MAX_FETCH_TOP even if a larger value is requested."""
+        from clanker.tools.web_tools import MAX_FETCH_TOP
+
+        mock_results = [
+            {"title": f"Result {i}", "href": f"https://site{i}.example.com/", "body": ""}
+            for i in range(5)
+        ]
+
+        with patch("ddgs.DDGS") as mock_ddgs_class, \
+             patch("clanker.tools.web_tools._fetch_and_extract") as mock_fetch_extract:
+            mock_instance = MagicMock()
+            mock_instance.text.return_value = mock_results
+            mock_ddgs_class.return_value = mock_instance
+            mock_fetch_extract.return_value = ("content", None)
+
+            web_search.invoke({"query": "test", "max_results": 5, "fetch_top": 99})
+
+        assert mock_fetch_extract.call_count == MAX_FETCH_TOP
+
 
 class TestWebRead:
     """Tests for the web_read tool."""
