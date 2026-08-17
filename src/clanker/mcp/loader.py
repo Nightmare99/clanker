@@ -1,7 +1,27 @@
-"""MCP server loader and manager."""
+"""MCP server loader and manager.
 
+MCP tool *discovery* (listing what tools a server offers) is cached process-
+wide: without this, every call to `load_mcp_tools_async`/`load_mcp_tools`
+constructs a fresh `MultiServerMCPClient` and calls `get_tools()`, which opens
+a new session per server just to list its tools -- for stdio servers, that's
+a subprocess spawned and killed purely to re-fetch a schema list that never
+changes within a session. Since `create_agent_graph_async` runs fresh on
+*every agent turn* (see `graph.py`), that cost was being paid every turn, not
+just once at startup.
+
+This does NOT change how a tool is actually *invoked* -- that already opens
+its own fresh session per call, by the installed `langchain-mcp-adapters`
+version's own design (stateless, no persistent connection held by the
+client). So caching the discovery step is free: there is no "stale dead
+connection" risk, because no connection is being kept alive across turns in
+the first place -- only the (static, config-derived) tool list is reused.
+"""
+
+import hashlib
+import json
 import os
 import sys
+import threading
 from contextlib import contextmanager
 from typing import Any
 
@@ -12,6 +32,31 @@ from clanker.logging import get_logger
 
 # Module logger
 logger = get_logger("mcp")
+
+# Process-wide cache of the last successful MCP discovery, shared by both the
+# sync and async loaders (and their many call sites -- every agent turn,
+# every `/compact`, every subagent) so servers are only spawned once per
+# session instead of once per call. Keyed by a hash of the resolved server
+# configs so changing MCP settings mid-session (e.g. a settings reload)
+# correctly invalidates it instead of silently serving a stale tool list.
+_cache_lock = threading.Lock()
+_cached_config_hash: str | None = None
+_cached_client: Any = None
+_cached_tools: list[BaseTool] = []
+
+
+def _hash_configs(configs: dict[str, dict[str, Any]]) -> str:
+    """Stable hash of resolved server configs, used to invalidate the cache."""
+    return hashlib.sha256(json.dumps(configs, sort_keys=True).encode()).hexdigest()
+
+
+def clear_mcp_cache() -> None:
+    """Drop the cached MCP client/tools so the next load reconnects from scratch."""
+    global _cached_config_hash, _cached_client, _cached_tools
+    with _cache_lock:
+        _cached_config_hash = None
+        _cached_client = None
+        _cached_tools = []
 
 
 @contextmanager
@@ -88,20 +133,27 @@ def build_mcp_server_configs(settings: Settings | None = None) -> dict[str, dict
 
 
 async def load_mcp_tools_async(settings: Settings | None = None) -> tuple[Any, list[BaseTool]]:
-    """Load MCP tools asynchronously.
-
-    This returns both the client (which must stay alive) and the tools.
+    """Load MCP tools asynchronously, reusing the process-wide discovery cache.
 
     Args:
         settings: Optional settings override.
 
     Returns:
-        Tuple of (client, tools). Client must be kept alive for tools to work.
+        Tuple of (client, tools). Cached across calls with the same server
+        config -- see the module docstring for why re-discovering on every
+        call (e.g. every agent turn) is unnecessary and wasteful.
     """
+    global _cached_config_hash, _cached_client, _cached_tools
+
     configs = build_mcp_server_configs(settings)
 
     if not configs:
         return None, []
+
+    config_hash = _hash_configs(configs)
+    with _cache_lock:
+        if _cached_client is not None and _cached_config_hash == config_hash:
+            return _cached_client, _cached_tools
 
     try:
         from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -112,6 +164,8 @@ async def load_mcp_tools_async(settings: Settings | None = None) -> tuple[Any, l
             tools = await client.get_tools()
 
         logger.info("Loaded %d MCP tools from %d servers", len(tools), len(configs))
+        with _cache_lock:
+            _cached_client, _cached_tools, _cached_config_hash = client, tools, config_hash
         return client, tools
 
     except ImportError as e:
@@ -126,7 +180,8 @@ async def load_mcp_tools_async(settings: Settings | None = None) -> tuple[Any, l
 
 # For backward compatibility - synchronous wrapper
 def load_mcp_tools(settings: Settings | None = None) -> list[BaseTool]:
-    """Synchronous wrapper to load MCP tools.
+    """Synchronous wrapper to load MCP tools, sharing the same discovery cache
+    as :func:`load_mcp_tools_async` (see the module docstring).
 
     Note: This is provided for backward compatibility but the async version
     is preferred as it properly manages the MCP client lifecycle.
@@ -139,9 +194,16 @@ def load_mcp_tools(settings: Settings | None = None) -> list[BaseTool]:
     """
     import asyncio
 
+    global _cached_config_hash, _cached_client, _cached_tools
+
     configs = build_mcp_server_configs(settings)
     if not configs:
         return []
+
+    config_hash = _hash_configs(configs)
+    with _cache_lock:
+        if _cached_client is not None and _cached_config_hash == config_hash:
+            return list(_cached_tools)
 
     async def _load():
         from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -154,7 +216,7 @@ def load_mcp_tools(settings: Settings | None = None) -> list[BaseTool]:
         # Store client reference on tools to keep it alive
         for tool in tools:
             tool._mcp_client = client  # type: ignore
-        return tools
+        return client, tools
 
     try:
         # Run in a fresh event loop in a separate thread to avoid anyio conflicts
@@ -170,7 +232,11 @@ def load_mcp_tools(settings: Settings | None = None) -> list[BaseTool]:
 
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(run_in_thread)
-            return future.result(timeout=60)
+            client, tools = future.result(timeout=60)
+
+        with _cache_lock:
+            _cached_client, _cached_tools, _cached_config_hash = client, tools, config_hash
+        return tools
 
     except Exception as e:
         logger.warning("Failed to load MCP tools: %s", e)
