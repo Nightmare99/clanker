@@ -360,3 +360,111 @@ class ToolCallArgTruncationMiddleware(AgentMiddleware):
         if all(new is old for new, old in zip(new_messages, request.messages, strict=True)):
             return request
         return request.override(messages=new_messages)
+
+
+_MESSAGE_CACHE_CONTROL = {"cache_control": {"type": "ephemeral"}}
+
+
+def _mark_content_cacheable(content: Any) -> Any:
+    """Return a copy of *content* with a `cache_control` breakpoint on its last block.
+
+    Anthropic can only attach `cache_control` to a content BLOCK, not a bare
+    string, so plain string content is first wrapped as a single text block.
+    Returns the original object unchanged (identity) when there's nothing to
+    mark (empty content, or a block type this can't safely annotate), so
+    callers can cheaply detect "nothing changed".
+    """
+    if isinstance(content, str):
+        if not content:
+            return content
+        return [{"type": "text", "text": content, **_MESSAGE_CACHE_CONTROL}]
+
+    if isinstance(content, list) and content:
+        last = content[-1]
+        if isinstance(last, str):
+            marked = {"type": "text", "text": last, **_MESSAGE_CACHE_CONTROL}
+        elif isinstance(last, dict):
+            marked = {**last, **_MESSAGE_CACHE_CONTROL}
+        else:
+            return content
+        return [*content[:-1], marked]
+
+    return content
+
+
+def _mark_message_cacheable(message: AnyMessage) -> AnyMessage:
+    """Return a copy of *message* with its content marked cacheable, or itself unchanged."""
+    new_content = _mark_content_cacheable(message.content)
+    if new_content is message.content:
+        return message
+    try:
+        return message.model_copy(update={"content": new_content})
+    except Exception:  # noqa: BLE001 - never let this break the model call
+        return message
+
+
+class AnthropicPromptCachingMiddleware(AgentMiddleware):
+    """Marks the newest outgoing message as an Anthropic prompt-cache breakpoint.
+
+    Anthropic bills a cache HIT far below normal input tokens. Placing a
+    breakpoint on whatever is currently the LAST message in the request --
+    every single model call, including the several calls within one
+    tool-using turn -- means each call that shares the same growing prefix
+    as a previous one (the common case: same history plus a few new
+    messages) gets billed at the cheap cache-read rate for everything up to
+    that shared point, and pays the (slightly pricier) cache-WRITE rate only
+    for the incremental new content. No bookkeeping is needed on our side --
+    the breakpoint always just tracks "whatever is last right now", and
+    Anthropic's cache lookup finds the longest previously-cached prefix that
+    still matches.
+
+    Combined with the system-prompt and tools breakpoints set once at graph
+    construction (see `_cacheable_system_prompt`/`_cacheable_tools` in
+    `graph.py`), this uses 3 of Anthropic's 4-breakpoint-per-request budget.
+
+    Only applies to genuine `ChatAnthropic` requests (`request.model`) --
+    GitHub Copilot proxies Claude through an OpenAI-compatible request shape
+    that must never get this Anthropic-only field. Modifies only the
+    OUTGOING request via `request.override(...)`; the persisted checkpoint
+    state is never touched, so the breakpoint can never go stale or
+    accumulate between calls -- there is nothing to clean up.
+
+    Below Anthropic's minimum cacheable-prefix length (~1024-2048 tokens
+    depending on model), a `cache_control` breakpoint is silently a no-op --
+    no error, no extra cost -- so this is safe to apply unconditionally
+    rather than gating on conversation size.
+
+    Place this LAST in the middleware list: first = outermost, last =
+    innermost on the request path, so the breakpoint lands on the message
+    that actually hits the wire, after truncation/summarization have already
+    run.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.tools = []
+        self.state_schema = AgentState
+
+    def wrap_model_call(self, request: Any, handler: Callable) -> Any:
+        return handler(self._marked(request))
+
+    async def awrap_model_call(self, request: Any, handler: Callable) -> Any:
+        return await handler(self._marked(request))
+
+    def _marked(self, request: Any) -> Any:
+        try:
+            from langchain_anthropic import ChatAnthropic
+        except ImportError:
+            return request
+
+        if not isinstance(request.model, ChatAnthropic) or not request.messages:
+            return request
+
+        marked_last = _mark_message_cacheable(request.messages[-1])
+        if marked_last is request.messages[-1]:
+            return request
+
+        return request.override(messages=[*request.messages[:-1], marked_last])
+
+
+anthropic_prompt_caching = AnthropicPromptCachingMiddleware()
