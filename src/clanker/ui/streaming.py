@@ -326,12 +326,13 @@ async def stream_agent_response_async(
     # Loading state
     first_content_received = False
 
-    # Live "Compressing memory banks..." spinner heuristic. Best-effort/cosmetic
-    # only -- the authoritative post-turn signal is `_compaction_occurred()`
-    # above, which diffs the real `compaction_count` state instead of guessing.
-    model_call_count = 0
-    tools_started = False
-    summarization_spinner_shown = False
+    # True for the duration of a model call that belongs to
+    # RobustSummarizationMiddleware's internal compaction, not the visible
+    # agent turn (see _is_summarization_event). While True, on_chat_model_stream
+    # content is not accumulated into current_response/current_thinking -- that
+    # call's own generated summary text has no business appearing in the
+    # transcript as if it were the agent talking, themed or not.
+    in_summarization_call = False
 
     # Debounced tool loader: mounts LoadingIndicator after delay if tool still running
     async def _tool_debounce(run_id: str, tool_name: str, args: str, tool_input: dict) -> None:
@@ -547,8 +548,6 @@ async def stream_agent_response_async(
                         )
 
                     if event_type == "on_tool_start":
-                        tools_started = True
-
                         if settings.output.show_tool_calls:
                             run_id = event.get("run_id", "")
                             if run_id and run_id not in shown_tool_calls:
@@ -748,13 +747,27 @@ async def stream_agent_response_async(
 
                         run_id = event.get("run_id", "")
                         if run_id != current_model_run:
-                            model_call_count += 1
-
-                            if model_call_count == 2 and not tools_started and not summarization_spinner_shown:
-                                summarization_spinner_shown = True
+                            # RobustSummarizationMiddleware tags its own internal
+                            # model call(s) with this metadata (see
+                            # _invoke_summary/_ainvoke_summary in summarization.py)
+                            # -- a precise, structural signal, unlike guessing from
+                            # call position/count. A map-reduce compaction can make
+                            # several such calls in a row (one per chunk, one for
+                            # the reduce step); only announce the first.
+                            is_summarization = (
+                                event.get("metadata", {}).get("lc_source") == "summarization"
+                            )
+                            if is_summarization and not in_summarization_call:
                                 _stop_loading()
-                                console.print_info("*WHIRR* Compressing memory banks...")
+                                console.print_info("Compacting conversation history...")
+                                if textual_app:
+                                    with suppress(Exception):
+                                        textual_app.get_chat_log().add_message(
+                                            "Compacting conversation history...",
+                                            MessageType.INFO,
+                                        )
                                 _start_loading()
+                            in_summarization_call = is_summarization
 
                             if tool_handler.has_pending_tools():
                                 tool_handler.flush_pending_tools()
@@ -771,6 +784,14 @@ async def stream_agent_response_async(
                             current_model_run = run_id
 
                     elif event_type == "on_chat_model_stream":
+                        if in_summarization_call:
+                            # This call's own generated summary text is not the
+                            # agent talking -- never accumulate it into
+                            # current_response/current_thinking. The "Compacting
+                            # conversation history..." message above (plus the
+                            # loading spinner) is all the user sees while it runs.
+                            continue
+
                         chunk = event.get("data", {}).get("chunk")
                         if chunk:
                             content = getattr(chunk, "content", None)
