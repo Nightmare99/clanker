@@ -38,14 +38,20 @@ _LIME = "rgb(180,255,60)"
 _WHITE = "white"
 _GREY = "rgb(100,100,100)"
 
-# Rainbow wash over the ASCII art: how fast the hue shifts across columns/rows,
-# and how far the phase advances per tick (see _HeroArt._rainbow_style/_tick).
-# This wash keeps looping for the whole session -- unlike the wave bounce
-# below, it never settles -- since repainting it costs nothing beyond this
-# one widget (see _HeroArt's docstring).
-_RAINBOW_COL_STEP = 0.02
-_RAINBOW_ROW_STEP = 0.06
-_RAINBOW_PHASE_STEP = 0.02
+# Shades-of-lime shimmer over the ASCII art: how fast the brightness shifts
+# across columns/rows, and how far the phase advances per tick (see
+# _HeroArt._lime_shade_style/_tick). Hue/saturation stay pinned to _LIME --
+# only brightness oscillates, so the wash always reads as lime, never a
+# rainbow. This wash keeps looping for the whole session -- unlike the wave
+# bounce below, it never settles -- since repainting it costs nothing beyond
+# this one widget (see _HeroArt's docstring).
+_LIME_HUE = 0.2308  # hue of _LIME (rgb(180,255,60)) in colorsys's 0..1 scale
+_LIME_SATURATION = 0.75
+_LIME_MIN_VALUE = 0.55  # darkest shade in the shimmer -- never fully dims to black
+_LIME_MAX_VALUE = 1.0  # brightest shade -- matches _LIME itself
+_LIME_COL_STEP = 0.02
+_LIME_ROW_STEP = 0.06
+_LIME_PHASE_STEP = 0.02
 
 # How long the hero's vertical bounce keeps animating after reaching its
 # final ("Systems online...") state before it settles flat -- every letter
@@ -78,8 +84,8 @@ class _HeroArt(Static):
     does (which unconditionally requests a relayout, forcing the *whole*
     chat log to re-measure every mounted widget -- see
     ``ChatLog._maybe_prune``) is unneeded tax. A bare repaint only redraws
-    this one widget in place, so the rainbow color wash can keep looping for
-    the life of the session at near-zero cost.
+    this one widget in place, so the shades-of-lime color wash can keep
+    looping for the life of the session at near-zero cost.
 
     The vertical bounce is a different story: it's a one-time flourish, not
     worth animating forever, so ``settle()`` (fired once, a few seconds
@@ -100,14 +106,14 @@ class _HeroArt(Static):
         self._is_final: bool = False
         self._model_info: str = ""
         self._yolo_mode: bool = False
-        self._rainbow_phase = 0.0
+        self._lime_phase = 0.0
         self._wave_phase = 0.0
         self._wave_settled = False
         self._tick_timer = None
         self._settle_timer = None
 
     def on_mount(self) -> None:
-        self._tick_timer = self.set_interval(0.08, self._tick, name="hero-rainbow")
+        self._tick_timer = self.set_interval(0.08, self._tick, name="hero-shimmer")
 
     def on_unmount(self) -> None:
         if self._tick_timer is not None:
@@ -164,15 +170,24 @@ class _HeroArt(Static):
         between ticks -- only per-character color and which grid row gets
         sampled for the bounce -- so there's nothing to re-measure.
         """
-        self._rainbow_phase = (self._rainbow_phase + _RAINBOW_PHASE_STEP) % 1.0
+        self._lime_phase = (self._lime_phase + _LIME_PHASE_STEP) % 1.0
         if not self._wave_settled:
             self._wave_phase = (self._wave_phase + _WAVE_PHASE_STEP) % math.tau
         self.refresh()
 
-    def _rainbow_style(self, x: int, y: int) -> str:
-        """RGB style string for a lolcat-style rainbow wash at grid position (x, y)."""
-        hue = (x * _RAINBOW_COL_STEP + y * _RAINBOW_ROW_STEP + self._rainbow_phase) % 1.0
-        r, g, b = colorsys.hsv_to_rgb(hue, 0.85, 1.0)
+    def _lime_shade_style(self, x: int, y: int) -> str:
+        """RGB style string for a shimmering shades-of-lime wash at grid position (x, y).
+
+        Hue and saturation are pinned to `_LIME`; only brightness (HSV value)
+        oscillates smoothly across the grid via a cosine (so it wraps without
+        a visible seam, unlike a raw sawtooth ramp) -- the result reads as
+        light/dark bands of lime sweeping across the art, never other hues.
+        """
+        wave = (x * _LIME_COL_STEP + y * _LIME_ROW_STEP + self._lime_phase) % 1.0
+        brightness = _LIME_MIN_VALUE + (_LIME_MAX_VALUE - _LIME_MIN_VALUE) * (
+            (1 + math.cos(wave * math.tau)) / 2
+        )
+        r, g, b = colorsys.hsv_to_rgb(_LIME_HUE, _LIME_SATURATION, brightness)
         return f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"
 
     def _wave_offset(self, x: int) -> int:
@@ -196,8 +211,8 @@ class _HeroArt(Static):
         lift = (math.sin(angle) + 1) / 2  # 0..1
         return -round(_WAVE_AMPLITUDE * lift)
 
-    def _append_rainbow_art(self, full: Text, art_lines: list[str]) -> None:
-        """Append ASCII art lines to *full*, with a rainbow wash and a per-letter bob.
+    def _append_lime_art(self, full: Text, art_lines: list[str]) -> None:
+        """Append ASCII art lines to *full*, with a shades-of-lime wash and a per-letter bob.
 
         Each column is resampled from a row shifted by ``_wave_offset(x)`` so
         each letter appears to bounce up and down. The grid is padded with
@@ -219,7 +234,7 @@ class _HeroArt(Static):
                 src_y = y - self._wave_offset(x)
                 ch = grid[src_y][x]
                 if ch.strip():
-                    full.append(ch, style=f"bold {self._rainbow_style(x, y)}")
+                    full.append(ch, style=f"bold {self._lime_shade_style(x, y)}")
                 else:
                     full.append(ch)
             if y < _WAVE_AMPLITUDE + height - 1:
@@ -228,8 +243,8 @@ class _HeroArt(Static):
     def _build_text(self) -> Text:
         full = Text()
 
-        # ASCII art — rainbow wash
-        self._append_rainbow_art(full, self._art_lines)
+        # ASCII art — shades-of-lime wash
+        self._append_lime_art(full, self._art_lines)
 
         full.append("\n")
 
