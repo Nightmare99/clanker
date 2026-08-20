@@ -38,15 +38,21 @@ without scrolling back through the full chat log.
 
 ## Locations
 
-Agents are discovered from two places:
+Agents are discovered from up to four places, in this precedence order
+(earlier wins on a name collision):
 
 | Location | Scope | Use for |
 |----------|-------|---------|
 | `.clanker/agents/` | **Project** (committed to the repo) | Agents specific to this codebase |
 | `~/.clanker/agents/` | **Personal** (apply to every project) | Reusable agents across all projects |
+| `.agents/agents/` | **Project**, `.agents` fallback | Agents authored for other agentic coding tools |
+| `~/.agents/agents/` | **Personal**, `.agents` fallback | Personal agents shared across tools via `.agents` |
 
-If a project agent and a personal agent share the same name, the **project**
-agent wins.
+`.agents/` is an emerging cross-tool convention some agentic coding tools use
+for shared configuration. Clanker reads it as a fallback so an agent written
+for another tool works here too — but `.clanker/` is always checked first, at
+both the project and personal tier, so it wins any name collision against
+`.agents/`.
 
 ## Agent format
 

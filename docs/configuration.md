@@ -144,12 +144,20 @@ refreshed limits.
 
 ## User Instructions
 
-You can provide custom instructions that are included in every conversation's system prompt. Clanker reads instructions from two locations:
+You can provide custom instructions that are included in every conversation's system prompt. Clanker reads instructions from up to four locations:
 
 | Location | Scope | Use for |
 |----------|-------|---------|
 | `.clanker/instructions.md` | **Project** (this workspace only) | Project-specific conventions |
 | `~/.clanker/instructions.md` | **Personal** (every project) | Standing instructions that apply everywhere |
+| `.agents/instructions.md` | **Project**, `.agents` fallback | Used when no `.clanker/instructions.md` exists |
+| `~/.agents/instructions.md` | **Personal**, `.agents` fallback | Used when no `~/.clanker/instructions.md` exists |
+
+`.agents/instructions.md` is read only as a fallback, independently at each
+tier — if `.clanker/instructions.md` exists for a given tier, its `.agents`
+counterpart at that same tier is ignored. See
+[Skills → Locations](skills.md#locations) for more on the `.agents/`
+convention.
 
 ```bash
 # Project instructions

@@ -24,15 +24,21 @@ loaded always, full instructions loaded only when relevant.
 
 ## Locations
 
-Skills are discovered from two places:
+Skills are discovered from up to four places, in this precedence order
+(earlier wins on a name collision):
 
 | Location | Scope | Use for |
 |----------|-------|---------|
 | `.clanker/skills/` | **Project** (committed to the repo) | Conventions and procedures specific to this codebase |
 | `~/.clanker/skills/` | **Personal** (apply to every project) | Your own reusable skills across all projects |
+| `.agents/skills/` | **Project**, `.agents` fallback | Skills authored for other agentic coding tools |
+| `~/.agents/skills/` | **Personal**, `.agents` fallback | Personal skills shared across tools via `.agents` |
 
-If a project skill and a personal skill share the same name, the **project**
-skill wins.
+`.agents/` is an emerging cross-tool convention some agentic coding tools use
+for shared configuration. Clanker reads it as a fallback so a skill written
+for another tool works here too, without a clanker-specific copy — but
+`.clanker/` is always checked first, at both the project and personal tier,
+so it wins any name collision against `.agents/`.
 
 ## Skill format
 

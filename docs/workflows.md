@@ -1,13 +1,15 @@
 # Workflows
 
-Workflows are stored prompts that let you program repeatable tasks into Clanker. They live as markdown files and are discovered from two locations:
+Workflows are stored prompts that let you program repeatable tasks into Clanker. They live as markdown files and are discovered from up to four locations, in this precedence order (earlier wins on a name collision):
 
 | Location | Scope | Use for |
 |----------|-------|---------|
 | `.clanker/workflows/` | **Project** (committed to the repo) | Workflows specific to this codebase |
 | `~/.clanker/workflows/` | **Personal** (apply to every project) | Your own reusable workflows across all projects |
+| `.agents/workflows/` | **Project**, `.agents` fallback | Workflows authored for other agentic coding tools |
+| `~/.agents/workflows/` | **Personal**, `.agents` fallback | Personal workflows shared across tools via `.agents` |
 
-If a project workflow and a personal workflow share the same name, the **project** workflow wins.
+`.clanker/` is always checked first, at both the project and personal tier, so it wins any name collision against the `.agents/` fallback. See [Skills → Locations](skills.md#locations) for more on why `.agents/` is supported.
 
 ## Setup
 
@@ -105,4 +107,20 @@ The `/workflow` command supports tab completion. Type `/workflow ` and press Tab
 ├── skills/
 ├── agents/
 └── instructions.md
+
+.agents/                   # project -- optional fallback, checked after .clanker/
+├── workflows/
+├── skills/
+├── agents/
+└── instructions.md
+
+~/.agents/                 # personal -- optional fallback, checked after ~/.clanker/
+├── workflows/
+├── skills/
+├── agents/
+└── instructions.md
 ```
+
+`.agents/` mirrors `.clanker/`'s structure exactly, at both the project and
+personal tier. See [Skills → Locations](skills.md#locations) for why it's
+supported and how precedence works.

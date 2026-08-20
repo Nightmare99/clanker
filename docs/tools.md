@@ -174,6 +174,68 @@ them in the background and keep working:
   final status and output. Use when your next step depends on the result.
 - **`bash_kill(job_id)`** — Terminate a background job.
 
+## Memory
+
+The agent stores and recalls facts about the workspace across conversations —
+project conventions, your preferences, config details, recurring issues and
+their fixes. See [Memory](memory.md) for the full picture, including how
+relevant memories get pulled into context automatically at the start of a
+conversation.
+
+### remember
+
+Store information in workspace memory for future conversations. The agent is
+instructed to call this proactively, without being asked, whenever it notices
+something worth keeping.
+
+**Parameters:**
+- `content` — the text to remember.
+- `tags` — comma-separated tags (e.g. `"convention, testing"`), default none.
+- `auto` — mark the memory as agent-generated rather than user-requested
+  (default `false`).
+
+**Returns:** A dict with `ok`, `message`, `memory_id`, and `tags`.
+
+### recall
+
+Search memories by tags and/or keywords.
+
+**Parameters:**
+- `query` — free-text search query, default empty.
+- `tags` — comma-separated tags to filter by, default none.
+- `n_results` — maximum memories to return (default 5).
+
+**Returns:** A dict with `ok`, `found`, `count`, and `memories` (each with
+`id`, `content`, `tags`, `source`, `created_at`).
+
+### forget
+
+Delete a specific memory from the workspace by id.
+
+**Parameters:**
+- `memory_id` — id of the memory to delete.
+
+**Returns:** A dict with `ok` and `message`.
+
+### list_memories
+
+List all stored memories in the workspace, most useful for getting an
+overview or finding an id to pass to `forget`.
+
+**Parameters:**
+- `limit` — maximum memories to return (default 20).
+
+**Returns:** A dict with `ok`, `count`, `total`, and `memories` (each with
+`id`, a truncated `content`, `tags`, `source`).
+
+**Example workflow:**
+```
+remember("Uses uv for dependency management, not pip directly.", tags="convention")
+→ {ok: true, memory_id: "a1b2c3d4", tags: ["convention"]}
+recall(tags="convention")
+→ {ok: true, found: true, count: 1, memories: [...]}
+```
+
 ## Subagents
 
 Subagents let the agent delegate subtasks to specialized agents with their own

@@ -9,6 +9,7 @@ import installation from '../../docs/installation.md?raw'
 import usage from '../../docs/usage.md?raw'
 import configuration from '../../docs/configuration.md?raw'
 import tools from '../../docs/tools.md?raw'
+import memory from '../../docs/memory.md?raw'
 import skills from '../../docs/skills.md?raw'
 import agents from '../../docs/agents.md?raw'
 import workflows from '../../docs/workflows.md?raw'
@@ -70,6 +71,12 @@ export const docGroups: DocGroup[] = [
         title: 'Tools',
         blurb: 'The built-in tools the agent reaches for: read, edit, search, run.',
         body: tools,
+      },
+      {
+        slug: 'memory',
+        title: 'Memory',
+        blurb: 'Cross-session workspace knowledge the agent stores and recalls on its own.',
+        body: memory,
       },
       {
         slug: 'skills',
