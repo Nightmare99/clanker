@@ -12,6 +12,7 @@ the config actually changes or clear_mcp_cache() is called.
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -25,6 +26,23 @@ def _clear_cache_around_test():
     mcp_loader.clear_mcp_cache()
     yield
     mcp_loader.clear_mcp_cache()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_stdio_errlog_patch(tmp_path, monkeypatch):
+    """Every real load_mcp_tools_async/load_mcp_tools call now runs
+    _patch_mcp_stdio_errlog() -- including in the tests below, which only
+    mock out MultiServerMCPClient. Point its log file at a tmp dir instead
+    of the real ~/.clanker/logs, and undo the module-level monkeypatch of
+    langchain_mcp_adapters.sessions.stdio_client afterwards so it doesn't
+    leak into other test files."""
+    import langchain_mcp_adapters.sessions as mcp_sessions
+
+    original_stdio_client = mcp_sessions.stdio_client
+    monkeypatch.setattr(mcp_loader, "DEFAULT_LOG_DIR", tmp_path)
+    monkeypatch.setattr(mcp_loader, "_mcp_stderr_file", None)
+    yield
+    mcp_sessions.stdio_client = original_stdio_client
 
 
 def _settings_with_server(name: str = "fs", command: str = "npx", args=None) -> Settings:
@@ -159,3 +177,63 @@ class TestGraphUsesSharedCache:
             await create_agent_graph_async(settings, tools=None)
 
         assert calls["n"] == 1
+
+
+class TestStdioErrlogPatch:
+    """The user-visible bug: a stdio MCP server's own stderr (startup
+    banners, its own logging) defaults to the real sys.stderr and leaks
+    through the terminal the TUI owns, flashing briefly on screen. These
+    tests assert the fix: `_patch_mcp_stdio_errlog` redirects it to a log
+    file instead, lazily (no file is created just from loading tools with
+    a mocked client) and only once per process.
+    """
+
+    def test_patch_wraps_stdio_client_away_from_real_stderr(self, monkeypatch) -> None:
+        import langchain_mcp_adapters.sessions as mcp_sessions
+        import mcp.client.stdio as mcp_stdio
+
+        calls: list[dict] = []
+
+        def fake_stdio_client(*args, **kwargs):
+            calls.append(kwargs)
+            return "sentinel-context-manager"
+
+        monkeypatch.setattr(mcp_stdio, "stdio_client", fake_stdio_client)
+        monkeypatch.setattr(mcp_sessions, "stdio_client", fake_stdio_client)
+
+        mcp_loader._patch_mcp_stdio_errlog()
+        result = mcp_sessions.stdio_client("fake-server-params")
+
+        assert result == "sentinel-context-manager"
+        assert calls[0]["errlog"] is not sys.stderr
+        assert calls[0]["errlog"] is mcp_loader._get_mcp_stderr_log()
+
+    def test_patch_does_not_open_log_file_eagerly(self) -> None:
+        """Patching alone (as happens on every load_mcp_tools* call) must
+        not touch the filesystem -- only an actual stdio session spawn
+        should, so tests and turns without a real MCP server never create
+        ~/.clanker/logs as a side effect."""
+        mcp_loader._patch_mcp_stdio_errlog()
+
+        assert not (mcp_loader.DEFAULT_LOG_DIR / "mcp-servers.log").exists()
+
+    def test_patch_is_a_noop_after_first_call(self) -> None:
+        import langchain_mcp_adapters.sessions as mcp_sessions
+
+        mcp_loader._patch_mcp_stdio_errlog()
+        patched_once = mcp_sessions.stdio_client
+        mcp_loader._patch_mcp_stdio_errlog()
+
+        assert mcp_sessions.stdio_client is patched_once
+
+    @pytest.mark.asyncio
+    async def test_load_mcp_tools_async_does_not_create_log_file_for_mocked_client(
+        self,
+    ) -> None:
+        fake_client_cls, _ = _mock_client_class(["tool_a"])
+        settings = _settings_with_server()
+
+        with patch("langchain_mcp_adapters.client.MultiServerMCPClient", fake_client_cls):
+            await mcp_loader.load_mcp_tools_async(settings)
+
+        assert not (mcp_loader.DEFAULT_LOG_DIR / "mcp-servers.log").exists()

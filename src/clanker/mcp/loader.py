@@ -15,6 +15,15 @@ version's own design (stateless, no persistent connection held by the
 client). So caching the discovery step is free: there is no "stale dead
 connection" risk, because no connection is being kept alive across turns in
 the first place -- only the (static, config-derived) tool list is reused.
+
+Every one of those sessions -- discovery and each individual tool call --
+spawns a real subprocess for stdio servers. `mcp.client.stdio.stdio_client`
+pipes the child's stdout (it's the JSON-RPC channel), but its `errlog`
+parameter defaults to the real `sys.stderr`, and `langchain-mcp-adapters`
+never overrides it. So anything a server writes to its own stderr (startup
+banners, its own logging) goes straight to the real terminal the TUI has
+taken over, visible as a brief flash. `_patch_mcp_stdio_errlog` redirects
+that to a log file instead, once per process -- see its docstring.
 """
 
 import hashlib
@@ -28,7 +37,7 @@ from typing import Any
 from langchain_core.tools import BaseTool
 
 from clanker.config import Settings, get_settings
-from clanker.logging import get_logger
+from clanker.logging import DEFAULT_LOG_DIR, get_logger
 
 # Module logger
 logger = get_logger("mcp")
@@ -43,6 +52,62 @@ _cache_lock = threading.Lock()
 _cached_config_hash: str | None = None
 _cached_client: Any = None
 _cached_tools: list[BaseTool] = []
+
+# Lazily-opened file that stdio MCP servers' stderr gets redirected to, in
+# place of the real terminal -- see `_patch_mcp_stdio_errlog`.
+_mcp_stderr_lock = threading.Lock()
+_mcp_stderr_file: Any = None
+
+
+def _get_mcp_stderr_log() -> Any:
+    """Open (once, process-wide) the log file that stdio MCP servers'
+    stderr gets redirected to. Kept separate from the main clanker.log so a
+    noisy or crashing server can't spam the primary log."""
+    global _mcp_stderr_file
+    with _mcp_stderr_lock:
+        if _mcp_stderr_file is None or _mcp_stderr_file.closed:
+            DEFAULT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+            _mcp_stderr_file = open(DEFAULT_LOG_DIR / "mcp-servers.log", "a", encoding="utf-8")
+        return _mcp_stderr_file
+
+
+def _patch_mcp_stdio_errlog() -> None:
+    """Redirect stdio MCP servers' stderr to a log file instead of the real
+    terminal.
+
+    `mcp.client.stdio.stdio_client(server, errlog=sys.stderr)` defaults to
+    the real `sys.stderr`, and `langchain_mcp_adapters._create_stdio_session`
+    calls it without overriding that -- there's no config knob for it. Since
+    a server's own stderr writes (startup banners, its own logging) would
+    otherwise go straight to the terminal the TUI owns, this reassigns
+    `langchain_mcp_adapters.sessions.stdio_client` (looked up from that
+    module's globals at call time, so reassigning it here takes effect for
+    every session opened afterwards) to a version bound to a log file
+    instead. A no-op past the first call in a process, since after patching
+    `mcp_sessions.stdio_client` is no longer the pristine function this
+    checks for.
+
+    This function is called unconditionally at the top of every real MCP
+    load (see call sites below), including in tests that only mock out
+    `MultiServerMCPClient` -- so the log file itself is opened lazily, on
+    first actual use inside the wrapper, not here. Opening it eagerly would
+    mean merely calling this function creates `~/.clanker/logs/` as a side
+    effect, even when no stdio session is ever spawned for real.
+    """
+    try:
+        import langchain_mcp_adapters.sessions as mcp_sessions
+        from mcp.client.stdio import stdio_client as real_stdio_client
+    except ImportError:
+        return
+
+    if mcp_sessions.stdio_client is not real_stdio_client:
+        return
+
+    def _stdio_client_to_log_file(*args: Any, **kwargs: Any) -> Any:
+        kwargs.setdefault("errlog", _get_mcp_stderr_log())
+        return real_stdio_client(*args, **kwargs)
+
+    mcp_sessions.stdio_client = _stdio_client_to_log_file
 
 
 def _hash_configs(configs: dict[str, dict[str, Any]]) -> str:
@@ -158,6 +223,8 @@ async def load_mcp_tools_async(settings: Settings | None = None) -> tuple[Any, l
     try:
         from langchain_mcp_adapters.client import MultiServerMCPClient
 
+        _patch_mcp_stdio_errlog()
+
         # Suppress MCP server startup messages
         with _suppress_stdio():
             client = MultiServerMCPClient(configs)
@@ -204,6 +271,8 @@ def load_mcp_tools(settings: Settings | None = None) -> list[BaseTool]:
     with _cache_lock:
         if _cached_client is not None and _cached_config_hash == config_hash:
             return list(_cached_tools)
+
+    _patch_mcp_stdio_errlog()
 
     async def _load():
         from langchain_mcp_adapters.client import MultiServerMCPClient
