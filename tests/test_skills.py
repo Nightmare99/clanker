@@ -8,7 +8,8 @@ from clanker import skills
 
 
 def _write_skill(
-    root, name, *, frontmatter=None, body="Do the thing.", source="project", filename="SKILL.md"
+    root, name, *, frontmatter=None, body="Do the thing.", source="project",
+    filename="SKILL.md", root_dir=".clanker",
 ):
     """Create a skill directory under the given workspace root.
 
@@ -18,8 +19,10 @@ def _write_skill(
         name: skill directory name.
         frontmatter: dict of frontmatter, or a raw string for malformed cases,
                      or None to omit frontmatter entirely.
+        root_dir: ".clanker" (default) or ".agents", to write into the
+                  fallback directory instead.
     """
-    base = root / ".clanker" / "skills"
+    base = root / root_dir / "skills"
     skill_dir = base / name
     skill_dir.mkdir(parents=True, exist_ok=True)
     if frontmatter is None:
@@ -144,6 +147,84 @@ class TestListSkills:
         _write_skill(tmp_path, "fromdir", frontmatter={"description": "no name field"})
         result = skills.list_skills(str(tmp_path))
         assert "fromdir" in result
+
+
+class TestDotAgentsFallback:
+    """`.agents/skills/` is an emerging cross-tool convention supported as a
+    fallback -- `.clanker` always wins a name collision against it."""
+
+    def test_project_agents_skill_picked_up_when_no_clanker_skill(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        _write_skill(
+            tmp_path, "gamma", frontmatter={"name": "gamma", "description": "G."},
+            root_dir=".agents",
+        )
+        result = skills.list_skills(str(tmp_path))
+        assert set(result) == {"gamma"}
+        assert result["gamma"].source == "project (.agents)"
+
+    def test_personal_agents_skill_picked_up(self, tmp_path, monkeypatch) -> None:
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        _write_skill(
+            home, "delta", frontmatter={"name": "delta", "description": "D."},
+            root_dir=".agents",
+        )
+        result = skills.list_skills(str(tmp_path))
+        assert set(result) == {"delta"}
+        assert result["delta"].source == "personal (.agents)"
+
+    def test_clanker_project_wins_over_agents_project(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        _write_skill(tmp_path, "dup", frontmatter={"name": "dup", "description": "CLANKER version."})
+        _write_skill(
+            tmp_path, "dup", frontmatter={"name": "dup", "description": "AGENTS version."},
+            root_dir=".agents",
+        )
+        result = skills.list_skills(str(tmp_path))
+        assert result["dup"].source == "project"
+        assert "CLANKER" in result["dup"].description
+
+    def test_clanker_personal_wins_over_agents_project(self, tmp_path, monkeypatch) -> None:
+        """.clanker wins at every tier -- even .clanker personal beats a
+        same-named .agents PROJECT skill."""
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        _write_skill(
+            home, "dup", frontmatter={"name": "dup", "description": "CLANKER personal."},
+        )
+        _write_skill(
+            tmp_path, "dup", frontmatter={"name": "dup", "description": "AGENTS project."},
+            root_dir=".agents",
+        )
+        result = skills.list_skills(str(tmp_path))
+        assert result["dup"].source == "personal"
+        assert "CLANKER" in result["dup"].description
+
+    def test_agents_project_wins_over_agents_personal(self, tmp_path, monkeypatch) -> None:
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        _write_skill(
+            tmp_path, "dup", frontmatter={"name": "dup", "description": "AGENTS project."},
+            root_dir=".agents",
+        )
+        _write_skill(
+            home, "dup", frontmatter={"name": "dup", "description": "AGENTS personal."},
+            root_dir=".agents",
+        )
+        result = skills.list_skills(str(tmp_path))
+        assert result["dup"].source == "project (.agents)"
+        assert "project" in result["dup"].description.lower()
+
+    def test_merges_all_four_sources(self, tmp_path, monkeypatch) -> None:
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        _write_skill(tmp_path, "a", frontmatter={"name": "a", "description": "x"})
+        _write_skill(home, "b", frontmatter={"name": "b", "description": "x"})
+        _write_skill(tmp_path, "c", frontmatter={"name": "c", "description": "x"}, root_dir=".agents")
+        _write_skill(home, "d", frontmatter={"name": "d", "description": "x"}, root_dir=".agents")
+        result = skills.list_skills(str(tmp_path))
+        assert set(result) == {"a", "b", "c", "d"}
 
 
 class TestLoadSkill:

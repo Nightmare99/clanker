@@ -14,10 +14,20 @@ use *progressive disclosure*:
 3. The body can reference bundled files; the model reads them with ``read_file``
    and runs scripts with ``execute_shell`` -- no new execution machinery.
 
-Skills are discovered from two locations (project wins on name collision):
+Skills are discovered from up to four locations, in this precedence order
+(earlier wins on name collision):
 
 * ``<workspace>/.clanker/skills/`` -- project skills (committed to the repo)
 * ``~/.clanker/skills/``           -- personal skills (apply to every project)
+* ``<workspace>/.agents/skills/``  -- project skills, ``.agents`` fallback
+* ``~/.agents/skills/``            -- personal skills, ``.agents`` fallback
+
+``.agents/`` is an emerging cross-tool convention for agent configuration
+(skills, sub-agents, instructions) that several agentic coding tools are
+converging on -- supporting it as a fallback means a skill authored for one
+of those tools is picked up here too, without needing a clanker-specific
+copy. ``.clanker/`` is clanker's own directory and always wins when the same
+skill name exists in both.
 """
 
 from __future__ import annotations
@@ -49,7 +59,7 @@ SKILL_PREAMBLE = (
     "read them with read_file and run scripts with execute_shell.\n\n"
 )
 
-SkillSource = Literal["project", "personal"]
+SkillSource = Literal["project", "personal", "project (.agents)", "personal (.agents)"]
 
 
 @dataclass
@@ -61,7 +71,8 @@ class Skill:
         description: Trigger signal -- what the skill does and when to use it.
         body: The markdown body of SKILL.md (instructions), loaded on demand.
         directory: Absolute path to the skill's directory (where bundled files live).
-        source: "project" (.clanker/skills) or "personal" (~/.clanker/skills).
+        source: Which search root the skill came from -- "project"/"personal"
+            (.clanker) or "project (.agents)"/"personal (.agents)" (fallback).
     """
 
     name: str
@@ -72,19 +83,25 @@ class Skill:
 
 
 def get_skill_dirs(working_directory: str | None = None) -> list[tuple[Path, SkillSource]]:
-    """Return the skill search roots in precedence order (project first).
+    """Return the skill search roots in precedence order (highest first).
+
+    Order: .clanker project, .clanker personal, .agents project (fallback),
+    .agents personal (fallback) -- so .clanker always wins a name collision
+    against .agents, and project always wins against personal within each.
 
     Args:
         working_directory: Workspace root. Defaults to current directory.
 
     Returns:
-        List of (directory, source) tuples. Project dir is listed first so it
-        takes precedence over personal on name collision.
+        List of (directory, source) tuples, highest precedence first.
     """
     workspace = Path(working_directory or os.getcwd())
-    project = workspace / ".clanker" / SKILLS_DIR
-    personal = Path.home() / ".clanker" / SKILLS_DIR
-    return [(project, "project"), (personal, "personal")]
+    return [
+        (workspace / ".clanker" / SKILLS_DIR, "project"),
+        (Path.home() / ".clanker" / SKILLS_DIR, "personal"),
+        (workspace / ".agents" / SKILLS_DIR, "project (.agents)"),
+        (Path.home() / ".agents" / SKILLS_DIR, "personal (.agents)"),
+    ]
 
 
 def parse_skill_md(path: Path) -> tuple[dict, str] | None:
@@ -179,20 +196,22 @@ def _load_skill_from_dir(skill_dir: Path, source: SkillSource) -> Skill | None:
 
 
 def list_skills(working_directory: str | None = None) -> dict[str, Skill]:
-    """Discover all skills from project and personal directories.
+    """Discover all skills across all search roots.
 
-    Project skills take precedence over personal skills with the same name.
+    Roots are scanned in precedence order (see `get_skill_dirs`); the first
+    root to claim a given name wins, so e.g. a `.clanker` project skill
+    always shadows a same-named skill anywhere else.
 
     Args:
         working_directory: Workspace root. Defaults to current directory.
 
     Returns:
-        Mapping of skill name -> Skill, with project entries winning collisions.
+        Mapping of skill name -> Skill, with higher-precedence entries
+        winning collisions.
     """
     skills: dict[str, Skill] = {}
 
-    # Iterate personal first, then project, so project overwrites personal.
-    for directory, source in reversed(get_skill_dirs(working_directory)):
+    for directory, source in get_skill_dirs(working_directory):
         if not directory.is_dir():
             continue
         for entry in sorted(directory.iterdir()):
@@ -201,8 +220,8 @@ def list_skills(working_directory: str | None = None) -> dict[str, Skill]:
             skill = _load_skill_from_dir(entry, source)
             if skill is None:
                 continue
-            if skill.name in skills and source == "personal":
-                # Project already claimed this name; don't let personal override.
+            if skill.name in skills:
+                # A higher-precedence root already claimed this name.
                 continue
             skills[skill.name] = skill
 

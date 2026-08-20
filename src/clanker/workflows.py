@@ -3,10 +3,16 @@
 Workflows are markdown files containing stored prompts that can be
 executed via the /workflow command.
 
-Workflows are discovered from two locations (project wins on name collision):
+Workflows are discovered from up to four locations, in this precedence order
+(earlier wins on name collision):
 
 * ``<workspace>/.clanker/workflows/`` -- project workflows (committed to the repo)
 * ``~/.clanker/workflows/``           -- personal workflows (apply to every project)
+* ``<workspace>/.agents/workflows/``  -- project workflows, ``.agents`` fallback
+* ``~/.agents/workflows/``            -- personal workflows, ``.agents`` fallback
+
+``.clanker/`` is clanker's own directory and always wins when the same
+workflow name exists in both.
 """
 
 import os
@@ -21,7 +27,7 @@ WORKFLOW_PREAMBLE = (
     "Complete each step thoroughly before moving to the next.\n\n"
 )
 
-WorkflowSource = Literal["project", "personal"]
+WorkflowSource = Literal["project", "personal", "project (.agents)", "personal (.agents)"]
 
 
 def get_workflows_dir(working_directory: str | None = None) -> Path:
@@ -38,17 +44,25 @@ def get_workflows_dir(working_directory: str | None = None) -> Path:
 
 
 def get_workflow_dirs(working_directory: str | None = None) -> list[tuple[Path, WorkflowSource]]:
-    """Return the workflow search roots in precedence order (project first).
+    """Return the workflow search roots in precedence order (highest first).
+
+    Order: .clanker project, .clanker personal, .agents project (fallback),
+    .agents personal (fallback) -- so .clanker always wins a name collision
+    against .agents, and project always wins against personal within each.
 
     Args:
         working_directory: Workspace root. Defaults to current directory.
 
     Returns:
-        List of (directory, source) tuples. Project dir is listed first so it
-        takes precedence over personal on name collision.
+        List of (directory, source) tuples, highest precedence first.
     """
-    personal = Path.home() / ".clanker" / WORKFLOWS_DIR
-    return [(get_workflows_dir(working_directory), "project"), (personal, "personal")]
+    workspace = Path(working_directory or os.getcwd())
+    return [
+        (get_workflows_dir(working_directory), "project"),
+        (Path.home() / ".clanker" / WORKFLOWS_DIR, "personal"),
+        (workspace / ".agents" / WORKFLOWS_DIR, "project (.agents)"),
+        (Path.home() / ".agents" / WORKFLOWS_DIR, "personal (.agents)"),
+    ]
 
 
 def list_workflows(working_directory: str | None = None) -> list[str]:

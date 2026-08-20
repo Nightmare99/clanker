@@ -213,6 +213,64 @@ class TestListAgents:
         assert "reviewer" in agents
 
 
+def _write_agent_file(root: Path, name: str, description: str, root_dir: str = ".clanker") -> None:
+    agents_dir = root / root_dir / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    (agents_dir / f"{name}.md").write_text(
+        f"---\nname: {name}\ndescription: {description}\n---\nPrompt for {name}."
+    )
+
+
+class TestDotAgentsFallback:
+    """`.agents/agents/` is an emerging cross-tool convention supported as a
+    fallback -- `.clanker` always wins a name collision against it."""
+
+    def test_project_agents_dir_picked_up_when_no_clanker_agent(self, tmp_path: Path) -> None:
+        _write_agent_file(tmp_path, "gamma", "G.", root_dir=".agents")
+        agents = list_agents(str(tmp_path))
+        assert set(agents) == {"gamma"}
+        assert agents["gamma"].source == "project (.agents)"
+
+    def test_personal_agents_dir_picked_up(self, tmp_path: Path) -> None:
+        home = tmp_path / "isolated-home"
+        _write_agent_file(home, "delta", "D.", root_dir=".agents")
+        agents = list_agents(str(tmp_path))
+        assert set(agents) == {"delta"}
+        assert agents["delta"].source == "personal (.agents)"
+
+    def test_clanker_project_wins_over_agents_project(self, tmp_path: Path) -> None:
+        _write_agent_file(tmp_path, "dup", "CLANKER version.")
+        _write_agent_file(tmp_path, "dup", "AGENTS version.", root_dir=".agents")
+        agents = list_agents(str(tmp_path))
+        assert agents["dup"].source == "project"
+        assert agents["dup"].description == "CLANKER version."
+
+    def test_clanker_personal_wins_over_agents_project(self, tmp_path: Path) -> None:
+        home = tmp_path / "isolated-home"
+        _write_agent_file(home, "dup", "CLANKER personal.")
+        _write_agent_file(tmp_path, "dup", "AGENTS project.", root_dir=".agents")
+        agents = list_agents(str(tmp_path))
+        assert agents["dup"].source == "personal"
+        assert agents["dup"].description == "CLANKER personal."
+
+    def test_agents_project_wins_over_agents_personal(self, tmp_path: Path) -> None:
+        home = tmp_path / "isolated-home"
+        _write_agent_file(tmp_path, "dup", "AGENTS project.", root_dir=".agents")
+        _write_agent_file(home, "dup", "AGENTS personal.", root_dir=".agents")
+        agents = list_agents(str(tmp_path))
+        assert agents["dup"].source == "project (.agents)"
+        assert agents["dup"].description == "AGENTS project."
+
+    def test_merges_all_four_sources(self, tmp_path: Path) -> None:
+        home = tmp_path / "isolated-home"
+        _write_agent_file(tmp_path, "a", "x")
+        _write_agent_file(home, "b", "x")
+        _write_agent_file(tmp_path, "c", "x", root_dir=".agents")
+        _write_agent_file(home, "d", "x", root_dir=".agents")
+        agents = list_agents(str(tmp_path))
+        assert set(agents) == {"a", "b", "c", "d"}
+
+
 class TestLoadAgent:
     def test_load_by_name(self, tmp_path: Path) -> None:
         agents_dir = tmp_path / ".clanker" / "agents"

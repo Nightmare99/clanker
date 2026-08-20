@@ -24,10 +24,19 @@ The `model` field is optional. When specified, the agent uses the named model
 (must match a model configured in `~/.clanker/models.json`). If omitted, the
 agent uses the session's default model.
 
-Agents are discovered from two locations (project wins on name collision):
+Agents are discovered from up to four locations, in this precedence order
+(earlier wins on name collision):
 
 * `<workspace>/.clanker/agents/` -- project agents (committed to the repo)
 * `~/.clanker/agents/`           -- personal agents (apply to every project)
+* `<workspace>/.agents/agents/`  -- project agents, `.agents` fallback
+* `~/.agents/agents/`            -- personal agents, `.agents` fallback
+
+`.agents/` is an emerging cross-tool convention for agent configuration that
+several agentic coding tools are converging on -- supporting it as a
+fallback means an agent authored for one of those tools is picked up here
+too. `.clanker/` is clanker's own directory and always wins when the same
+agent name exists in both.
 """
 
 from __future__ import annotations
@@ -52,7 +61,7 @@ MAX_DESC_CHARS = 500
 # Guard on the full system prompt returned by load_agent.
 MAX_AGENT_PROMPT_CHARS = 15_000
 
-AgentSource = Literal["project", "personal"]
+AgentSource = Literal["project", "personal", "project (.agents)", "personal (.agents)"]
 
 
 @dataclass
@@ -69,7 +78,8 @@ class Agent:
                session's default model is used. The name must match a model
                configured in ~/.clanker/models.json.
         directory: Absolute path to the agent's directory.
-        source: "project" (.clanker/agents) or "personal" (~/.clanker/agents).
+        source: Which search root the agent came from -- "project"/"personal"
+            (.clanker) or "project (.agents)"/"personal (.agents)" (fallback).
     """
 
     name: str
@@ -82,11 +92,19 @@ class Agent:
 
 
 def get_agent_dirs(working_directory: str | None = None) -> list[tuple[Path, AgentSource]]:
-    """Return the agent search roots in precedence order (project first)."""
+    """Return the agent search roots in precedence order (highest first).
+
+    Order: .clanker project, .clanker personal, .agents project (fallback),
+    .agents personal (fallback) -- so .clanker always wins a name collision
+    against .agents, and project always wins against personal within each.
+    """
     workspace = Path(working_directory or os.getcwd())
-    project = workspace / ".clanker" / AGENTS_DIR
-    personal = Path.home() / ".clanker" / AGENTS_DIR
-    return [(project, "project"), (personal, "personal")]
+    return [
+        (workspace / ".clanker" / AGENTS_DIR, "project"),
+        (Path.home() / ".clanker" / AGENTS_DIR, "personal"),
+        (workspace / ".agents" / AGENTS_DIR, "project (.agents)"),
+        (Path.home() / ".agents" / AGENTS_DIR, "personal (.agents)"),
+    ]
 
 
 def parse_agent_md(path: Path) -> tuple[dict, str] | None:
@@ -187,13 +205,15 @@ def _load_agent_from_file(agent_file: Path, source: AgentSource) -> Agent | None
 
 
 def list_agents(working_directory: str | None = None) -> dict[str, Agent]:
-    """Discover all agents from project and personal directories.
+    """Discover all agents across all search roots.
 
-    Project agents take precedence over personal agents with the same name.
+    Roots are scanned in precedence order (see `get_agent_dirs`); the first
+    root to claim a given name wins, so e.g. a `.clanker` project agent
+    always shadows a same-named agent anywhere else.
     """
     agents: dict[str, Agent] = {}
 
-    for directory, source in reversed(get_agent_dirs(working_directory)):
+    for directory, source in get_agent_dirs(working_directory):
         if not directory.is_dir():
             continue
         for entry in sorted(directory.iterdir()):
@@ -202,7 +222,8 @@ def list_agents(working_directory: str | None = None) -> dict[str, Agent]:
             agent = _load_agent_from_file(entry, source)
             if agent is None:
                 continue
-            if agent.name in agents and source == "personal":
+            if agent.name in agents:
+                # A higher-precedence root already claimed this name.
                 continue
             agents[agent.name] = agent
 

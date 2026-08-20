@@ -184,6 +184,70 @@ class TestPersonalWorkflows:
         assert result == "Project deploy steps"
 
 
+class TestDotAgentsFallback:
+    """`.agents/workflows/` is an emerging cross-tool convention supported as
+    a fallback -- `.clanker` always wins a name collision against it."""
+
+    def test_project_agents_workflow_picked_up_when_no_clanker_workflow(self, tmp_path) -> None:
+        mod = _load_workflows_module()
+        wf_dir = tmp_path / ".agents" / "workflows"
+        wf_dir.mkdir(parents=True)
+        (wf_dir / "gamma.md").write_text("Gamma steps")
+        assert mod.list_workflows(str(tmp_path)) == ["gamma"]
+        assert mod.load_workflow("gamma", str(tmp_path)) == "Gamma steps"
+
+    def test_personal_agents_workflow_picked_up(self, tmp_path, monkeypatch) -> None:
+        mod = _load_workflows_module()
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        wf_dir = home / ".agents" / "workflows"
+        wf_dir.mkdir(parents=True)
+        (wf_dir / "delta.md").write_text("Delta steps")
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        assert mod.list_workflows(str(workspace)) == ["delta"]
+
+    def test_clanker_project_wins_over_agents_project(self, tmp_path) -> None:
+        mod = _load_workflows_module()
+        clanker_dir = tmp_path / ".clanker" / "workflows"
+        clanker_dir.mkdir(parents=True)
+        (clanker_dir / "dup.md").write_text("CLANKER version")
+        agents_dir = tmp_path / ".agents" / "workflows"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "dup.md").write_text("AGENTS version")
+        assert mod.load_workflow("dup", str(tmp_path)) == "CLANKER version"
+
+    def test_clanker_personal_wins_over_agents_project(self, tmp_path, monkeypatch) -> None:
+        """.clanker wins at every tier -- even .clanker personal beats a
+        same-named .agents PROJECT workflow."""
+        mod = _load_workflows_module()
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        personal_dir = home / ".clanker" / "workflows"
+        personal_dir.mkdir(parents=True)
+        (personal_dir / "dup.md").write_text("CLANKER personal")
+        workspace = tmp_path / "workspace"
+        agents_dir = workspace / ".agents" / "workflows"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "dup.md").write_text("AGENTS project")
+        assert mod.load_workflow("dup", str(workspace)) == "CLANKER personal"
+
+    def test_merges_all_four_sources(self, tmp_path, monkeypatch) -> None:
+        mod = _load_workflows_module()
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        workspace = tmp_path / "workspace"
+        (workspace / ".clanker" / "workflows").mkdir(parents=True)
+        (workspace / ".clanker" / "workflows" / "a.md").write_text("a")
+        (home / ".clanker" / "workflows").mkdir(parents=True)
+        (home / ".clanker" / "workflows" / "b.md").write_text("b")
+        (workspace / ".agents" / "workflows").mkdir(parents=True)
+        (workspace / ".agents" / "workflows" / "c.md").write_text("c")
+        (home / ".agents" / "workflows").mkdir(parents=True)
+        (home / ".agents" / "workflows" / "d.md").write_text("d")
+        assert mod.list_workflows(str(workspace)) == ["a", "b", "c", "d"]
+
+
 class TestGetWorkflowsDir:
     """Tests for get_workflows_dir function."""
 

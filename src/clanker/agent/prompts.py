@@ -27,6 +27,10 @@ def load_user_instructions(working_directory: str | None = None) -> str:
     instructions are listed first, project instructions after -- so
     project-specific guidance takes precedence when the two conflict.
 
+    For each tier (personal/project), ``.agents/instructions.md`` is read as
+    a fallback when the ``.clanker`` file for that tier doesn't exist --
+    ``.clanker`` always wins when both are present.
+
     Args:
         working_directory: Workspace root. Defaults to current directory.
 
@@ -34,11 +38,14 @@ def load_user_instructions(working_directory: str | None = None) -> str:
         Combined user instructions string, or empty string if neither file exists.
     """
     workspace = Path(working_directory or os.getcwd())
-    personal_path = Path.home() / ".clanker" / INSTRUCTIONS_FILE
-    project_path = workspace / ".clanker" / INSTRUCTIONS_FILE
 
-    personal_text = _read_instructions_file(personal_path)
-    project_text = _read_instructions_file(project_path)
+    personal_text = _read_instructions_file(Path.home() / ".clanker" / INSTRUCTIONS_FILE)
+    if not personal_text:
+        personal_text = _read_instructions_file(Path.home() / ".agents" / INSTRUCTIONS_FILE)
+
+    project_text = _read_instructions_file(workspace / ".clanker" / INSTRUCTIONS_FILE)
+    if not project_text:
+        project_text = _read_instructions_file(workspace / ".agents" / INSTRUCTIONS_FILE)
 
     if personal_text and project_text:
         return f"## Personal (all projects)\n{personal_text}\n\n## Project\n{project_text}"

@@ -327,3 +327,42 @@ class TestUserInstructions:
         get_system_prompt = _get_system_prompt_fn()
         prompt = get_system_prompt(working_directory=str(tmp_path))
         assert "# USER INSTRUCTIONS" not in prompt
+
+    def test_reads_project_agents_fallback_when_no_clanker_file(self, tmp_path, monkeypatch) -> None:
+        """.agents/instructions.md is read when .clanker's project file is absent."""
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        load = _get_load_user_instructions()
+        agents_dir = tmp_path / ".agents"
+        agents_dir.mkdir()
+        (agents_dir / "instructions.md").write_text("From .agents fallback.")
+        assert load(str(tmp_path)) == "From .agents fallback."
+
+    def test_reads_personal_agents_fallback_when_no_clanker_file(self, tmp_path, monkeypatch) -> None:
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        load = _get_load_user_instructions()
+        agents_dir = home / ".agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "instructions.md").write_text("Personal .agents fallback.")
+        assert load(str(tmp_path)) == "Personal .agents fallback."
+
+    def test_clanker_project_wins_over_agents_project(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        load = _get_load_user_instructions()
+        clanker_dir = tmp_path / ".clanker"
+        clanker_dir.mkdir()
+        (clanker_dir / "instructions.md").write_text("From .clanker.")
+        agents_dir = tmp_path / ".agents"
+        agents_dir.mkdir()
+        (agents_dir / "instructions.md").write_text("From .agents.")
+        assert load(str(tmp_path)) == "From .clanker."
+
+    def test_clanker_personal_wins_over_agents_personal(self, tmp_path, monkeypatch) -> None:
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        load = _get_load_user_instructions()
+        (home / ".clanker").mkdir(parents=True)
+        (home / ".clanker" / "instructions.md").write_text("From .clanker personal.")
+        (home / ".agents").mkdir(parents=True)
+        (home / ".agents" / "instructions.md").write_text("From .agents personal.")
+        assert load(str(tmp_path)) == "From .clanker personal."
