@@ -450,7 +450,7 @@ class TestSSLCertificates:
 
         _preload_tool_dependencies()
 
-        for module_name in ("trafilatura", "fitz", "pypdf"):
+        for module_name in ("trafilatura", "pymupdf", "pypdf"):
             assert module_name in sys.modules, f"{module_name} was not preloaded"
 
         # ddgs needs a stronger check than "is the top-level package imported":

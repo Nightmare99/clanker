@@ -46,7 +46,7 @@ def _render_pdf_pages_as_images(path: Path, page_indices: list[int]) -> list[dic
         Returns empty list if pymupdf is not available.
     """
     try:
-        import fitz  # pymupdf
+        import pymupdf as fitz  # `import fitz` triggers pymupdf's deprecation warning
     except ImportError:
         logger.debug("pymupdf not available for PDF image rendering")
         return []
@@ -134,7 +134,7 @@ def _resize_image_if_needed(data: bytes, mime_type: str) -> bytes:
     try:
 
         try:
-            import fitz  # pymupdf - can handle image resizing
+            import pymupdf as fitz  # can handle image resizing; `import fitz` warns (deprecated)
         except ImportError:
             return data
 

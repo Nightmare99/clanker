@@ -57,7 +57,12 @@ _configure_certificates()
 
 
 def _preload_tool_dependencies() -> None:
-    for module_name in ("trafilatura", "fitz", "pypdf"):
+    # "pymupdf", not "fitz" -- fitz is pymupdf's legacy-name compatibility
+    # shim (`from pymupdf import *`), and newer pymupdf releases print a
+    # "the `fitz` API is deprecated" warning straight to stderr the moment
+    # it's imported. That fired here, at CLI import time, before the TUI
+    # takes over the terminal -- so it showed up as raw text in the tty.
+    for module_name in ("trafilatura", "pymupdf", "pypdf"):
         with contextlib.suppress(Exception):
             __import__(module_name)
     with contextlib.suppress(Exception):
