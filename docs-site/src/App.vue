@@ -142,6 +142,15 @@ onBeforeUnmount(() => {
             rel="noopener"
             >GitHub ↗</a
           >
+          <template v-if="!isHome && currentPage">
+            <span class="topbar__divider" />
+            <span class="topbar__node">
+              <span>page</span>
+              <span class="topbar__node-cur">{{ String(currentIndex + 1).padStart(2, '0') }}</span>
+              <span>/</span>
+              <span>{{ String(allPages.length).padStart(2, '0') }}</span>
+            </span>
+          </template>
         </nav>
 
         <button
@@ -303,9 +312,8 @@ onBeforeUnmount(() => {
   position: sticky;
   top: 0;
   z-index: 50;
-  background: rgba(6, 7, 8, 0.78);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  border-bottom: var(--border-w) solid var(--ink);
 }
 .topbar__inner {
   max-width: var(--maxw);
@@ -337,7 +345,6 @@ onBeforeUnmount(() => {
   width: 8px;
   height: 16px;
   background: var(--lime);
-  box-shadow: 0 0 8px var(--lime);
   animation: brandblink 1.2s steps(2, start) infinite;
 }
 @keyframes brandblink {
@@ -354,9 +361,9 @@ onBeforeUnmount(() => {
   font-size: 0.66rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--cyan);
-  border: 1px solid var(--line-strong);
-  border-radius: 4px;
+  color: var(--bg);
+  background: var(--cyan);
+  border: 1px solid var(--ink);
   padding: 2px 6px;
 }
 
@@ -366,10 +373,9 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   min-width: 240px;
-  padding: 8px 12px;
+  padding: 7px 12px;
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--ink-3);
   color: var(--ink-3);
   font-family: var(--font-mono);
   font-size: 0.82rem;
@@ -377,7 +383,7 @@ onBeforeUnmount(() => {
   transition: border-color 0.14s ease, color 0.14s ease;
 }
 .search-trigger:hover {
-  border-color: var(--line-strong);
+  border-color: var(--ink);
   color: var(--ink-2);
 }
 .search-trigger__icon {
@@ -407,12 +413,27 @@ onBeforeUnmount(() => {
 .topbar__gh {
   color: var(--ink-3) !important;
 }
+.topbar__divider {
+  width: 2px;
+  height: 16px;
+  background: var(--ink-3);
+}
+.topbar__node {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: var(--ink-3);
+}
+.topbar__node-cur {
+  color: var(--lime);
+  font-weight: 700;
+}
 
 .topbar__burger {
   display: none;
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: var(--border-w) solid var(--ink);
   color: var(--ink);
   font-size: 1.1rem;
   padding: 6px 11px;
@@ -434,34 +455,34 @@ onBeforeUnmount(() => {
 .pillars {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 18px;
-  padding: 24px 0 64px;
+  gap: 26px 22px;
+  padding: 30px 0 68px;
 }
 .pillar {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border: var(--border-w) solid var(--ink);
   padding: 26px 24px;
-  background: linear-gradient(180deg, var(--surface), var(--bg-2));
-  transition: border-color 0.16s ease, transform 0.16s ease;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 .pillar:hover {
-  border-color: var(--line-strong);
-  transform: translateY(-3px);
+  transform: translate(-2px, -2px);
+  box-shadow: var(--shadow);
 }
 .pillar__glyph {
   display: inline-block;
   font-family: var(--font-mono);
+  font-weight: 700;
   font-size: 0.9rem;
   color: var(--c);
   border: 1px solid currentColor;
-  border-radius: 4px;
   padding: 2px 8px;
-  margin-bottom: 16px;
-  opacity: 0.95;
+  margin-bottom: 18px;
 }
 .pillar h3 {
   margin: 0 0 8px;
   font-family: var(--font-mono);
+  font-weight: 700;
   font-size: 1.02rem;
   color: var(--ink);
 }
@@ -475,9 +496,8 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono);
   font-size: 0.85em;
   color: var(--lime);
-  background: var(--surface-2);
+  background: var(--surface);
   padding: 1px 5px;
-  border-radius: 4px;
 }
 
 .quickstart {
@@ -490,11 +510,9 @@ onBeforeUnmount(() => {
   gap: 40px;
   align-items: center;
   padding: 48px 36px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background:
-    radial-gradient(600px 300px at 100% 0%, rgba(0, 240, 255, 0.05), transparent 60%),
-    var(--bg-2);
+  border: var(--border-w) solid var(--ink);
+  background: var(--surface-2);
+  box-shadow: var(--shadow);
 }
 .quickstart__head h2 {
   margin: 0 0 12px;
@@ -502,25 +520,25 @@ onBeforeUnmount(() => {
   font-weight: 700;
   font-size: 1.7rem;
   letter-spacing: -0.01em;
-  color: #fff;
+  color: var(--ink);
 }
 .quickstart__head p {
   margin: 0;
   color: var(--ink-2);
 }
 .quickstart__term {
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--ink);
   overflow: hidden;
-  background: #08090b;
+  background: var(--bg-2);
 }
 .quickstart__bar {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.02);
+  border-bottom: var(--border-w) solid var(--ink);
+  background: var(--lime);
+  color: var(--bg);
 }
 .quickstart__dots {
   display: inline-flex;
@@ -530,14 +548,15 @@ onBeforeUnmount(() => {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: var(--ink-4);
+  background: rgba(14, 14, 16, 0.55);
 }
 .quickstart__label {
   font-family: var(--font-mono);
   font-size: 0.7rem;
+  font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--ink-3);
+  color: var(--bg);
 }
 .quickstart__pre {
   margin: 0;
@@ -578,7 +597,8 @@ onBeforeUnmount(() => {
   top: 60px;
   height: calc(100vh - 60px);
   overflow-y: auto;
-  padding: 32px 0 40px;
+  padding: 32px 22px 40px 0;
+  border-right: var(--border-w) solid var(--ink);
 }
 .docs__main {
   padding: 40px 0 80px;
@@ -597,7 +617,7 @@ onBeforeUnmount(() => {
 .notfound h1 {
   font-family: var(--font-display);
   margin: 0 0 12px;
-  color: #fff;
+  color: var(--ink);
 }
 .notfound code {
   font-family: var(--font-mono);
@@ -614,22 +634,23 @@ onBeforeUnmount(() => {
   gap: 16px;
   margin-top: 56px;
   padding-top: 28px;
-  border-top: 1px solid var(--line);
+  border-top: var(--border-w) solid var(--ink);
 }
 .pager__link {
   display: flex;
   flex-direction: column;
   gap: 5px;
   padding: 16px 18px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--ink);
+  background: var(--surface-2);
   color: var(--ink);
-  transition: border-color 0.14s ease, background 0.14s ease;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
 }
 .pager__link:hover {
   text-decoration: none;
-  border-color: var(--line-strong);
-  background: rgba(0, 240, 255, 0.03);
+  transform: translate(-2px, -2px);
+  box-shadow: var(--shadow-cyan);
 }
 .pager__link--next {
   text-align: right;
@@ -649,7 +670,7 @@ onBeforeUnmount(() => {
 /* Footer --------------------------------------------------- */
 .foot {
   margin-top: auto;
-  border-top: 1px solid var(--line);
+  border-top: var(--border-w) solid var(--ink);
   background: var(--bg-2);
 }
 .foot__inner {
@@ -727,8 +748,8 @@ onBeforeUnmount(() => {
     overflow-y: auto;
     padding: 12px 18px 20px;
     background: var(--surface);
-    border-bottom: 1px solid var(--line-strong);
-    box-shadow: 0 12px 28px rgba(3, 4, 5, 0.4);
+    border-bottom: var(--border-w) solid var(--ink);
+    box-shadow: 0 8px 0 0 var(--ink);
   }
   .mobile-nav__link {
     display: block;
@@ -749,7 +770,7 @@ onBeforeUnmount(() => {
     position: fixed;
     inset: 60px 0 0 0;
     z-index: 35;
-    background: rgba(3, 4, 5, 0.6);
+    background: rgba(8, 8, 10, 0.7);
     border: none;
   }
   .pager {

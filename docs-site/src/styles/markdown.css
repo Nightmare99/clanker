@@ -1,8 +1,8 @@
 /* ============================================================
    Markdown prose — styles the rendered v-html doc body.
    Global (not scoped) because content is injected at runtime.
-   IBM Plex Sans for reading; JetBrains Mono for anything that
-   represents the terminal world (code, commands, file paths).
+   Victor Mono throughout, matching the site's one-typeface
+   neo-brutalist system -- no separate reading/code face pairing.
    ============================================================ */
 
 .markdown {
@@ -24,7 +24,7 @@
   font-size: clamp(1.9rem, 3.4vw, 2.55rem);
   line-height: 1.1;
   letter-spacing: -0.02em;
-  color: #fff;
+  color: var(--ink);
   margin: 0 0 0.6em;
 }
 .markdown h2 {
@@ -129,7 +129,6 @@
   font-family: var(--font-mono);
   font-size: 0.86em;
   padding: 0.12em 0.42em;
-  border-radius: 4px;
   background: var(--surface-2);
   border: 1px solid var(--line);
   color: var(--lime);
@@ -138,18 +137,17 @@
 /* Code blocks (terminal-styled) ---------------------------- */
 .codeblock {
   margin: 1.5em 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--ink);
   overflow: hidden;
-  background: #08090b;
+  background: var(--bg-2);
 }
 .codeblock__bar {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.02);
-  border-bottom: 1px solid var(--line);
+  background: var(--lime);
+  border-bottom: var(--border-w) solid var(--ink);
 }
 .codeblock__dots {
   display: inline-flex;
@@ -159,36 +157,37 @@
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: var(--ink-4);
+  background: rgba(14, 14, 16, 0.55);
 }
 .codeblock__lang {
   font-family: var(--font-mono);
   font-size: 0.7rem;
+  font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--ink-3);
+  color: var(--bg);
 }
 .codeblock__copy {
   margin-left: auto;
   font-family: var(--font-mono);
   font-size: 0.7rem;
+  font-weight: 700;
   letter-spacing: 0.06em;
-  color: var(--ink-3);
+  color: var(--bg);
   background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 4px;
+  border: 1px solid var(--bg);
   padding: 3px 9px;
   cursor: pointer;
-  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+  transition: color 0.12s ease, background 0.12s ease;
 }
 .codeblock__copy:hover {
-  color: var(--cyan);
-  border-color: var(--line-strong);
+  color: var(--lime);
+  background: var(--bg);
 }
 .codeblock__copy.is-copied {
-  color: #07090b;
-  background: var(--lime);
-  border-color: var(--lime);
+  color: var(--bg);
+  background: var(--ink);
+  border-color: var(--ink);
 }
 .codeblock__pre {
   margin: 0;
@@ -215,7 +214,7 @@
   overflow-x: auto;
 }
 .markdown thead {
-  border-bottom: 1px solid var(--line-strong);
+  border-bottom: var(--border-w) solid var(--ink);
 }
 .markdown th {
   text-align: left;
@@ -234,7 +233,7 @@
   vertical-align: top;
 }
 .markdown tbody tr:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(245, 241, 232, 0.04);
 }
 .markdown td code {
   white-space: nowrap;
@@ -242,7 +241,7 @@
 
 .markdown img {
   max-width: 100%;
-  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--ink);
 }
 
 /* ---- highlight.js (tuned to the neon palette) ---- */

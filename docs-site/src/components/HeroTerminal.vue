@@ -230,9 +230,9 @@ onBeforeUnmount(() => {
 .hero__dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--lime);
-  box-shadow: 0 0 10px var(--lime);
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--lime);
 }
 
 .hero__title {
@@ -242,7 +242,7 @@ onBeforeUnmount(() => {
   font-size: clamp(2.1rem, 4.6vw, 3.5rem);
   line-height: 1.06;
   letter-spacing: -0.02em;
-  color: #fff;
+  color: var(--ink);
 }
 .hero__accent {
   color: var(--pink);
@@ -274,40 +274,9 @@ onBeforeUnmount(() => {
   margin-bottom: 22px;
 }
 
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 22px;
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 0.88rem;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  cursor: pointer;
-  transition: transform 0.12s ease, box-shadow 0.18s ease, background 0.18s ease;
-}
-.btn:hover {
-  text-decoration: none;
-  transform: translateY(-1px);
-}
-.btn--primary {
-  background: var(--pink);
-  color: #07060a;
-  box-shadow: 0 0 0 1px var(--pink), 0 10px 30px -10px var(--pink);
-}
-.btn--primary:hover {
-  box-shadow: 0 0 0 1px var(--pink), 0 14px 38px -10px var(--pink);
-}
-.btn--ghost {
-  color: var(--ink);
-  border: 1px solid var(--line-strong);
-  background: rgba(0, 240, 255, 0.04);
-}
-.btn--ghost:hover {
-  border-color: var(--cyan);
-  background: var(--cyan-dim);
-}
+/* .btn / .btn--primary / .btn--ghost are defined globally in main.css --
+   shared with App.vue's quickstart and 404 CTAs, since Vue's scoped styles
+   don't leak across components. */
 
 .hero__hint {
   margin: 0;
@@ -319,13 +288,9 @@ onBeforeUnmount(() => {
 .term {
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  background: #050607;
-  box-shadow:
-    0 0 0 1px rgba(0, 240, 255, 0.05),
-    0 40px 90px -40px rgba(0, 0, 0, 0.9),
-    0 0 80px -32px rgba(0, 240, 255, 0.22);
+  border: var(--border-w) solid var(--ink);
+  background: var(--bg-2);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
   min-height: 420px;
 }
@@ -370,12 +335,14 @@ onBeforeUnmount(() => {
   font-size: clamp(5.5px, 1.55vw, 10.5px);
   line-height: 1.2;
   white-space: pre;
-  background: linear-gradient(100deg, var(--lime) 32%, #eaffb0 48%, var(--lime) 64%);
+  /* Flat shimmer sweep, no blur/glow -- text-shadow would violate the
+     brutalist "hard edges only" rule, so the animated highlight band is
+     the entire effect. */
+  background: linear-gradient(100deg, var(--lime) 32%, #f0ffb3 48%, var(--lime) 64%);
   background-size: 220% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  text-shadow: 0 0 22px rgba(182, 255, 26, 0.22);
   animation: shimmer 6s linear infinite;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -457,8 +424,8 @@ onBeforeUnmount(() => {
   gap: 8px 10px;
 }
 .t-tool__name {
-  color: #000;
-  border-radius: 3px;
+  color: var(--bg);
+  border-radius: 0;
   padding: 1px 8px;
   font-size: 0.78rem;
   font-weight: 700;
@@ -474,7 +441,7 @@ onBeforeUnmount(() => {
   margin-left: auto;
 }
 .t-tool__output {
-  border-left: 2px solid var(--cyan-dim);
+  border-left: 2px solid rgba(0, 240, 255, 0.4);
   margin: 5px 0 0 2px;
   padding: 1px 0 1px 12px;
   color: rgb(150, 225, 120);
@@ -482,7 +449,7 @@ onBeforeUnmount(() => {
 }
 
 .t-status {
-  border-left: 2px solid var(--cyan-dim);
+  border-left: 2px solid rgba(0, 240, 255, 0.4);
   margin: 5px 0 0 2px;
   padding: 1px 0 1px 12px;
   color: var(--ink-2);

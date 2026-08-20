@@ -87,13 +87,12 @@ defineProps<{ current: string }>()
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
-  border-radius: var(--radius-sm);
   color: var(--ink-2);
-  border-left: 2px solid transparent;
+  border-left: 3px solid transparent;
   transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 .tree__item:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(245, 241, 232, 0.05);
   color: var(--ink);
   text-decoration: none;
 }

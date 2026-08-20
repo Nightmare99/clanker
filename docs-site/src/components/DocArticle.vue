@@ -98,7 +98,7 @@ const num = computed(() => String(props.index + 1).padStart(2, '0'))
   gap: 16px;
   padding-bottom: 18px;
   margin-bottom: 28px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: var(--border-w) solid var(--ink);
 }
 .doc__crumbs {
   display: flex;
