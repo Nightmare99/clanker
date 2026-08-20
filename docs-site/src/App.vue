@@ -482,7 +482,11 @@ onBeforeUnmount(() => {
 
 .quickstart {
   display: grid;
-  grid-template-columns: 0.8fr 1.2fr;
+  /* minmax(0, ...), not bare fr -- quickstart__term holds a long install
+     command; without the 0 floor its line length forces this track wider
+     than the viewport instead of deferring to quickstart__pre's own
+     overflow-x: auto scroll. */
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
   gap: 40px;
   align-items: center;
   padding: 48px 36px;
@@ -679,7 +683,7 @@ onBeforeUnmount(() => {
 /* Responsive ----------------------------------------------- */
 @media (max-width: 1080px) {
   .quickstart {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 28px;
     padding: 32px 24px;
   }
