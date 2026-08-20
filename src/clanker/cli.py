@@ -604,74 +604,84 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
     """Run the interactive TUI."""
     logger.info("Starting interactive TUI mode")
 
-    session_manager = SessionManager()
+    # Setup here can take a few seconds (Copilot token refresh, the GitHub
+    # release check) with no other output on screen, which reads as "stuck".
+    # This spinner covers that gap and clears itself the instant the `with`
+    # block exits -- including via sys.exit() below -- right before the TUI
+    # takes the alternate screen.
+    with console.loading_spinner("Booting up...") as update_status:
+        session_manager = SessionManager()
 
-    resumed_messages: list | None = None
-    if resume_session:
-        messages = session_manager.get_session_messages(resume_session)
-        if messages:
-            session_manager.resume_session(resume_session)
-            resumed_messages = messages
-            console.print_info(f"Resuming session {resume_session} with {len(messages)} messages")
-        else:
-            console.print_warning(f"Session {resume_session} not found, starting new session")
+        resumed_messages: list | None = None
+        if resume_session:
+            update_status(f"Resuming session {resume_session}...")
+            messages = session_manager.get_session_messages(resume_session)
+            if messages:
+                session_manager.resume_session(resume_session)
+                resumed_messages = messages
+                console.print_info(f"Resuming session {resume_session} with {len(messages)} messages")
+            else:
+                console.print_warning(f"Session {resume_session} not found, starting new session")
 
-    logger.debug("Session manager initialized: session_id=%s", session_manager.session_id)
+        logger.debug("Session manager initialized: session_id=%s", session_manager.session_id)
 
-    try:
+        try:
+            current_model = get_default_model()
+            if current_model:
+                logger.info("Validating model config: %s (provider=%s)",
+                            current_model.name, current_model.provider)
+                update_status(f"Validating {current_model.name}...")
+            create_model(settings)
+            logger.info("Model configuration validated successfully")
+        except ValueError as e:
+            logger.error("Failed to validate model config: %s", e)
+            console.print_error(str(e))
+            console.print_info("Run 'clanker' to run the setup wizard.")
+            sys.exit(1)
+
+        from clanker.agent.prompts import load_user_instructions
+        _has_user_instructions = bool(load_user_instructions())
+
         current_model = get_default_model()
+        tracker_model_name = current_model.name if current_model else "unknown"
+        token_tracker = SessionTokenTracker(
+            model_name=tracker_model_name,
+            context_window=current_model.max_input_tokens if current_model else None,
+        )
+
+        conversation_messages = list(resumed_messages) if resumed_messages else []
+        pending_restore_messages = list(resumed_messages) if resumed_messages else []
+        working_dir = os.getcwd()
+
+        # Launch Textual TUI
+        from clanker.ui.app import ClankerApp
+
+        model_info = ""
         if current_model:
-            logger.info("Validating model config: %s (provider=%s)",
-                        current_model.name, current_model.provider)
-        create_model(settings)
-        logger.info("Model configuration validated successfully")
-    except ValueError as e:
-        logger.error("Failed to validate model config: %s", e)
-        console.print_error(str(e))
-        console.print_info("Run 'clanker' to run the setup wizard.")
-        sys.exit(1)
+            model_info = f"{current_model.name} ({current_model.provider})"
 
-    from clanker.agent.prompts import load_user_instructions
-    _has_user_instructions = bool(load_user_instructions())
+        update_status("Checking for updates...")
+        update_info = None
+        try:
+            from clanker.update import get_update_info
+            update_info = get_update_info()
+        except Exception:
+            pass
 
-    current_model = get_default_model()
-    tracker_model_name = current_model.name if current_model else "unknown"
-    token_tracker = SessionTokenTracker(
-        model_name=tracker_model_name,
-        context_window=current_model.max_input_tokens if current_model else None,
-    )
+        update_status(console.get_loading_message())
+        app = ClankerApp(console, model_info=model_info, update_info=update_info)
 
-    conversation_messages = list(resumed_messages) if resumed_messages else []
-    pending_restore_messages = list(resumed_messages) if resumed_messages else []
-    working_dir = os.getcwd()
+        # Wire console ↔ app so streaming.py can reach Textual widgets
+        console._textual_app = app
 
-    # Launch Textual TUI
-    from clanker.ui.app import ClankerApp
-
-    model_info = ""
-    if current_model:
-        model_info = f"{current_model.name} ({current_model.provider})"
-
-    update_info = None
-    try:
-        from clanker.update import get_update_info
-        update_info = get_update_info()
-    except Exception:
-        pass
-
-    app = ClankerApp(console, model_info=model_info, update_info=update_info)
-
-    # Wire console ↔ app so streaming.py can reach Textual widgets
-    console._textual_app = app
-
-    # Store state on the app for the TUI to access
-    app._session_manager = session_manager
-    app._settings = settings
-    app._conversation_messages = conversation_messages
-    app._pending_restore_messages = pending_restore_messages
-    app._token_tracker = token_tracker
-    app._working_dir = working_dir
-    app._user_instructions_loaded = _has_user_instructions
+        # Store state on the app for the TUI to access
+        app._session_manager = session_manager
+        app._settings = settings
+        app._conversation_messages = conversation_messages
+        app._pending_restore_messages = pending_restore_messages
+        app._token_tracker = token_tracker
+        app._working_dir = working_dir
+        app._user_instructions_loaded = _has_user_instructions
 
     app.run()
 

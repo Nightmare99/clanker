@@ -847,18 +847,32 @@ Commands:
     def loading_spinner(self, message: str | None = None):
         """Show a loading spinner with a Clanker-themed message.
 
+        Transient: the spinner line is fully cleared when the `with` block
+        exits (including via an exception), so callers can safely wrap
+        several steps of variable-length setup and hand off to something
+        else (e.g. the TUI taking the alternate screen) without leftover
+        spinner output on screen.
+
         Args:
             message: Optional custom message. If None, uses a random themed message.
 
         Yields:
-            The Live display object for manual control if needed.
+            An `update(message)` callable that swaps the spinner's text in
+            place, so callers can reflect real progress through several
+            setup steps rather than showing one static message throughout.
         """
         if message is None:
             message = self.get_loading_message()
 
-        spinner = Spinner("dots", text=Text(f" {message}", style="cyan"))
-        with Live(spinner, console=self._console, refresh_per_second=10, transient=True) as live:
-            yield live
+        def _renderable(text: str) -> Spinner:
+            return Spinner("dots", text=Text(f" {text}", style="cyan"))
+
+        with Live(_renderable(message), console=self._console, refresh_per_second=10, transient=True) as live:
+
+            def update(new_message: str) -> None:
+                live.update(_renderable(new_message))
+
+            yield update
 
     def print_token_usage(
         self,
