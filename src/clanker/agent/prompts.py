@@ -229,9 +229,12 @@ COMMUNICATION_TOOLS_SECTION = """\
 
 MEMORY_TOOLS_SECTION = """\
 ## Memory
-- `remember(content, tags)` - Store useful info for future sessions.
-- `recall(query, tags)` - Retrieve relevant memories.
-- Proactively remember: conventions, preferences, architecture decisions, gotchas.
+- `remember(content, tags)` - Store useful info for future sessions. Some relevant memories may already be injected earlier in this prompt — `recall` is for digging up more, or something more specific than what showed up unprompted.
+- `recall(query, tags)` - Retrieve relevant memories by keyword/tag.
+- `forget(memory_id)` - Delete a memory that's wrong or no longer relevant.
+- `list_memories()` - List everything stored for this workspace.
+- **Proactively remember — don't wait to be asked.** Store it the moment you notice: a project convention or architecture pattern, a user preference (coding style, frameworks, tools they favor), an important config/env detail, a recurring issue and its fix, or a key decision/constraint the user stated. When in doubt, remember — a wrong memory can be corrected with `forget`, but a fact you never stored is gone.
+- Tag consistently (e.g. `"convention"`, `"preference"`, `"architecture"`, `"config"`, `"issue"`) so `recall` and the automatic injection can filter by them later.
 
 """
 

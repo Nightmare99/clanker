@@ -75,6 +75,31 @@ class TestSystemPromptContent:
         assert "recall" in mod.MEMORY_TOOLS_SECTION
 
 
+class TestMemoryToolsSection:
+    """The memory pitch should match the proactive framing given to other
+    tools (notify, todo_write), not read as a passive afterthought."""
+
+    def test_documents_all_four_memory_tools(self) -> None:
+        section = _load_prompts_module().MEMORY_TOOLS_SECTION
+        assert "remember" in section
+        assert "recall" in section
+        assert "forget" in section
+        assert "list_memories" in section
+
+    def test_has_proactive_framing_with_concrete_triggers(self) -> None:
+        section = _load_prompts_module().MEMORY_TOOLS_SECTION
+        assert "Proactively remember" in section
+        # Concrete trigger examples, not just an abstract instruction.
+        assert "convention" in section.lower()
+        assert "preference" in section.lower()
+
+    def test_mentions_automatic_injection(self) -> None:
+        """The agent should know recall isn't the only path memories reach
+        it, now that get_system_prompt can inject them automatically."""
+        section = _load_prompts_module().MEMORY_TOOLS_SECTION
+        assert "injected" in section.lower()
+
+
 class TestGetSystemPrompt:
     """Tests for get_system_prompt function."""
 
@@ -116,6 +141,44 @@ class TestGetSystemPrompt:
         for prompt in [prompt1, prompt2, prompt3]:
             assert "ACT, DON'T DISCUSS" in prompt
             assert "SURGICAL PRECISION" in prompt
+
+
+class TestSystemPromptMemoryInjection:
+    """get_system_prompt's memory auto-injection (prompts.py:349-370) only
+    runs when working_directory is passed -- these confirm it actually
+    injects real memory content, not just that the code path is reachable."""
+
+    def test_no_memories_yet_injects_nothing(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        get_system_prompt = _get_system_prompt_fn()
+        prompt = get_system_prompt(working_directory=str(tmp_path))
+        assert "Workspace context" not in prompt
+        assert "Relevant Workspace Memories" not in prompt
+
+    def test_recent_memories_injected_without_user_query(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        from clanker.memory.memories import get_memory_store
+
+        store = get_memory_store(str(tmp_path))
+        store.add("Uses pytest with asyncio_mode=auto", tags=["convention"])
+
+        get_system_prompt = _get_system_prompt_fn()
+        prompt = get_system_prompt(working_directory=str(tmp_path))
+        assert "asyncio_mode=auto" in prompt
+
+    def test_relevant_memories_injected_with_user_query(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        from clanker.memory.memories import get_memory_store
+
+        store = get_memory_store(str(tmp_path))
+        store.add("The auth handler lives in src/auth.py", tags=["architecture"])
+        store.add("User prefers tabs over spaces", tags=["preference"])
+
+        get_system_prompt = _get_system_prompt_fn()
+        prompt = get_system_prompt(
+            working_directory=str(tmp_path), user_query="where is the auth handler"
+        )
+        assert "src/auth.py" in prompt
 
 
 class TestPromptCodeQuality:

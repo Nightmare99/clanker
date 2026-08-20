@@ -181,6 +181,8 @@ def create_agent_graph(
     middleware: list | None = None,
     system_prompt: str | None = None,
     model_name: str | None = None,
+    working_directory: str | None = None,
+    user_query: str | None = None,
 ):
     """Create an agent with SummarizationMiddleware.
 
@@ -189,9 +191,18 @@ def create_agent_graph(
         checkpointer: Optional checkpointer for persistence.
         tools: Optional list of tools override.
         middleware: Optional list of middleware override.
-        system_prompt: Optional system prompt override.
+        system_prompt: Optional system prompt override. When None, the
+                       default prompt is built via `get_system_prompt`,
+                       passing `working_directory`/`user_query` through so
+                       it can inject the `# ENVIRONMENT` block and relevant
+                       workspace memories.
         model_name: Optional model name to use. If provided, looks up the
                     model by name instead of using the default.
+        working_directory: Current working directory, forwarded to
+                    `get_system_prompt` (ignored if `system_prompt` is set).
+        user_query: The user's latest message, forwarded to
+                    `get_system_prompt` for relevance-matched memory
+                    injection (ignored if `system_prompt` is set).
 
     Returns:
         Compiled agent with automatic summarization.
@@ -238,7 +249,9 @@ def create_agent_graph(
             anthropic_prompt_caching,
         ]
 
-    resolved_system_prompt = system_prompt if system_prompt is not None else get_system_prompt()
+    resolved_system_prompt = system_prompt if system_prompt is not None else get_system_prompt(
+        working_directory=working_directory, user_query=user_query
+    )
 
     # Create agent with middleware
     # Order matters: first = outermost, last = innermost on the request path.
@@ -260,6 +273,8 @@ async def create_agent_graph_async(
     middleware: list | None = None,
     system_prompt: str | None = None,
     model_name: str | None = None,
+    working_directory: str | None = None,
+    user_query: str | None = None,
 ):
     """Create an agent with async MCP tool loading and SummarizationMiddleware.
 
@@ -268,9 +283,18 @@ async def create_agent_graph_async(
         checkpointer: Optional checkpointer for persistence.
         tools: Optional list of tools override.
         middleware: Optional list of middleware override.
-        system_prompt: Optional system prompt override.
+        system_prompt: Optional system prompt override. When None, the
+                       default prompt is built via `get_system_prompt`,
+                       passing `working_directory`/`user_query` through so
+                       it can inject the `# ENVIRONMENT` block and relevant
+                       workspace memories.
         model_name: Optional model name to use. If provided, looks up the
                     model by name instead of using the default.
+        working_directory: Current working directory, forwarded to
+                    `get_system_prompt` (ignored if `system_prompt` is set).
+        user_query: The user's latest message, forwarded to
+                    `get_system_prompt` for relevance-matched memory
+                    injection (ignored if `system_prompt` is set).
 
     Returns:
         Tuple of (agent, mcp_client). Keep mcp_client alive while using agent.
@@ -334,7 +358,9 @@ async def create_agent_graph_async(
             anthropic_prompt_caching,
         ]
 
-    resolved_system_prompt = system_prompt if system_prompt is not None else get_system_prompt()
+    resolved_system_prompt = system_prompt if system_prompt is not None else get_system_prompt(
+        working_directory=working_directory, user_query=user_query
+    )
 
     # Create agent with middleware
     # Order matters: first = outermost, last = innermost on the request path.

@@ -247,6 +247,35 @@ def _get_tool_arg_summary(tool_name: str, tool_input: dict) -> str:
         return ""
 
 
+def _extract_user_query(messages: list) -> str | None:
+    """Best-effort text of the newest HumanMessage in *messages*.
+
+    Used to build `get_system_prompt`'s `user_query`, which drives
+    relevance-matched memory injection (see `graph.py`/`prompts.py`).
+    Handles plain string content and multimodal content-block lists (pulls
+    just the text blocks, ignoring images); returns None if there's no
+    HumanMessage or it has no text to work with.
+    """
+    from langchain_core.messages import HumanMessage
+
+    for msg in reversed(messages or []):
+        if not isinstance(msg, HumanMessage):
+            continue
+        content = msg.content
+        if isinstance(content, str):
+            return content or None
+        if isinstance(content, list):
+            parts = [
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            ]
+            text = " ".join(p for p in parts if p)
+            return text or None
+        return None
+    return None
+
+
 async def stream_agent_response_async(
     settings: Settings,
     checkpointer,
@@ -277,9 +306,17 @@ async def stream_agent_response_async(
     # Get Textual app reference if available
     textual_app = getattr(console, "_textual_app", None)
 
-    # Create graph inside async context
+    # Create graph inside async context. Pull working_directory/user_query out
+    # of the turn's own state so get_system_prompt() (called inside, when
+    # system_prompt is None) can inject the # ENVIRONMENT block and
+    # relevance-matched workspace memories -- both are otherwise silently
+    # skipped, since get_system_prompt() only does that work when given
+    # these two params.
     graph, mcp_client = await create_agent_graph_async(
-        settings, checkpointer, tools=tools, middleware=middleware, system_prompt=system_prompt, model_name=model_name
+        settings, checkpointer, tools=tools, middleware=middleware, system_prompt=system_prompt,
+        model_name=model_name,
+        working_directory=state.get("working_directory"),
+        user_query=_extract_user_query(state.get("messages", [])),
     )
 
     # Snapshot `compaction_count` (see RobustSummarizationMiddleware.state_schema)
