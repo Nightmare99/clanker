@@ -1,6 +1,7 @@
 """Command and path sandboxing utilities."""
 
 import re
+import tempfile
 from pathlib import Path
 
 # Commands that are always blocked
@@ -52,6 +53,33 @@ PROTECTED_PATHS = frozenset({
     "/usr",
     "/var",
 })
+
+
+def _resolve_or_self(path_str: str) -> str:
+    """Resolve *path_str* through symlinks, falling back to itself on error."""
+    try:
+        return str(Path(path_str).resolve())
+    except OSError:
+        return path_str
+
+
+# Pre-resolved through symlinks, matching how the input path is resolved in
+# is_path_safe() below. On macOS, /etc, /var, /tmp, etc. are symlinks into
+# /private/... -- comparing a resolved input path against these LITERAL,
+# unresolved labels would silently let writes through (e.g. "/etc/passwd"
+# resolves to "/private/etc/passwd", which doesn't start with "/etc/"). Keyed
+# by the original label so error messages stay readable ("/etc", not
+# "/private/etc").
+_PROTECTED_PATHS_RESOLVED: dict[str, str] = {p: _resolve_or_self(p) for p in PROTECTED_PATHS}
+
+# tempfile.gettempdir() is included because on macOS it (and anything under
+# it, including pytest's own tmp_path fixture) resolves to /private/var/...
+# -- the same prefix as the protected "/var" entry -- so without this
+# exception, ordinary temp-file writes (e.g. spawn_subagent's truncated-
+# output files) would be wrongly blocked on macOS.
+_WRITE_EXCEPTIONS_RESOLVED: tuple[str, ...] = tuple(
+    _resolve_or_self(p) for p in ("/var/tmp", "/var/log", tempfile.gettempdir())
+)
 
 
 def is_command_safe(command: str, extra_blacklist: list[str] | None = None) -> tuple[bool, str]:
@@ -115,10 +143,10 @@ def is_path_safe(path: str | Path, for_write: bool = False) -> tuple[bool, str]:
 
     # Check protected paths for write operations
     if for_write:
-        for protected in PROTECTED_PATHS:
+        for protected, protected_resolved in _PROTECTED_PATHS_RESOLVED.items():
             if (
-                (path_str == protected or path_str.startswith(protected + "/"))
-                and not any(path_str.startswith(p) for p in ["/var/tmp", "/var/log"])
+                (path_str == protected_resolved or path_str.startswith(protected_resolved + "/"))
+                and not any(path_str.startswith(p) for p in _WRITE_EXCEPTIONS_RESOLVED)
             ):
                 return False, f"Cannot write to protected path: {protected}"
 

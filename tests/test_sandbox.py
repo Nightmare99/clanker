@@ -1,5 +1,7 @@
 """Tests for sandbox utilities."""
 
+import tempfile
+from pathlib import Path
 
 from clanker.utils.sandbox import is_command_safe, is_path_safe, requires_confirmation
 
@@ -95,3 +97,24 @@ class TestPathSafety:
         # Reading system files should be allowed
         is_safe, _ = is_path_safe("/etc/hosts", for_write=False)
         assert is_safe
+
+    def test_symlinked_protected_path_still_blocked(self) -> None:
+        """Regression: on macOS, /etc (and /bin, /var, ...) are symlinks into
+        /private/... -- resolving the input path but comparing it against
+        the LITERAL, unresolved protected-path strings let writes silently
+        through. Exercise the resolved form directly so this holds
+        regardless of which platform runs the test."""
+        resolved = str(Path("/etc/passwd").resolve())
+        is_safe, reason = is_path_safe(resolved, for_write=True)
+        assert not is_safe, f"Resolved protected path '{resolved}' should be blocked"
+        assert "protected path" in reason
+
+    def test_system_temp_dir_writable(self) -> None:
+        """The OS temp directory must stay writable even though it can
+        resolve under a protected prefix (e.g. macOS: $TMPDIR -> /var/folders
+        -> /private/var/folders, under the protected "/var" entry) -- lots
+        of real functionality (spawn_subagent's truncated-output files,
+        pytest's own tmp_path fixture) depends on writing there."""
+        temp_file = str(Path(tempfile.gettempdir()) / "clanker_sandbox_test.txt")
+        is_safe, reason = is_path_safe(temp_file, for_write=True)
+        assert is_safe, f"Temp dir path should be writable, got: {reason}"
