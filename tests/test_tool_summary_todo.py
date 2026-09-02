@@ -56,6 +56,21 @@ class TestCompactResultSummaryTodo:
         summary = compact_result_summary(result, "todo_write", None)
         assert summary == "1/1 done"
 
+    def test_todo_summary_uses_rendered_items_as_source_of_truth(self) -> None:
+        todos = [
+            {"content": f"item {i}", "status": "pending", "active_form": f"item {i}"}
+            for i in range(5)
+        ]
+        result = json.dumps({
+            "ok": True,
+            "todos": todos,
+            # A stale aggregate must not make the UI disagree with the five
+            # checklist rows it renders.
+            "summary": {"total": 6, "completed": 1, "in_progress": 0, "pending": 5},
+        })
+
+        assert compact_result_summary(result, "todo_write", None) == "0/5 done"
+
     def test_todo_write_no_todos_yet(self) -> None:
         result = json.dumps({
             "ok": True, "todos": [],

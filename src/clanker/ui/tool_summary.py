@@ -186,9 +186,18 @@ def compact_result_summary(
         # Full checklist is rendered separately (see build_todo_checklist_text);
         # this one-liner is only the fallback for renderers that don't call it.
         if parsed and parsed.get("ok"):
-            summary = parsed.get("summary", {})
-            total = summary.get("total", 0)
-            completed = summary.get("completed", 0)
+            # The checklist itself is the source of truth.  Do not trust the
+            # redundant summary counters here: if they are stale or malformed,
+            # the header can otherwise say e.g. 0/6 while rendering five items.
+            todos = parsed.get("todos", [])
+            if not isinstance(todos, list):
+                todos = []
+            total = len(todos)
+            completed = sum(
+                1
+                for todo in todos
+                if isinstance(todo, dict) and todo.get("status") == "completed"
+            )
             if total == 0:
                 return "no todos yet"
             return f"{completed}/{total} done"
