@@ -1057,6 +1057,13 @@ async def stream_agent_response_async(
     # Flush whatever the final model call accumulated (response and/or thinking).
     final_response = _flush_current_turn_text()
 
+    # A completed checklist has no useful cross-turn state. Clear it
+    # deterministically at a successful turn boundary even if the model marked
+    # every item complete but forgot the final todo_write(todos=[]) call.
+    from clanker.tools.todo_tools import clear_todos_if_completed
+
+    clear_todos_if_completed()
+
     return StreamResult(
         response=final_response,
         input_tokens=last_input_tokens,

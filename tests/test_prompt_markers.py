@@ -104,6 +104,25 @@ class TestMarkerResolutionEnabled:
         assert "load_agent" in prompt
         assert "spawn_subagent" in prompt
 
+    def test_live_todo_state_is_injected_into_next_turn(self) -> None:
+        from clanker.tools.todo_tools import get_todo_store, todo_write
+
+        get_system_prompt = _get_system_prompt_fn()
+        settings = _mock_settings()
+        store = get_todo_store()
+        store.clear()
+        try:
+            todo_write.invoke({
+                "todos": [{"content": "Resume after compaction", "status": "pending"}]
+            })
+            with patch("clanker.config.get_settings", return_value=settings):
+                prompt = get_system_prompt()
+
+            assert "CURRENT TODO STATE" in prompt
+            assert "[pending] Resume after compaction" in prompt
+        finally:
+            store.clear()
+
 
 class TestMarkerResolutionDisabled:
     """When a flag is disabled, the marker is stripped from the prompt."""

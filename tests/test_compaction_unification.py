@@ -115,6 +115,32 @@ class TestCompactShared:
         assert update["messages"][0].id == REMOVE_ALL_MESSAGES
         assert update["messages"][1:] == result.compacted_messages
 
+    def test_compaction_preserves_live_todo_state(self) -> None:
+        from clanker.tools.todo_tools import get_todo_store, todo_write
+
+        store = get_todo_store()
+        store.clear()
+        try:
+            todo_write.invoke({
+                "todos": [
+                    {"content": "Patch the bug", "status": "in_progress"},
+                    {"content": "Run tests", "status": "pending"},
+                ]
+            })
+            mw = _build_middleware(FakeModel())
+            messages = _messages(("h", "old context"), ("a", "working"))
+
+            result = mw.compact(messages, force=True)
+
+            assert result is not None
+            compacted = result.new_messages[0].content
+            assert "CURRENT TODO STATE" in compacted
+            assert "[in_progress] Patch the bug" in compacted
+            assert "[pending] Run tests" in compacted
+            assert "todo_write(todos=[])" in compacted
+        finally:
+            store.clear()
+
     @pytest.mark.asyncio
     async def test_acompact_mirrors_compact(self) -> None:
         mw = _build_middleware(FakeModel())
@@ -122,6 +148,27 @@ class TestCompactShared:
         result = await mw.acompact(messages, force=True)
         assert result is not None
         assert "Here is a summary of the conversation to date" in result.new_messages[0].content
+
+    @pytest.mark.asyncio
+    async def test_acompact_preserves_live_todo_state(self) -> None:
+        from clanker.tools.todo_tools import get_todo_store, todo_write
+
+        store = get_todo_store()
+        store.clear()
+        try:
+            todo_write.invoke({
+                "todos": [{"content": "Finish async fix", "status": "in_progress"}]
+            })
+            mw = _build_middleware(FakeModel())
+
+            result = await mw.acompact(
+                _messages(("h", "old context"), ("a", "working")), force=True
+            )
+
+            assert result is not None
+            assert "[in_progress] Finish async fix" in result.new_messages[0].content
+        finally:
+            store.clear()
 
 
 class TestRunCompaction:

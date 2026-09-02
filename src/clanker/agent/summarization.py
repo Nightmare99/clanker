@@ -261,6 +261,7 @@ class RobustSummarizationMiddleware(SummarizationMiddleware):
             return None
 
         summary = self._create_summary(messages_to_summarize)
+        summary = self._preserve_current_todos(summary)
         new_messages = self._build_new_messages(summary)
         return CompactionResult(
             new_messages=new_messages,
@@ -290,6 +291,7 @@ class RobustSummarizationMiddleware(SummarizationMiddleware):
             return None
 
         summary = await self._acreate_summary(messages_to_summarize)
+        summary = self._preserve_current_todos(summary)
         new_messages = self._build_new_messages(summary)
         return CompactionResult(
             new_messages=new_messages,
@@ -323,6 +325,16 @@ class RobustSummarizationMiddleware(SummarizationMiddleware):
     # ------------------------------------------------------------------
     # Overridden generation entry points (called by parent before_model)
     # ------------------------------------------------------------------
+    @staticmethod
+    def _preserve_current_todos(summary: str) -> str:
+        """Append exact live TODO state after lossy model summarization."""
+        from clanker.tools.todo_tools import format_current_todos_for_context
+
+        todo_context = format_current_todos_for_context()
+        if not todo_context:
+            return summary
+        return f"{summary.rstrip()}\n\n{todo_context}"
+
     def _create_summary(self, messages_to_summarize: list[AnyMessage]) -> str:
         """Generate a summary synchronously (overrides parent)."""
         if not messages_to_summarize:

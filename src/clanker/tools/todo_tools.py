@@ -67,6 +67,46 @@ def get_todo_store() -> TodoStore:
     return store
 
 
+def format_current_todos_for_context() -> str:
+    """Return the live plan as durable model context.
+
+    TODO state is intentionally kept outside the conversation transcript.  A
+    compaction can therefore remove the tool calls that originally created or
+    updated it while the in-memory store remains populated.  This snapshot is
+    injected into compacted history and new-turn system prompts so the model
+    cannot mistake a still-visible checklist for completed/forgotten work.
+    """
+    items = get_todo_store().read()
+    if not items:
+        return ""
+
+    lines = [
+        "## CURRENT TODO STATE (authoritative runtime state)",
+        "This checklist still exists outside conversation history:",
+    ]
+    lines.extend(f"- [{item.status}] {item.content}" for item in items)
+    lines.extend([
+        "Keep it accurate with todo_write before the next final response.",
+        "If all requested work is finished, clear it with todo_write(todos=[]).",
+    ])
+    return "\n".join(lines)
+
+
+def clear_todos_if_completed() -> bool:
+    """Clear a non-empty plan whose items are all completed.
+
+    Returns whether a plan was cleared. This is used at the normal turn
+    boundary as a deterministic cleanup fallback; interrupted or failed turns
+    deliberately retain their checklist so unfinished work is not lost.
+    """
+    store = get_todo_store()
+    items = store.read()
+    if not items or any(item.status != "completed" for item in items):
+        return False
+    store.clear()
+    return True
+
+
 def _summary(items: list[TodoItem]) -> dict:
     return {
         "total": len(items),

@@ -2,7 +2,13 @@
 
 import threading
 
-from clanker.tools.todo_tools import get_todo_store, todo_read, todo_write
+from clanker.tools.todo_tools import (
+    clear_todos_if_completed,
+    format_current_todos_for_context,
+    get_todo_store,
+    todo_read,
+    todo_write,
+)
 
 
 class TestTodoWrite:
@@ -49,6 +55,42 @@ class TestTodoWrite:
     def test_active_form_falls_back_to_content(self) -> None:
         result = todo_write.invoke({"todos": [{"content": "Fix it", "status": "pending"}]})
         assert result["todos"][0]["active_form"] == "Fix it"
+
+    def test_context_snapshot_preserves_exact_live_plan(self) -> None:
+        todo_write.invoke({
+            "todos": [
+                {"content": "Inspect code", "status": "completed"},
+                {"content": "Fix compaction", "status": "in_progress"},
+            ]
+        })
+
+        context = format_current_todos_for_context()
+
+        assert "[completed] Inspect code" in context
+        assert "[in_progress] Fix compaction" in context
+        assert "todo_write(todos=[])" in context
+
+    def test_completed_plan_is_cleared_at_turn_boundary(self) -> None:
+        todo_write.invoke({
+            "todos": [
+                {"content": "Patch", "status": "completed"},
+                {"content": "Test", "status": "completed"},
+            ]
+        })
+
+        assert clear_todos_if_completed() is True
+        assert todo_read.invoke({})["todos"] == []
+
+    def test_incomplete_plan_survives_turn_boundary(self) -> None:
+        todo_write.invoke({
+            "todos": [
+                {"content": "Patch", "status": "completed"},
+                {"content": "Test", "status": "pending"},
+            ]
+        })
+
+        assert clear_todos_if_completed() is False
+        assert todo_read.invoke({})["summary"]["total"] == 2
 
     def test_rejects_non_list(self) -> None:
         # Bypasses the args_schema (which already rejects this at the

@@ -202,6 +202,7 @@ TODO_TOOLS_SECTION = """\
 - `todo_write(todos)` - Write or update a checklist for the current task. Pass the FULL list every time — it replaces, not appends. Each item: `content` (imperative, e.g. "Fix the login bug"), `status` (`pending` | `in_progress` | `completed`), optional `active_form` (present-continuous, e.g. "Fixing the login bug", shown while in_progress).
 - `todo_read()` - Re-read the current checklist, e.g. after a long detour or before deciding what's next.
 - Optional — use it for multi-step or non-trivial work (roughly 4+ distinct steps) so progress stays visible to the user. Skip it for trivial one- or two-step tasks. Keep exactly one item `in_progress` at a time, and mark items `completed` immediately when done, not batched at the end.
+- Before every final response, reconcile the checklist with reality. If requested work remains, update every item's status accurately. If all requested work is finished, call `todo_write(todos=[])` to clear the plan instead of leaving a completed or stale checklist behind.
 
 """
 
@@ -378,5 +379,17 @@ First action: Call read_project_instructions("{working_directory}") to load proj
                     prompt += memories_context + "\n"
         except Exception:
             pass
+
+    # TODO state lives outside message history. Reinject it at the end of every
+    # new-turn prompt so a plan that survived a previous turn/compaction cannot
+    # become invisible to the model while remaining visible in the UI. Keeping
+    # this dynamic suffix last also preserves the stable prompt prefix for
+    # provider-side prompt caching.
+    if settings.tools.todo:
+        from clanker.tools.todo_tools import format_current_todos_for_context
+
+        todo_context = format_current_todos_for_context()
+        if todo_context:
+            prompt += f"\n{todo_context}\n"
 
     return prompt
