@@ -66,8 +66,8 @@ class TestMarkerResolutionEnabled:
         with patch("clanker.config.get_settings", return_value=settings):
             prompt = get_system_prompt()
         assert "__WEB_TOOLS__" not in prompt
-        assert "web_search" in prompt
-        assert "web_read" in prompt
+        assert "## Web research" in prompt
+        assert "primary and authoritative sources" in prompt
 
     def test_communication_section_injected_when_enabled(self) -> None:
         get_system_prompt = _get_system_prompt_fn()
@@ -101,8 +101,8 @@ class TestMarkerResolutionEnabled:
         with patch("clanker.config.get_settings", return_value=settings):
             prompt = get_system_prompt()
         assert "__AGENTS_TOOLS__" not in prompt
-        assert "load_agent" in prompt
-        assert "spawn_subagent" in prompt
+        assert "## Agents" in prompt
+        assert "bounded, independent subtask" in prompt
 
     def test_live_todo_state_is_injected_into_next_turn(self) -> None:
         from clanker.tools.todo_tools import get_todo_store, todo_write
@@ -142,8 +142,8 @@ class TestMarkerResolutionDisabled:
         with patch("clanker.config.get_settings", return_value=settings):
             prompt = get_system_prompt()
         assert "__COMMUNICATION_TOOLS__" not in prompt
-        # "notify" and "ask_user" may appear elsewhere, but the section header won't
-        assert "## Communication" not in prompt
+        # Tool names may appear elsewhere, but the conditional section header won't.
+        assert "## User interaction" not in prompt
 
     def test_memory_marker_stripped_when_disabled(self) -> None:
         get_system_prompt = _get_system_prompt_fn()
@@ -190,7 +190,7 @@ class TestMarkerResolutionMixed:
         assert "__MEMORY_TOOLS__" not in prompt
         assert "## Memory" not in prompt
         assert "__COMMUNICATION_TOOLS__" not in prompt
-        assert "## Communication" not in prompt
+        assert "## User interaction" not in prompt
         # Enabled: markers replaced with content
         assert "__SKILLS_TOOLS__" not in prompt
         assert "load_skill" in prompt
@@ -217,9 +217,9 @@ class TestMarkerResolutionMixed:
         assert "## Memory" not in prompt
         assert "## Skills" not in prompt
         assert "## Agents" not in prompt
-        assert "## Communication" not in prompt
+        assert "## User interaction" not in prompt
         # Core prompt still intact
-        assert "ACT, DON'T DISCUSS" in prompt
+        assert "MATCH ACTION TO INTENT" in prompt
         assert "SURGICAL PRECISION" in prompt
 
 
@@ -246,4 +246,4 @@ tools:
         assert "## Agents" not in prompt
         # Enabled
         assert "## Memory" in prompt
-        assert "## Communication" in prompt
+        assert "## User interaction" in prompt

@@ -34,24 +34,22 @@ class TestSystemPromptContent:
         assert len(SYSTEM_PROMPT) > 0
 
     def test_system_prompt_contains_core_principles(self) -> None:
-        """System prompt should contain the 5 core principles."""
+        """System prompt should contain the core operating principles."""
         SYSTEM_PROMPT = _get_system_prompt()
-        assert "ACT, DON'T DISCUSS" in SYSTEM_PROMPT
+        assert "MATCH ACTION TO INTENT" in SYSTEM_PROMPT
+        assert "WORK AUTONOMOUSLY" in SYSTEM_PROMPT
         assert "UNDERSTAND BEFORE CHANGING" in SYSTEM_PROMPT
         assert "SURGICAL PRECISION" in SYSTEM_PROMPT
         assert "VERIFY YOUR WORK" in SYSTEM_PROMPT
-        assert "THINK IN SYSTEMS" in SYSTEM_PROMPT
+        assert "SAFETY AND AUTHORITY" in SYSTEM_PROMPT
 
     def test_system_prompt_contains_tools_section(self) -> None:
-        """System prompt should document available tools."""
+        """System prompt should guide tool use without duplicating schemas."""
         SYSTEM_PROMPT = _get_system_prompt()
-        assert "# TOOLS" in SYSTEM_PROMPT
-        assert "read_file" in SYSTEM_PROMPT
-        assert "write_file" in SYSTEM_PROMPT
-        assert "edit_file" in SYSTEM_PROMPT
-        assert "execute_shell" in SYSTEM_PROMPT
-        assert "glob_search" in SYSTEM_PROMPT
-        assert "grep_search" in SYSTEM_PROMPT
+        assert "# TOOL USE" in SYSTEM_PROMPT
+        assert "exact tool schemas" in SYSTEM_PROMPT
+        assert "Read before writing" in SYSTEM_PROMPT
+        assert "background jobs" in SYSTEM_PROMPT
 
     def test_system_prompt_mentions_project_instructions(self) -> None:
         """System prompt should mention reading project instructions."""
@@ -76,20 +74,18 @@ class TestSystemPromptContent:
 
 
 class TestMemoryToolsSection:
-    """The memory pitch should match the proactive framing given to other
-    tools (notify, todo_write), not read as a passive afterthought."""
+    """Memory guidance should favor durable, trustworthy context."""
 
-    def test_documents_all_four_memory_tools(self) -> None:
+    def test_documents_memory_lifecycle(self) -> None:
         section = _load_prompts_module().MEMORY_TOOLS_SECTION
         assert "remember" in section
-        assert "recall" in section
+        assert "recalled" in section
         assert "forget" in section
-        assert "list_memories" in section
 
-    def test_has_proactive_framing_with_concrete_triggers(self) -> None:
+    def test_has_selective_framing_with_concrete_triggers(self) -> None:
         section = _load_prompts_module().MEMORY_TOOLS_SECTION
-        assert "Proactively remember" in section
-        # Concrete trigger examples, not just an abstract instruction.
+        assert "durable, high-confidence" in section
+        assert "auto=true" in section
         assert "convention" in section.lower()
         assert "preference" in section.lower()
 
@@ -97,7 +93,7 @@ class TestMemoryToolsSection:
         """The agent should know recall isn't the only path memories reach
         it, now that get_system_prompt can inject them automatically."""
         section = _load_prompts_module().MEMORY_TOOLS_SECTION
-        assert "injected" in section.lower()
+        assert "recalled" in section.lower()
 
 
 class TestGetSystemPrompt:
@@ -108,7 +104,7 @@ class TestGetSystemPrompt:
         get_system_prompt = _get_system_prompt_fn()
         prompt = get_system_prompt()
         # Core principles always present
-        assert "ACT, DON'T DISCUSS" in prompt
+        assert "MATCH ACTION TO INTENT" in prompt
         assert "SURGICAL PRECISION" in prompt
         # Markers are resolved (not present as raw markers)
         assert "__WEB_TOOLS__" not in prompt
@@ -139,7 +135,7 @@ class TestGetSystemPrompt:
         prompt3 = get_system_prompt(working_directory="/path", user_query="test query")
 
         for prompt in [prompt1, prompt2, prompt3]:
-            assert "ACT, DON'T DISCUSS" in prompt
+            assert "MATCH ACTION TO INTENT" in prompt
             assert "SURGICAL PRECISION" in prompt
 
 
@@ -216,20 +212,16 @@ class TestPromptCommunicationGuidelines:
         SYSTEM_PROMPT = _get_system_prompt()
         assert "concise" in SYSTEM_PROMPT.lower() or "brief" in SYSTEM_PROMPT.lower()
 
-    def test_prompt_includes_good_example(self) -> None:
-        """Prompt should include examples of good responses."""
-        SYSTEM_PROMPT = _get_system_prompt()
-        assert "Good:" in SYSTEM_PROMPT
-
-    def test_prompt_includes_bad_example(self) -> None:
-        """Prompt should include examples of bad responses."""
-        SYSTEM_PROMPT = _get_system_prompt()
-        assert "Bad:" in SYSTEM_PROMPT
+    def test_prompt_requires_outcome_and_verification(self) -> None:
+        """Final answers should report useful evidence, not canned phrasing."""
+        system_prompt = _get_system_prompt()
+        assert "Lead with the outcome" in system_prompt
+        assert "verification" in system_prompt
 
     def test_prompt_discourages_asking_permission(self) -> None:
         """Prompt should discourage asking unnecessary permission."""
         SYSTEM_PROMPT = _get_system_prompt()
-        assert "shall I" in SYSTEM_PROMPT or "should I" in SYSTEM_PROMPT
+        assert "Ask only when" in SYSTEM_PROMPT
 
 
 def _get_load_user_instructions():
@@ -254,19 +246,21 @@ class TestUserInstructions:
         (clanker_dir / "instructions.md").write_text("Always respond in French.")
         assert load(str(tmp_path)) == "Always respond in French."
 
-    def test_truncates_to_250_characters(self, tmp_path, monkeypatch) -> None:
-        """Truncates instructions to first 250 characters."""
+    def test_truncates_to_configured_limit_with_marker(self, tmp_path, monkeypatch) -> None:
+        """Long instructions are bounded without silently cutting them off."""
         monkeypatch.setenv("HOME", str(tmp_path / "home"))
-        load = _get_load_user_instructions()
+        module = _load_prompts_module()
+        load = module.load_user_instructions
         clanker_dir = tmp_path / ".clanker"
         clanker_dir.mkdir()
-        text = "a" * 400
+        text = "a" * (module.MAX_INSTRUCTION_CHARS + 500)
         (clanker_dir / "instructions.md").write_text(text)
         result = load(str(tmp_path))
-        assert len(result) == 250
+        assert len(result) <= module.MAX_INSTRUCTION_CHARS
+        assert result.endswith("[instructions truncated]")
 
-    def test_under_250_chars_unchanged(self, tmp_path, monkeypatch) -> None:
-        """Instructions under 250 characters are returned in full."""
+    def test_short_instructions_unchanged(self, tmp_path, monkeypatch) -> None:
+        """Instructions under the configured limit are returned in full."""
         monkeypatch.setenv("HOME", str(tmp_path / "home"))
         load = _get_load_user_instructions()
         clanker_dir = tmp_path / ".clanker"

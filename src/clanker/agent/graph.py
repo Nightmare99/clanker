@@ -49,34 +49,39 @@ def _is_anthropic_model(model: Any) -> bool:
 def _cacheable_system_prompt(system_prompt: str, model: Any) -> str | SystemMessage:
     """Mark the system prompt as cacheable for providers that need an explicit opt-in.
 
-    The system prompt is identical on every turn of a session (built once,
-    here, at graph-construction time) -- a textbook prompt-caching win. How
-    that's actually achieved differs per provider:
+    The behavioral prefix is stable across turns while workspace instructions,
+    retrieved memory, and TODO state may vary. ``get_system_prompt`` records the
+    boundary between them on its string result. How caching is achieved differs
+    per provider:
 
     - OpenAI, Azure OpenAI, and GitHub Copilot cache automatically
       server-side for any stable prompt prefix -- no client markup exists or
       is needed, so a plain string is correct as-is.
     - Anthropic requires an explicit `cache_control: {"type": "ephemeral"}`
-      breakpoint on a content block, or nothing gets cached and every turn
-      pays full input price for the whole system prompt. Wrapping it in a
-      `SystemMessage` with a single cache-marked text block is how
-      `langchain_anthropic` forwards that breakpoint to the API
-      (see `_format_messages` in `langchain_anthropic/chat_models.py`).
+      breakpoint on a content block. The stable prefix is one cache-marked
+      block and dynamic context, when present, is a separate unmarked block.
     - Ollama is local with no token billing, so caching cost has no meaning
       there; a plain string is left untouched.
     """
+    prompt_text = str(system_prompt)
     if not _is_anthropic_model(model):
-        return system_prompt
+        return prompt_text
 
-    return SystemMessage(
-        content=[
-            {
-                "type": "text",
-                "text": system_prompt,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ]
-    )
+    cache_boundary = getattr(system_prompt, "cache_boundary", len(prompt_text))
+    if not isinstance(cache_boundary, int) or not 0 < cache_boundary <= len(prompt_text):
+        cache_boundary = len(prompt_text)
+
+    content: list[str | dict[Any, Any]] = [
+        {
+            "type": "text",
+            "text": prompt_text[:cache_boundary],
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+    if cache_boundary < len(prompt_text):
+        content.append({"type": "text", "text": prompt_text[cache_boundary:]})
+
+    return SystemMessage(content=content)
 
 
 def _cacheable_tools(tools: list, model: Any) -> list:

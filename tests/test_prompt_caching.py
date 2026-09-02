@@ -1,15 +1,11 @@
 """Tests for Anthropic prompt-cache breakpoints: system prompt, tools, and the
 newest message of every model call.
 
-The system prompt and tools list are identical on every turn of a session
-(built once at graph-construction time) -- a textbook stable prefix. The
-conversation history grows every turn but shares a common prefix with the
-previous call, which is exactly what the per-call "cache the last message"
-breakpoint (`AnthropicPromptCachingMiddleware`) targets. OpenAI/Azure
-OpenAI/GitHub Copilot cache automatically server-side for any stable prefix
--- no client markup exists for it, so those must always be left untouched.
-Anthropic requires an explicit `cache_control` breakpoint on a content block,
-or nothing gets cached at all.
+The system prompt has a stable behavioral prefix and may have dynamic workspace,
+memory, and TODO context appended to it. OpenAI-style providers cache matching
+prefixes automatically. Anthropic requires explicit `cache_control` breakpoints,
+so only the stable system block is marked; its dynamic suffix remains unmarked.
+The conversation-history middleware separately marks the newest message.
 """
 
 from __future__ import annotations
@@ -36,6 +32,52 @@ class TestCacheableSystemPrompt:
                 "cache_control": {"type": "ephemeral"},
             }
         ]
+
+    def test_anthropic_caches_stable_prefix_not_dynamic_context(self) -> None:
+        from langchain_anthropic import ChatAnthropic
+
+        from clanker.agent.graph import _cacheable_system_prompt
+        from clanker.agent.prompts import SystemPromptText
+
+        model = ChatAnthropic(api_key="fake-key", model="claude-sonnet-4-20250514")
+        prompt = SystemPromptText("stable policy\ndynamic context", len("stable policy\n"))
+
+        result = _cacheable_system_prompt(prompt, model)
+
+        assert isinstance(result, SystemMessage)
+        assert result.content == [
+            {
+                "type": "text",
+                "text": "stable policy\n",
+                "cache_control": {"type": "ephemeral"},
+            },
+            {"type": "text", "text": "dynamic context"},
+        ]
+
+    def test_generated_prompt_records_dynamic_context_after_cache_boundary(self) -> None:
+        from clanker.agent.prompts import get_system_prompt
+        from clanker.tools.todo_tools import get_todo_store, todo_write
+
+        store = get_todo_store()
+        store.clear()
+        try:
+            prompt_without_plan = get_system_prompt()
+            todo_write.invoke({
+                "todos": [{"content": "Dynamic plan item", "status": "pending"}]
+            })
+
+            prompt = get_system_prompt()
+
+            assert isinstance(prompt, str)
+            assert prompt.cache_boundary == prompt_without_plan.cache_boundary
+            assert (
+                prompt[:prompt.cache_boundary]
+                == prompt_without_plan[:prompt_without_plan.cache_boundary]
+            )
+            assert "Dynamic plan item" not in prompt[:prompt.cache_boundary]
+            assert "Dynamic plan item" in prompt[prompt.cache_boundary:]
+        finally:
+            store.clear()
 
     def test_openai_model_unaffected(self) -> None:
         from langchain_openai import ChatOpenAI
