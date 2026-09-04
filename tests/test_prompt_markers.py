@@ -195,7 +195,8 @@ class TestMarkerResolutionMixed:
         assert "__SKILLS_TOOLS__" not in prompt
         assert "load_skill" in prompt
         assert "__AGENTS_TOOLS__" not in prompt
-        assert "spawn_subagent" in prompt
+        assert "## Agents" in prompt
+        assert "bounded, independent subtask" in prompt
 
     def test_all_disabled_strips_all_markers(self) -> None:
         get_system_prompt = _get_system_prompt_fn()
