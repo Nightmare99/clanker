@@ -4,12 +4,11 @@ When the main agent needs to spawn a subagent with a specific role, it calls
 load_agent(name) to get the agent's system prompt and tool configuration.
 """
 
-import os
-
 from langchain_core.tools import tool
 
 from clanker.agents import MAX_AGENT_PROMPT_CHARS, list_agents
 from clanker.agents import load_agent as _load_agent
+from clanker.execution import working_directory
 from clanker.logging import get_logger
 
 logger = get_logger("tools.agent")
@@ -33,10 +32,10 @@ def load_agent(name: str) -> dict:
         On success: a dict with the agent's system_prompt, tools, and metadata.
         On failure: a dict with ok=False, an error message, and available names.
     """
-    agent = _load_agent(name, os.getcwd())
+    agent = _load_agent(name, working_directory())
 
     if agent is None:
-        available = sorted(list_agents(os.getcwd()).keys())
+        available = sorted(list_agents(working_directory()).keys())
         logger.info("load_agent: '%s' not found (available: %s)", name, available)
         return {
             "ok": False,

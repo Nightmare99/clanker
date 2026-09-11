@@ -273,11 +273,27 @@ tools:
 | `web_browsing` | `web_search`, `web_read` | Web search and page reading |
 | `memory` | `remember`, `recall`, `forget`, `list_memories` | Cross-session memory persistence |
 | `skills` | `load_skill` | On-demand skill loading |
-| `subagents` | `load_agent`, `spawn_subagent` | Delegating subtasks to specialized agents |
+| `subagents` | `load_agent`, `spawn_subagent`, `subagent_status`, `subagent_message`, `subagent_stop`, `subagent_wait` | Delegating subtasks to specialized agents |
 | `communication` | `notify`, `ask_user` | Mid-task status updates and user questions |
 
 Changes take effect on the next conversation turn. You can also toggle these
 from the **Tools** tab in the web configuration UI (`clanker config`).
+
+## Subagent execution limits
+
+These limits are separate from the `tools.subagents` feature flag:
+
+```yaml
+subagents:
+  max_concurrent: 3
+  timeout_seconds: 900
+  max_tokens: 200000
+  repeated_failure_limit: 3
+```
+
+Time limits start when a task leaves the queue. Token budgets use cumulative
+provider-reported input and output tokens, checked after each model response.
+See [Managed execution](agents.md#managed-execution) for controls and limitations.
 
 ## Command Blacklist
 

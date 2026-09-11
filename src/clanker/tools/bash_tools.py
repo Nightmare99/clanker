@@ -7,10 +7,12 @@ import signal
 import subprocess
 import threading
 import time
+from functools import partial
 
 from langchain.tools import tool
 
 from clanker.config import get_effective_blacklist, get_settings
+from clanker.execution import check_cancelled, task_interaction, task_stop, working_directory
 from clanker.logging import get_logger
 from clanker.runtime import is_yolo_mode
 from clanker.utils.sandbox import is_command_safe
@@ -114,6 +116,10 @@ def prompt_for_approval(command: str) -> bool:
     options = [_APPROVE_YES, _APPROVE_ALWAYS, _APPROVE_NO]
 
     callback = get_approval_callback()
+    if task_interaction.get() is not None:
+        from clanker.ui.prompts import select_options
+
+        callback = partial(select_options, allow_other=False, allow_cancel=False)
     try:
         if callback is not None:
             result = callback("Run this command?", options, preface=preface)
@@ -171,6 +177,7 @@ def run_safety_checks(command: str) -> str | None:
     passed all gates. Raises CommandRejectedError if the user rejects
     the interactive approval prompt.
     """
+    check_cancelled()
     if not command or not command.strip():
         return "Error: Command cannot be empty"
 
@@ -180,7 +187,7 @@ def run_safety_checks(command: str) -> str | None:
         # The effective blacklist is the union of the system-wide setting and
         # the project's .clanker/blacklist (resolved from the current cwd, which
         # is the project root for execute_shell).
-        extra_blacklist = get_effective_blacklist()
+        extra_blacklist = get_effective_blacklist(working_directory=working_directory())
         is_safe, reason = is_command_safe(command, extra_blacklist)
         if not is_safe:
             logger.warning("Command blocked: %s - %s", command[:50], reason)
@@ -225,6 +232,9 @@ def execute_shell(command: str, timeout: int | None = None) -> str:
     timeout_seconds = timeout or (settings.safety.command_timeout // 1000)
     promote_after = settings.safety.foreground_promote_after_seconds
 
+    if task_stop.get() is not None:
+        return _run_managed_command(command, timeout_seconds)
+
     # If promotion is disabled, keep the simple blocking path.
     if promote_after <= 0:
         return _run_foreground_blocking(command, timeout_seconds)
@@ -246,6 +256,50 @@ def execute_shell(command: str, timeout: int | None = None) -> str:
     except Exception as exc:  # noqa: BLE001
         logger.exception("execute_shell promotion path crashed: %s", exc)
         return f"Error: {type(exc).__name__}: {exc}"
+
+
+def _run_managed_command(command: str, timeout_seconds: int) -> str:
+    """Keep subagent shell processes cancellable and owned by their task."""
+    import tempfile
+
+    check_cancelled()
+    stop = task_stop.get()
+    deadline = time.monotonic() + timeout_seconds
+    # Spool output to disk so a noisy command cannot exhaust process memory.
+    with tempfile.TemporaryFile() as output:
+        process = subprocess.Popen(
+            command, shell=True, stdout=output, stderr=subprocess.STDOUT,
+            cwd=working_directory(), env=_get_clean_env(), start_new_session=True,
+        )
+        reason = ""
+        try:
+            while process.poll() is None:
+                if stop is not None and stop.is_set():
+                    reason = "Task cancelled"
+                    break
+                if time.monotonic() >= deadline:
+                    reason = "Command timed out"
+                    break
+                time.sleep(0.05)
+        finally:
+            # A shell can exit while leaving descendants behind. Managed tasks
+            # do not support detached jobs; clean up the process group too.
+            with contextlib.suppress(ProcessLookupError):
+                if os.name == "posix":
+                    os.killpg(process.pid, signal.SIGKILL)
+                elif process.poll() is None:
+                    process.kill()
+            process.wait()
+        output.seek(0)
+        captured = output.read(MAX_OUTPUT_SIZE + 1)
+        text = captured[:MAX_OUTPUT_SIZE].decode("utf-8", errors="replace")
+        if len(captured) > MAX_OUTPUT_SIZE:
+            text += "\n... (output truncated)"
+        if reason:
+            return f"Error: {reason}\n{text}"
+        if process.returncode:
+            return f"Command exited with code {process.returncode}\n{text}"
+        return text or "Command completed successfully (no output)"
 
 
 def _run_foreground_blocking(command: str, timeout_seconds: int) -> str:

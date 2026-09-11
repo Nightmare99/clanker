@@ -123,6 +123,15 @@ class AgentSettings(BaseModel):
     name: str = "Clanker"
 
 
+class SubagentSettings(BaseModel):
+    """Bounds shared by managed subagent tasks."""
+
+    max_concurrent: int = Field(default=3, ge=1, le=16)
+    timeout_seconds: int = Field(default=900, ge=1, le=86400)
+    max_tokens: int = Field(default=200_000, ge=1)
+    repeated_failure_limit: int = Field(default=3, ge=2, le=20)
+
+
 class ToolSettings(BaseModel):
     """Per-category tool feature flags.
 
@@ -160,6 +169,7 @@ class Settings(BaseSettings):
 
     # Nested settings
     agent: AgentSettings = Field(default_factory=AgentSettings)
+    subagents: SubagentSettings = Field(default_factory=SubagentSettings)
     tools: ToolSettings = Field(default_factory=ToolSettings)
     safety: SafetySettings = Field(default_factory=SafetySettings)
     output: OutputSettings = Field(default_factory=OutputSettings)
@@ -227,6 +237,13 @@ class Settings(BaseSettings):
 agent:
   # Name used by the assistant across sessions
   name: Clanker
+
+# Managed subagent limits (per-task arguments can lower these)
+subagents:
+  max_concurrent: 3
+  timeout_seconds: 900
+  max_tokens: 200000
+  repeated_failure_limit: 3
 
 # Tool feature flags — disable categories you don't want the agent to use.
 # Core tools (file ops, shell, glob/grep) are always on.

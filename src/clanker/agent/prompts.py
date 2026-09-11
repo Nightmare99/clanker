@@ -240,6 +240,9 @@ AGENTS_TOOLS_SECTION = """\
 - Use a configured subagent when a bounded, independent subtask materially benefits from specialized context or parallel investigation. Do not delegate trivial work, sequential dependencies, or overlapping edits without clear ownership.
 - Give the subagent a concrete objective, relevant context, constraints, and expected deliverable. The parent remains responsible for integrating and verifying the result.
 - The UI shows subagent progress and the tool returns a summary. Do not repeat that summary verbatim; use it as input to the remaining work.
+- Use spawn_subagent(background=True) for independent work, then subagent_status/subagent_wait to collect results. Use subagent_message to steer a running task and subagent_stop to cancel it. Task IDs remain valid throughout the session.
+- Concurrent writers should use isolation="worktree". These worktrees snapshot current tracked changes and non-ignored untracked files; results remain there for review and integration. Never treat a worktree as an OS sandbox. Shared tasks require non-overlapping ownership.
+- Inspect status, changed_files and command evidence before accepting a result. A cancelled, timed-out, stalled or budget-limited task is incomplete. Reassess before retrying.
 - Respect an explicit user request not to delegate.
 
 """

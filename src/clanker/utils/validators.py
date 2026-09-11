@@ -3,6 +3,8 @@
 import re
 from pathlib import Path
 
+from clanker.execution import working_directory
+
 
 def validate_file_path(path: str) -> Path:
     """
@@ -27,7 +29,10 @@ def validate_file_path(path: str) -> Path:
         raise ValueError("Path contains only invalid characters")
 
     try:
-        return Path(cleaned).expanduser().resolve()
+        candidate = Path(cleaned).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path(working_directory()) / candidate
+        return candidate.resolve()
     except (OSError, RuntimeError) as e:
         raise ValueError(f"Invalid path '{path}': {e}") from e
 

@@ -1,12 +1,16 @@
 """File operation tools for reading, writing, and editing files."""
 
 import base64
+import io
 from itertools import islice
 from pathlib import Path
+from typing import TextIO
 
 from langchain.tools import tool
 
+from clanker.changes import active_journal
 from clanker.config import get_settings
+from clanker.execution import check_cancelled
 from clanker.logging import get_logger
 from clanker.utils.sandbox import is_path_safe
 from clanker.utils.validators import validate_file_path
@@ -283,6 +287,7 @@ def _validate_path(path: str, *, for_write: bool = False) -> Path:
     """Validate and optionally safety-check a filesystem path."""
     p = validate_file_path(path)
     if for_write:
+        check_cancelled()
         ok, reason = is_path_safe(str(p), for_write=True)
         if not ok:
             raise ValueError(reason)
@@ -354,8 +359,16 @@ def read_file(
     # Handle regular text files
     lines_out = []
     total_read = 0
+    source: TextIO
     try:
-        with open(path, encoding="utf-8", errors="replace") as f:
+        journal = active_journal.get()
+        if journal is not None:
+            snapshot = path.read_bytes()
+            journal.observe(path, snapshot)
+            source = io.StringIO(snapshot.decode("utf-8", errors="replace"))
+        else:
+            source = open(path, encoding="utf-8", errors="replace")
+        with source as f:
             for idx, line in enumerate(islice(f, offset, offset + limit), start=offset + 1):
                 total_read += 1
                 if len(line) > MAX_LINE_LENGTH:
@@ -387,12 +400,16 @@ def write_file(file_path: str, content: str) -> dict:
         return {"ok": False, "error": str(e)}
 
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
+        journal = active_journal.get()
+        if journal is not None:
+            journal.write(path, content.encode("utf-8"))
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
         logger.info("Successfully wrote %d bytes to %s", len(content), file_path)
         return {"ok": True, "path": file_path, "bytes": len(content)}
-    except OSError as e:
+    except (OSError, ValueError) as e:
         logger.error("Error writing file %s: %s", file_path, e)
         return {"ok": False, "error": f"Error writing file: {e}"}
 
@@ -408,12 +425,16 @@ def append_file(file_path: str, content: str) -> dict:
         return {"ok": False, "error": str(e)}
 
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(content)
+        journal = active_journal.get()
+        if journal is not None:
+            journal.write(path, content.encode("utf-8"), append=True)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(content)
         logger.info("Successfully appended %d bytes to %s", len(content), file_path)
         return {"ok": True, "path": file_path, "bytes": len(content)}
-    except OSError as e:
+    except (OSError, ValueError) as e:
         logger.error("Error appending to file %s: %s", file_path, e)
         return {"ok": False, "error": f"Error appending file: {e}"}
 
@@ -434,8 +455,9 @@ def edit_file(file_path: str, old_string: str, new_string: str, preview: bool = 
         return {"ok": False, "error": "File not found", "path": file_path}
 
     try:
-        content = path.read_text(encoding="utf-8", errors="replace")
-    except OSError as e:
+        original = path.read_bytes()
+        content = original.decode("utf-8")
+    except (OSError, UnicodeError) as e:
         logger.error("Error reading file for edit %s: %s", file_path, e)
         return {"ok": False, "error": f"Error reading file: {e}"}
 
@@ -459,10 +481,14 @@ def edit_file(file_path: str, old_string: str, new_string: str, preview: bool = 
         }
 
     try:
-        path.write_text(new_content, encoding="utf-8")
+        journal = active_journal.get()
+        if journal is not None:
+            journal.write(path, new_content.encode("utf-8"), expected=original)
+        else:
+            path.write_text(new_content, encoding="utf-8")
         logger.info("Successfully edited %s", file_path)
         return {"ok": True, "path": file_path}
-    except OSError as e:
+    except (OSError, ValueError) as e:
         logger.error("Error writing edited file %s: %s", file_path, e)
         return {"ok": False, "error": f"Error writing file: {e}"}
 
@@ -515,7 +541,10 @@ def read_project_instructions(working_directory: str) -> dict:
         working_directory: The project's working directory to check for AGENTS.md
     """
     logger.info("Checking for AGENTS.md in: %s", working_directory)
-    agents_path = Path(working_directory) / "AGENTS.md"
+    try:
+        agents_path = validate_file_path(working_directory) / "AGENTS.md"
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
 
     if not agents_path.exists():
         logger.debug("No AGENTS.md found in %s", working_directory)

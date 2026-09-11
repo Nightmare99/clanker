@@ -7,10 +7,9 @@ context along with the skill's directory path (so it can read bundled files with
 read_file and run bundled scripts with execute_shell).
 """
 
-import os
-
 from langchain_core.tools import tool
 
+from clanker.execution import working_directory
 from clanker.logging import get_logger
 from clanker.skills import MAX_SKILL_BODY_CHARS, list_skills
 from clanker.skills import load_skill as _load_skill
@@ -40,10 +39,10 @@ def load_skill(name: str) -> dict:
         and a usage note. On failure: a dict with ok=False, an error message,
         and the list of available skill names.
     """
-    skill = _load_skill(name, os.getcwd())
+    skill = _load_skill(name, working_directory())
 
     if skill is None:
-        available = sorted(list_skills(os.getcwd()).keys())
+        available = sorted(list_skills(working_directory()).keys())
         logger.info("load_skill: '%s' not found (available: %s)", name, available)
         return {
             "ok": False,

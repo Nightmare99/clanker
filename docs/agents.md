@@ -13,8 +13,8 @@ output. The main agent spawns an agent to delegate a subtask.
    agent calls `load_agent` to retrieve the agent's full configuration, then
    `spawn_subagent` to run it.
 3. **Isolated execution**: the subagent runs in its own thread with its own
-   event loop. Its full output streams live to the user terminal. The return
-   value to the parent agent is only a brief summary.
+   event loop. Progress and results appear in the F2 task panel. The parent
+   receives a task ID, status, a bounded report and command evidence.
 
 ## Output conciseness
 
@@ -24,17 +24,78 @@ This is backed by a hard limit: if a subagent's final response exceeds 800
 words, Clanker truncates it before returning it to the parent agent, writes
 the full untruncated text to a temporary file, and appends a note with the
 word count and file path so the parent (or you) can read the rest if needed.
-The full response still streams live to your terminal regardless — only what
-goes back to the parent agent's context is capped.
+The full response remains available in the F2 task panel.
 
 ## Progress and history
 
-While a subagent is running, its tool calls and progress are tracked and
-shown live. Press **F2** at any time to open the **Subagents** panel — a list
-of past and in-flight subagent runs for the session. Selecting a run shows
-its status, the prompt it was given, and a log of the tool calls it made
-(including diffs for file edits), so you can inspect what a subagent did
-without scrolling back through the full chat log.
+Press **F2** or use `/tasks` to inspect all tasks started in this session. Each
+entry shows its assignment, task ID, status, elapsed time, model, token budget,
+usage, cost, changed files from file tools, and tool history. Enter a follow-up
+and press **Send** to queue it for the next model boundary, or press **Stop** to
+cancel that task. Pending follow-ups remain visible, including messages that
+arrived too late to be consumed. Completed runs remain available across turns.
+
+Task questions and shell approvals appear inside the TUI, one at a time. They
+remain cancellable and count against the time budget. Without a TUI, a task
+that requires input returns `needs_input`; the parent can resolve it and start
+another task. Approval policy still applies to subagent shell commands.
+
+## Managed execution
+
+`spawn_subagent` still waits for completion by default. Set `background=True`
+to receive a task ID immediately and continue independent work. The parent can
+use these tools:
+
+| Tool | Purpose |
+|------|---------|
+| `subagent_status(task_id)` | Get progress, result, usage and command evidence; omit the ID to list tasks. |
+| `subagent_message(task_id, message)` | Queue follow-up instructions for a running task. |
+| `subagent_stop(task_id)` | Cancel a queued or running task. |
+| `subagent_wait(task_id, timeout_seconds=30)` | Wait up to 60 seconds and return current status. |
+
+The default concurrency limit is three tasks. Further tasks queue until a slot
+opens. Task IDs and results are in-memory and last for this process, not across
+restarts. `success` describes a completed execution, not independently verified
+correctness; the parent still reviews the result. Command evidence records
+executed shell commands and their outcomes, not an automatic test certification.
+
+Each task has time and token budgets. Optional `timeout_seconds` and `max_tokens`
+arguments can lower the configured limits. Token limits use provider-reported
+usage, are checked after each model response, and may overshoot by one response.
+Time limits start when a task leaves the queue. Repeated identical tool failures
+stop a task as `stalled`. Other incomplete states include `cancelled`, `timed_out`,
+`budget_exceeded`, `step_limit`, `needs_input` and `error`. Cancellation is
+cooperative: a task remains `stopping` until in-flight operations and cleanup
+return, including any worktree preparation already in progress.
+
+Managed tasks cannot spawn nested agents or use detached background-job tools.
+Their `execute_shell` commands stay attached to the task, use its working
+directory, and are stopped on cancellation or timeout. Process-group cleanup
+is supported on POSIX; Windows currently terminates the direct shell process.
+
+### Separate worktrees for writers
+
+Set `isolation="worktree"` when delegating concurrent edits. Clanker creates a
+separate detached Git worktree and copies the current tracked changes plus
+non-ignored untracked files. Ignored dependencies/configuration are not copied,
+and untracked symlinks are rejected. A repository with an existing commit is
+required. The task's working directory is returned in its result.
+
+The worktree is retained for review and recovery, including after cancellation.
+The parent must inspect and integrate the changes; nothing is automatically
+merged into the original workspace. Worktrees isolate ordinary relative file
+edits and command working directories, not OS permissions or absolute paths.
+Use `isolation="shared"` (the default) only for non-overlapping work.
+
+Configure limits in `~/.clanker/config.yaml`:
+
+```yaml
+subagents:
+  max_concurrent: 3
+  timeout_seconds: 900
+  max_tokens: 200000
+  repeated_failure_limit: 3
+```
 
 ## Locations
 
@@ -123,7 +184,7 @@ and spawns it:
   > load_agent: code-explorer
   > spawn_subagent: code-explorer
   ┌─ Agent 'code-explorer' started
-  > [subagent streams its analysis live]
+  > [inspect progress and results with F2]
   └─ Agent 'code-explorer' completed
 ```
 
@@ -145,7 +206,7 @@ You can inspect agent configuration by having the agent call `load_agent`:
 | **Format** | A single `.md` file | A directory with `SKILL.md` + files | A single `.md` file with frontmatter |
 | **Execution** | Prompt injected into main agent | Main agent follows instructions | Independent subagent with own prompt |
 | **In context** | Whole file injected | Only name + description, until loaded | Only name + description, until spawned |
-| **Output** | Main agent responds | Main agent responds | Subagent streams live, parent gets summary |
+| **Output** | Main agent responds | Main agent responds | Task panel shows progress; parent gets structured result |
 | **Best for** | Repeatable prompts you invoke | Procedures the agent follows | Delegating subtasks to a specialist |
 
 Use a **workflow** when you want a canned prompt you fire deliberately. Use a
@@ -166,7 +227,7 @@ The agent will only have access to the named tools. Tool names must match the
 
 ## Disabling subagents
 
-Subagent tools (`load_agent`, `spawn_subagent`) can be disabled via the
+Subagent tools (`load_agent`, `spawn_subagent`, and `subagent_*`) can be disabled via the
 `subagents` flag in `~/.clanker/config.yaml`:
 
 ```yaml
@@ -174,7 +235,7 @@ tools:
   subagents: false
 ```
 
-When disabled, the agent won't have access to `load_agent` or `spawn_subagent`,
+When disabled, the agent won't have access to any subagent tools,
 and the agents catalog won't be injected into the system prompt.
 
 See [Configuration → Tool Feature Flags](configuration.md#tool-feature-flags) for

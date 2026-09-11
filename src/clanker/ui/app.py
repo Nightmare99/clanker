@@ -15,15 +15,17 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import Input, Label, Static
 
+from clanker.changes import ChangeJournal, active_journal, change_turn
+from clanker.ui.changes_panel import ChangesScreen
 from clanker.ui.chat_log import ChatLog, MessageType
 from clanker.ui.clipboard_image import (
     ClipboardImage,
     clipboard_image_tool_available,
     read_clipboard_image,
 )
-from clanker.ui.status_bar import StatusBar
 from clanker.ui.completion_menu import CompletionMenu
 from clanker.ui.history_modal import HistoryScreen
+from clanker.ui.status_bar import StatusBar
 from clanker.ui.subagent_history import SubagentHistoryScreen, SubagentRun
 
 if TYPE_CHECKING:
@@ -44,6 +46,7 @@ _CLNKR_ART = r"""
 _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
 _SLASH_COMMANDS = [
+    "/changes", "/tasks",
     "/clear", "/compact", "/config", "/copilot-login", "/exit", "/forget",
     "/help", "/history", "/list_memories", "/logs", "/memories", "/model",
     "/mcp", "/remember", "/restore", "/skill", "/workflow",
@@ -666,6 +669,7 @@ class ClankerApp(App):
         Binding("ctrl+d", "quit", "Quit", show=True),
         Binding("f2", "show_subagents", "Subagents", show=True),
         Binding("f3", "show_history", "History", show=True),
+        Binding("f4", "show_changes", "Changes", show=True),
     ]
 
     def __init__(
@@ -683,9 +687,10 @@ class ClankerApp(App):
         self._processing = False
         self._input_history: list[str] = self._load_history()
         self._input_queue: asyncio.Queue[str] = asyncio.Queue()
-        # Subagent runs from the current (or most recently completed) turn —
-        # reset when a new turn starts, so F2 always shows "this turn's" runs.
+        # Retain task history for the session, including tasks still running
+        # when the parent starts a new turn.
         self._subagent_runs: list[SubagentRun] = []
+        self._change_journal = ChangeJournal()
 
     def _load_history(self) -> list[str]:
         """Load input history from file across sessions."""
@@ -714,6 +719,7 @@ class ClankerApp(App):
         yield TodoPanel(id="todo-panel")
         yield PromptBar(id="prompt-bar")
         yield CompletionMenu(_SLASH_COMMANDS)
+        yield Static("F2 Tasks   F3 History   F4 Changes   Ctrl+C Stop / Copy", id="workspace-shortcuts")
 
     def on_mount(self) -> None:
         prompt_input = self.query_one("#prompt-input", PromptInput)
@@ -808,13 +814,20 @@ class ClankerApp(App):
             self.action_interrupt()
 
     def action_interrupt(self) -> None:
+        from clanker.tools.subagent import stop_task
         from clanker.ui.streaming import _cancel_streaming_task
 
+        for run in self._subagent_runs:
+            stop_task(run.task_id)
         self.interrupt_requested = True
         self._interrupt_event.set()
         _cancel_streaming_task()
 
     def action_quit(self) -> None:
+        from clanker.tools.subagent import stop_task
+
+        for run in self._subagent_runs:
+            stop_task(run.task_id)
         self._save_history()
         self.exit()
 
@@ -826,6 +839,22 @@ class ClankerApp(App):
     def action_show_history(self) -> None:
         self.push_screen(HistoryScreen(self._conversation_messages))
 
+    def action_show_changes(self) -> None:
+        self.push_screen(ChangesScreen(
+            self._change_journal, getattr(self, "_working_dir", str(Path.cwd())),
+            is_busy=lambda: self._processing or any(r.status in ("queued", "running", "waiting", "stopping") for r in self._subagent_runs),
+            on_undo=self._record_undo,
+        ))
+
+    def _record_undo(self, ids: tuple[int, ...]) -> None:
+        from langchain_core.messages import HumanMessage
+
+        paths = sorted({str(c.path) for c in self._change_journal.snapshot() if c.id in ids})
+        message = HumanMessage(content=f"I used the Changes panel to undo edits to these files: {paths}. Re-read them before continuing.")
+        self._conversation_messages.append(message)
+        self._pending_restore_messages.append(message)
+        self._session_manager.save_conversation_snapshot(self._conversation_messages)
+
     def register_subagent_run(self, run: SubagentRun) -> None:
         """Track a newly spawned subagent run and refresh the status bar hint."""
         self._subagent_runs.append(run)
@@ -834,7 +863,7 @@ class ClankerApp(App):
     def refresh_subagent_hint(self) -> None:
         """Update the status bar's subagent count/running indicator."""
         try:
-            running = sum(1 for r in self._subagent_runs if r.status == "running")
+            running = sum(1 for r in self._subagent_runs if r.status in ("queued", "running", "waiting", "stopping"))
             self.get_status_bar().set_subagent_runs(running, len(self._subagent_runs))
         except Exception:
             pass
@@ -852,6 +881,7 @@ class ClankerApp(App):
         output_tokens: int,
         cache_read_tokens: int = 0,
         cache_creation_tokens: int = 0,
+        cost_usd: float | None = None,
     ) -> None:
         """Accumulate subagent tokens and cost into the session tracker.
 
@@ -864,7 +894,9 @@ class ClankerApp(App):
 
             token_tracker = self._token_tracker
             cm = get_default_model()
-            if cm:
+            if cost_usd is not None:
+                turn_cost = cost_usd
+            elif cm:
                 turn_cost = cm.compute_cost(
                     input_tokens,
                     output_tokens,
@@ -970,6 +1002,13 @@ class ClankerApp(App):
         if not text.startswith("/"):
             return None
 
+        if text.strip().lower() == "/changes":
+            self.action_show_changes()
+            return "skip"
+        if text.strip().lower() == "/tasks":
+            self.action_show_subagents()
+            return "skip"
+
         if text.strip().lower() == "/copilot-login":
             # Runs in a background worker instead of through handle_command's
             # blocking poll loop -- that loop runs on the same thread as the
@@ -1035,7 +1074,6 @@ class ClankerApp(App):
         from clanker.ui.streaming import stream_agent_response_async
 
         self.reset_interrupt()
-        self._subagent_runs = []
         self.refresh_subagent_hint()
 
         logger = get_logger("tui")
@@ -1067,6 +1105,8 @@ class ClankerApp(App):
 
         console._textual_app = self
 
+        journal_token = active_journal.set(self._change_journal)
+        turn_token = change_turn.set(self._change_journal.begin_turn())
         try:
             logger.info("Processing user message: %s", user_input[:100])
 
@@ -1132,6 +1172,8 @@ class ClankerApp(App):
             logger.exception("Agent error: %s", e)
             chat_log.add_message(f"Agent error: {e}", MessageType.ERROR)
         finally:
+            active_journal.reset(journal_token)
+            change_turn.reset(turn_token)
             self._set_processing(False)
 
     # --- Copilot device-code login ---

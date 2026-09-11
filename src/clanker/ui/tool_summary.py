@@ -56,6 +56,16 @@ def compact_result_summary(
 
     parsed = parse_tool_json(result)
 
+    if parsed and (tool_name == "spawn_subagent" or tool_name.startswith("subagent_")):
+        if "status" in parsed:
+            return truncate(f"{parsed.get('agent', 'task')} · {parsed['status']} · {parsed.get('task_id', '')}", max_chars)
+        if "tasks" in parsed:
+            return f"{len(parsed['tasks'])} tasks"
+        if "message" in parsed:
+            return truncate(str(parsed["message"]), max_chars)
+        if tool_name == "subagent_stop":
+            return "stop requested" if parsed.get("success") else "task not running"
+
     if tool_name in ("write_file", "append_file"):
         # Diff is shown inline; just confirm with line count if available
         if parsed and parsed.get("ok"):
@@ -251,6 +261,8 @@ def is_failed_tool_result(result: str, tool_name: str, tool_input: dict | None) 
     if tool_name in ("bash", "execute_shell") and result.startswith("Command exited with code"):
         return True
     parsed = parse_tool_json(result)
+    if parsed and "task_id" in parsed and "status" in parsed:
+        return parsed["status"] not in ("queued", "running", "waiting", "stopping", "success")
     return bool(parsed is not None and parsed.get("ok") is False)
 
 

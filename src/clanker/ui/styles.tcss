@@ -5,6 +5,12 @@ Screen {
     color: rgb(200, 200, 200);
 }
 
+#workspace-shortcuts {
+    height: 1;
+    color: rgb(140,140,140);
+    padding: 0 1;
+}
+
 /* === Chat Log === */
 ChatLog {
     width: 100%;

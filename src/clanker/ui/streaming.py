@@ -10,10 +10,15 @@ import os
 import signal
 import sys
 import threading
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager, nullcontext, suppress
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from clanker.ui.console import Console
 
 from clanker.config import Settings
+from clanker.execution import task_stop
 from clanker.logging import get_logger
 from clanker.runtime import is_yolo_mode
 from clanker.tools.ask_tools import get_ask_callback, set_ask_callback
@@ -29,7 +34,7 @@ from clanker.ui.tool_display import ToolDisplayHandler, normalize_tool_output
 _local_state = threading.local()
 
 
-def get_active_console():
+def get_active_console() -> "Console":
     """Get the currently active Console wrapper instance, or a default one."""
     if getattr(_local_state, "active_console", None) is not None:
         return _local_state.active_console
@@ -52,6 +57,9 @@ def _cancel_streaming_task() -> None:
     """Signal that the current streaming task should stop."""
     global _interrupted
     _interrupted = True
+    from clanker.tools.subagent import _stop_all
+
+    _stop_all()
 
 
 def reset_interrupted() -> None:
@@ -178,6 +186,7 @@ class StreamResult:
     cumulative_cache_creation_tokens: int = 0
     model_name: str = ""
     summarization_occurred: bool = False
+    status: str = "success"
 
     @property
     def total_tokens(self) -> int:
@@ -288,6 +297,7 @@ async def stream_agent_response_async(
     progress_callback=None,
     model_name: str | None = None,
     input_queue: "asyncio.Queue[str] | None" = None,
+    event_callback=None,
 ) -> StreamResult:
     """Async handler for streaming agent response."""
     from langgraph.errors import GraphRecursionError
@@ -539,7 +549,7 @@ async def stream_agent_response_async(
         _pending_restart_state = None
         while True:
             _pending_restart_state = None
-            with _suppress_subprocess_stderr():
+            with (_suppress_subprocess_stderr() if task_stop.get() is None else nullcontext()):
                 async for event in graph.astream_events(
                     state, config=stream_config, version="v2"
                 ):
@@ -557,8 +567,10 @@ async def stream_agent_response_async(
                         _pending_notifies.clear()
 
                     event_type = event.get("event", "")
+                    if event_callback is not None:
+                        event_callback(event)
 
-                    if _interrupted:
+                    if _interrupted and task_stop.get() is None:
                         _stop_loading()
                         tool_handler.finalize_live()
                         if textual_app:
@@ -572,6 +584,7 @@ async def stream_agent_response_async(
                                 pass
                         return StreamResult(
                             response=current_response,
+                            status="cancelled",
                             input_tokens=last_input_tokens,
                             output_tokens=last_output_tokens,
                             cache_read_tokens=last_cache_read_tokens,
@@ -961,6 +974,7 @@ async def stream_agent_response_async(
                 )
         return StreamResult(
             response="",
+            status="cancelled",
             input_tokens=last_input_tokens,
             output_tokens=last_output_tokens,
             cache_read_tokens=last_cache_read_tokens,
@@ -986,6 +1000,7 @@ async def stream_agent_response_async(
                 )
         return StreamResult(
             response=current_response,
+            status="step_limit",
             input_tokens=last_input_tokens,
             output_tokens=last_output_tokens,
             cache_read_tokens=last_cache_read_tokens,
@@ -1007,6 +1022,7 @@ async def stream_agent_response_async(
                 )
         return StreamResult(
             response=current_response,
+            status="cancelled",
             input_tokens=last_input_tokens,
             output_tokens=last_output_tokens,
             cache_read_tokens=last_cache_read_tokens,
@@ -1036,6 +1052,7 @@ async def stream_agent_response_async(
                 )
         return StreamResult(
             response=current_response,
+            status="error",
             input_tokens=last_input_tokens,
             output_tokens=last_output_tokens,
             cache_read_tokens=last_cache_read_tokens,

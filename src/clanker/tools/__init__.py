@@ -22,7 +22,13 @@ from clanker.tools.memory_tools import forget, list_memories, recall, remember
 from clanker.tools.notify_tools import notify
 from clanker.tools.search_tools import glob_search, grep_search
 from clanker.tools.skill_tools import load_skill
-from clanker.tools.subagent import spawn_subagent
+from clanker.tools.subagent import (
+    spawn_subagent,
+    subagent_message,
+    subagent_status,
+    subagent_stop,
+    subagent_wait,
+)
 from clanker.tools.todo_tools import todo_read, todo_write
 from clanker.tools.web_tools import web_read, web_search
 
@@ -62,6 +68,10 @@ ALL_TOOLS = [
     web_read,
     # Subagent tools
     spawn_subagent,
+    subagent_status,
+    subagent_message,
+    subagent_stop,
+    subagent_wait,
 ]
 
 
@@ -82,7 +92,7 @@ def get_tools() -> list:
     if not settings.tools.skills:
         excluded.append(load_skill)
     if not settings.tools.subagents:
-        excluded.extend([load_agent, spawn_subagent])
+        excluded.extend([load_agent, spawn_subagent, subagent_status, subagent_message, subagent_stop, subagent_wait])
     if not settings.tools.communication:
         excluded.extend([notify, ask_user])
     if not settings.tools.todo:
@@ -122,4 +132,8 @@ __all__ = [
     "web_search",
     "web_read",
     "spawn_subagent",
+    "subagent_status",
+    "subagent_message",
+    "subagent_stop",
+    "subagent_wait",
 ]

@@ -54,7 +54,8 @@ async def test_spawn_subagent_success() -> None:
 
         mock_stream.assert_called_once()
         kwargs = mock_stream.call_args[1]
-        assert kwargs["checkpointer"] is None
+        # Follow-ups restart the stream at a model boundary; keep its history.
+        assert kwargs["checkpointer"] is not None
         # System prompt should include the conciseness instructions appended
         assert kwargs["system_prompt"].startswith("You are a test helper agent")
         assert "Output conciseness" in kwargs["system_prompt"]

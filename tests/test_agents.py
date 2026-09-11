@@ -326,7 +326,7 @@ class TestLoadAgentTool:
             "---\nname: reviewer\ndescription: Reviews code.\ntools: [read_file]\n---\nYou review code."
         )
 
-        with patch("clanker.tools.agent_tools.os.getcwd", return_value=str(tmp_path)):
+        with patch("clanker.tools.agent_tools.working_directory", return_value=str(tmp_path)):
             result = load_agent_tool.invoke({"name": "reviewer"})
 
         assert result["ok"] is True
@@ -335,7 +335,7 @@ class TestLoadAgentTool:
         assert result["tools"] == ["read_file"]
 
     def test_load_agent_tool_not_found(self, tmp_path: Path) -> None:
-        with patch("clanker.tools.agent_tools.os.getcwd", return_value=str(tmp_path)):
+        with patch("clanker.tools.agent_tools.working_directory", return_value=str(tmp_path)):
             result = load_agent_tool.invoke({"name": "nonexistent"})
 
         assert result["ok"] is False

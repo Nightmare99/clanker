@@ -26,6 +26,10 @@ The agent has access to these built-in tools:
 | `load_skill` | Skills | Load instructions for a skill |
 | `load_agent` | Subagents | Load configuration for an agent |
 | `spawn_subagent` | Subagents | Spawn a configured subagent to handle a subtask |
+| `subagent_status` | Subagents | Inspect task status, result and budgets |
+| `subagent_message` | Subagents | Send a follow-up to a running task |
+| `subagent_stop` | Subagents | Cancel a task and its owned shell command |
+| `subagent_wait` | Subagents | Wait briefly for a task result |
 | `notify` | Communication | Send an immediate status update to the user |
 | `ask_user` | Communication | Ask the user a multiple-choice question mid-task |
 
@@ -41,7 +45,7 @@ web configuration UI (`clanker config`).
 | Web Browsing | `web_browsing` | `web_search`, `web_read` | Enabled |
 | Memory | `memory` | `remember`, `recall`, `forget`, `list_memories` | Enabled |
 | Skills | `skills` | `load_skill` | Enabled |
-| Subagents | `subagents` | `load_agent`, `spawn_subagent` | Enabled |
+| Subagents | `subagents` | `load_agent`, `spawn_subagent`, `subagent_status`, `subagent_message`, `subagent_stop`, `subagent_wait` | Enabled |
 | Communication | `communication` | `notify`, `ask_user` | Enabled |
 
 **Core tools** cannot be disabled — the agent requires them to function. All other

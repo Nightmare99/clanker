@@ -45,6 +45,12 @@ def select_options(
     Returns:
         ``{"selected": list[str], "cancelled": bool}``.
     """
+    from clanker.execution import task_interaction
+
+    handler = task_interaction.get()
+    if handler is not None:
+        return handler(question, options, multi_select=multi_select,
+                       allow_other=allow_other, allow_cancel=allow_cancel, preface=preface)
     if _stdin_is_interactive():
         try:
             return _select_interactive(

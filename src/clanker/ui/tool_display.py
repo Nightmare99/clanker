@@ -504,6 +504,10 @@ def normalize_tool_output(output) -> str:
 
     # Handle dict results - preserve full JSON for tool result handlers
     if isinstance(output, dict):
+        # Managed task results retain their ID, state and evidence. A queued
+        # task is not a failed task, and completion is not always success.
+        if "task_id" in output or "tasks" in output:
+            return json.dumps(output, default=str)
         # load_agent success
         if output.get("ok") and "name" in output and "description" in output:
             name = output["name"]

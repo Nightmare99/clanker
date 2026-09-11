@@ -101,8 +101,28 @@ Models are configured in `~/.clanker/models.json` or via `clanker config`.
 | `Ctrl+D` | Quit Clanker. |
 | `Ctrl+V` / paste | Paste text or an image — see [Pasting](#pasting) below. |
 | `F2` | Open the **Subagents** panel — view past and in-flight subagent runs, their prompts, status, and tool call history for the session (see [Agents → Progress and history](agents.md#progress-and-history)). |
+| `F4` | Open **Changes**: review recorded file-tool edits and undo an edit or a turn with conflict checks. Also available as `/changes`. |
 | `F3` | Open the **History** panel — the full conversation so far, independent of how much the chat log has trimmed from view (see [TUI Performance](configuration.md#tui-performance)) and populated even after `/restore`, when the restored turns aren't replayed into the chat log. |
 | `Esc` | Cancel an open menu or approval prompt. |
+
+Use `/tasks` as an alternative to F2. Task history stays available for the entire
+session. The task panel supports follow-up messages and stopping an individual
+task; Ctrl+C without a selection stops the parent and its managed tasks.
+
+### Reviewing changes
+
+F4 lists each recorded edit with its file, turn and author. Select an edit to
+view its diff. Press `u` to undo that edit or `t` to undo its turn, then repeat
+the control to confirm. Undo is disabled while an agent is working and refuses
+to overwrite a file that no longer matches the recorded version. Older edits
+must be undone after newer edits to the same file. Pre-existing changes are
+preserved; undo does not reset Git's index.
+
+The journal covers `write_file`, `append_file`, and `edit_file` in the current
+TUI session, including managed subagent edits. Shell and MCP changes are not
+journaled. Closing Clanker clears the in-memory journal; conversation restore
+does not restore undo history. The agent is told which files you undo so it
+can re-read them on its next turn.
 
 Input history is persisted across sessions to `~/.clanker/input_history.txt`
 (last 500 entries).
