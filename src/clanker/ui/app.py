@@ -25,7 +25,8 @@ from clanker.ui.clipboard_image import (
 )
 from clanker.ui.completion_menu import CompletionMenu
 from clanker.ui.history_modal import HistoryScreen
-from clanker.ui.status_bar import StatusBar
+from clanker.ui.shortcut_help import ShortcutHelpScreen
+from clanker.ui.status_bar import StatusBar, WorkspaceStatus
 from clanker.ui.subagent_history import SubagentHistoryScreen, SubagentRun
 
 if TYPE_CHECKING:
@@ -667,6 +668,7 @@ class ClankerApp(App):
         # both would otherwise pre-empt this action with no user feedback.
         Binding("ctrl+c", "copy_or_interrupt", "Copy/Interrupt", show=True, priority=True),
         Binding("ctrl+d", "quit", "Quit", show=True),
+        Binding("f1", "show_shortcut_help", "Help", show=True),
         Binding("f2", "show_subagents", "Subagents", show=True),
         Binding("f3", "show_history", "History", show=True),
         Binding("f4", "show_changes", "Changes", show=True),
@@ -720,10 +722,13 @@ class ClankerApp(App):
             yield TodoPanel(id="todo-panel")
             yield PromptBar(id="prompt-bar")
         yield CompletionMenu(_SLASH_COMMANDS)
-        yield Static("F2 Tasks   F3 History   F4 Changes   Ctrl+C Stop / Copy", id="workspace-shortcuts")
+        yield WorkspaceStatus(id="workspace-shortcuts")
 
     def on_mount(self) -> None:
         self._refresh_selected_model()
+        bottom_status = self.query_one(WorkspaceStatus)
+        self.watch(self.get_status_bar(), "context_info", bottom_status.set_context)
+        self.watch(self.get_status_bar(), "loading_info", bottom_status.set_loading)
         prompt_input = self.query_one("#prompt-input", PromptInput)
         prompt_input.focus()
         prompt_input.set_history(self._input_history)
@@ -779,6 +784,9 @@ class ClankerApp(App):
 
     def get_status_bar(self) -> StatusBar:
         return self.query_one("#status-bar", StatusBar)
+
+    def action_show_shortcut_help(self) -> None:
+        self.push_screen(ShortcutHelpScreen())
 
     def _refresh_selected_model(self) -> None:
         from clanker.config import get_default_model

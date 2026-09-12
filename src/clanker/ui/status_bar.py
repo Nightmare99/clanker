@@ -1,4 +1,4 @@
-"""Status bar widget - shows model info, token usage, and context gauge."""
+"""Top session status and bottom context/loading status widgets."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇"
 
 
 class StatusBar(Horizontal):
-    """Top status bar showing tokens, context gauge, and selected model."""
+    """Top status bar showing tokens and selected model."""
 
     can_focus = False
 
@@ -40,11 +40,7 @@ class StatusBar(Horizontal):
 
     #status-tokens {
         color: rgb(100,100,100);
-    }
-
-    #status-context {
         width: 1fr;
-        text-align: right;
     }
 
     #status-subagents {
@@ -55,6 +51,7 @@ class StatusBar(Horizontal):
     model_name = reactive("")
     token_info = reactive("")
     context_info = reactive("")
+    loading_info = reactive("")
     subagent_info = reactive("")
 
     def __init__(self, *args, **kwargs) -> None:
@@ -75,12 +72,11 @@ class StatusBar(Horizontal):
     def compose(self) -> ComposeResult:
         yield Label("", id="status-subagents")
         yield Label("", id="status-tokens")
-        yield Label("", id="status-context")
         yield Label("", id="status-model", markup=False)
 
     def _update_visibility(self) -> None:
         has_content = bool(
-            self.model_name or self.token_info or self.context_info or self.subagent_info
+            self.model_name or self.token_info or self.subagent_info
         )
         if has_content:
             self.add_class("visible")
@@ -96,13 +92,6 @@ class StatusBar(Horizontal):
             self.query_one("#status-tokens", Label).update(f"  {value}")
         else:
             self.query_one("#status-tokens", Label).update("")
-        self._update_visibility()
-
-    def watch_context_info(self, value: str) -> None:
-        if value:
-            self.query_one("#status-context", Label).update(value)
-        else:
-            self.query_one("#status-context", Label).update("")
         self._update_visibility()
 
     def watch_subagent_info(self, value: str) -> None:
@@ -155,8 +144,42 @@ class StatusBar(Horizontal):
             self.context_info = ""
 
     def set_loading(self, message: str = "") -> None:
-        self.token_info = f"  {message}"
+        self.loading_info = message
 
     def clear(self) -> None:
-        self.token_info = ""
-        self.context_info = ""
+        """Stop the loading hint while retaining the last usage snapshot."""
+        self.loading_info = ""
+
+
+class WorkspaceStatus(Horizontal):
+    """One bottom line for help/loading on the left and context on the right."""
+
+    DEFAULT_CSS = """
+    WorkspaceStatus {
+        height: 1;
+        padding: 0 1;
+        color: rgb(140,140,140);
+    }
+    WorkspaceStatus #workspace-hint {
+        width: 1fr;
+        height: 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+    WorkspaceStatus #status-context {
+        width: auto;
+        height: 1;
+        margin-left: 2;
+        text-wrap: nowrap;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Label("F1 Help", id="workspace-hint", markup=False)
+        yield Label("", id="status-context")
+
+    def set_loading(self, message: str) -> None:
+        self.query_one("#workspace-hint", Label).update(message or "F1 Help")
+
+    def set_context(self, context: str) -> None:
+        self.query_one("#status-context", Label).update(context)
