@@ -11,7 +11,7 @@ _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇"
 
 
 class StatusBar(Horizontal):
-    """Bottom status bar showing model, tokens, and context gauge."""
+    """Top status bar showing tokens, context gauge, and selected model."""
 
     can_focus = False
 
@@ -33,6 +33,9 @@ class StatusBar(Horizontal):
     #status-model {
         color: rgb(0,240,240);
         text-style: bold;
+        max-width: 40%;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
 
     #status-tokens {
@@ -71,9 +74,9 @@ class StatusBar(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield Label("", id="status-subagents")
-        yield Label("", id="status-model")
         yield Label("", id="status-tokens")
         yield Label("", id="status-context")
+        yield Label("", id="status-model", markup=False)
 
     def _update_visibility(self) -> None:
         has_content = bool(
@@ -85,8 +88,7 @@ class StatusBar(Horizontal):
             self.remove_class("visible")
 
     def watch_model_name(self, value: str) -> None:
-        if value:
-            self.query_one("#status-model", Label).update(f"  {value}")
+        self.query_one("#status-model", Label).update(f"  {value}" if value else "")
         self._update_visibility()
 
     def watch_token_info(self, value: str) -> None:

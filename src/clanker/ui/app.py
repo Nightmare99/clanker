@@ -723,6 +723,7 @@ class ClankerApp(App):
         yield Static("F2 Tasks   F3 History   F4 Changes   Ctrl+C Stop / Copy", id="workspace-shortcuts")
 
     def on_mount(self) -> None:
+        self._refresh_selected_model()
         prompt_input = self.query_one("#prompt-input", PromptInput)
         prompt_input.focus()
         prompt_input.set_history(self._input_history)
@@ -778,6 +779,12 @@ class ClankerApp(App):
 
     def get_status_bar(self) -> StatusBar:
         return self.query_one("#status-bar", StatusBar)
+
+    def _refresh_selected_model(self) -> None:
+        from clanker.config import get_default_model
+
+        model = get_default_model()
+        self.get_status_bar().model_name = model.name if model else ""
 
     def get_todo_panel(self) -> TodoPanel:
         return self.query_one("#todo-panel", TodoPanel)
@@ -1051,6 +1058,7 @@ class ClankerApp(App):
         result = handle_command(
             text, console, session_manager, conversation_messages, chat_log
         )
+        self._refresh_selected_model()
         if result == "exit":
             return "exit"
         if result and result.startswith("restore:"):
