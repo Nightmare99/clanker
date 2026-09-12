@@ -11,6 +11,11 @@ Screen {
     padding: 0 1;
 }
 
+#input-area {
+    dock: bottom;
+    height: auto;
+}
+
 /* === Chat Log === */
 ChatLog {
     width: 100%;

@@ -12,7 +12,7 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, Label, Static
 
 from clanker.changes import ChangeJournal, active_journal, change_turn
@@ -526,7 +526,6 @@ class MessageQueue(Static):
 
     DEFAULT_CSS = """
     MessageQueue {
-        dock: bottom;
         background: black;
         color: rgb(150, 150, 150);
         padding: 0 1;
@@ -580,12 +579,13 @@ class TodoPanel(Static):
 
     DEFAULT_CSS = """
     TodoPanel {
-        dock: bottom;
         background: black;
         color: rgb(180, 180, 180);
         padding: 0 1;
         display: none;
         max-height: 10;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
     """
 
@@ -618,7 +618,6 @@ class PromptBar(Horizontal):
     DEFAULT_CSS = """
     PromptBar {
         height: 1;
-        dock: bottom;
         background: black;
         padding: 0;
     }
@@ -630,6 +629,7 @@ class PromptBar(Horizontal):
 
     PromptBar #prompt-input {
         width: 1fr;
+        height: 1;
         border: none;
         background: black;
         color: rgb(200, 200, 200);
@@ -715,9 +715,10 @@ class ClankerApp(App):
     def compose(self) -> ComposeResult:
         yield ChatLog(id="chat-log")
         yield StatusBar(id="status-bar")
-        yield MessageQueue(id="message-queue")
-        yield TodoPanel(id="todo-panel")
-        yield PromptBar(id="prompt-bar")
+        with Vertical(id="input-area"):
+            yield MessageQueue(id="message-queue")
+            yield TodoPanel(id="todo-panel")
+            yield PromptBar(id="prompt-bar")
         yield CompletionMenu(_SLASH_COMMANDS)
         yield Static("F2 Tasks   F3 History   F4 Changes   Ctrl+C Stop / Copy", id="workspace-shortcuts")
 
@@ -856,9 +857,29 @@ class ClankerApp(App):
         self._session_manager.save_conversation_snapshot(self._conversation_messages)
 
     def register_subagent_run(self, run: SubagentRun) -> None:
-        """Track a newly spawned subagent run and refresh the status bar hint."""
+        """Track a task with a normal tool row; keep its transcript in F2."""
+        from clanker.config import get_settings
+
         self._subagent_runs.append(run)
         self.refresh_subagent_hint()
+        if not get_settings().output.show_tool_calls:
+            return
+        chat_log = self.get_chat_log()
+
+        def label() -> str:
+            return f"{run.agent_name} · {run.task_id} · {run.status} · F2 details"
+
+        entry = chat_log.add_tool_start("spawn_subagent", label())
+
+        def refresh() -> None:
+            if entry.args != label():
+                chat_log.update_tool_progress(entry, label())
+                self.refresh_subagent_hint()
+            if run.status not in ("queued", "running", "waiting", "stopping"):
+                chat_log.update_tool_end(entry, "", success=run.status == "success")
+                timer.stop()
+
+        timer = self.set_interval(0.1, refresh)
 
     def refresh_subagent_hint(self) -> None:
         """Update the status bar's subagent count/running indicator."""

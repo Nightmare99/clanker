@@ -352,6 +352,7 @@ async def stream_agent_response_async(
     current_response = ""
     current_thinking = ""
     shown_tool_calls: set[str] = set()
+    subagent_run_ids: set[str] = set()
     current_model_run: str | None = None
     thinking_shown = False
     in_think_tag = False
@@ -553,6 +554,16 @@ async def stream_agent_response_async(
                 async for event in graph.astream_events(
                     state, config=stream_config, version="v2"
                 ):
+                    # LangChain may propagate child events through inherited
+                    # callbacks. Only the spawn itself belongs in this stream.
+                    if subagent_run_ids.intersection(event.get("parent_ids", [])):
+                        continue
+                    if (
+                        event.get("event") == "on_tool_start"
+                        and event.get("name", "").lower() == "spawn_subagent"
+                        and event.get("run_id")
+                    ):
+                        subagent_run_ids.add(event["run_id"])
                     # Flush buffered notify messages from callback
                     if _pending_notifies and textual_app:
                         try:
@@ -676,7 +687,18 @@ async def stream_agent_response_async(
                             _start_loading()
                             continue
                         elif tool_name_end.lower() == "spawn_subagent":
-                            # Rendering handled by spawn_subagent tool itself
+                            # Registered tasks own their lifecycle row, including
+                            # after a background spawn has returned to the model.
+                            # Validation failures have no registered task.
+                            if textual_app and settings.output.show_tool_calls:
+                                from clanker.ui.tool_summary import parse_tool_json
+
+                                output = normalize_tool_output(event.get("data", {}).get("output"))
+                                parsed = parse_tool_json(output)
+                                if not parsed or not parsed.get("task_id"):
+                                    textual_app.get_chat_log().add_tool_complete(
+                                        "spawn_subagent", "unable to start task", "", success=False
+                                    )
                             _start_loading()
                             continue
                         elif tool_name_end.lower() == "ask_user":

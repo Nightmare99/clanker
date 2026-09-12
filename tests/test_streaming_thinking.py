@@ -31,6 +31,41 @@ def _make_astream_events(events):
     return bound
 
 
+@pytest.mark.parametrize("show_tools", [True, False])
+async def test_spawn_descendants_never_enter_parent_transcript(show_tools):
+    from clanker.config.settings import Settings
+    from clanker.ui.streaming import stream_agent_response_async
+
+    events = [
+        {"event": "on_tool_start", "name": "spawn_subagent", "run_id": "spawn"},
+        {"event": "on_chat_model_start", "run_id": "child", "parent_ids": ["spawn"]},
+        {"event": "on_chat_model_stream", "parent_ids": ["spawn", "child"],
+         "data": {"chunk": _chunk("PRIVATE CHILD OUTPUT")}},
+        {"event": "on_tool_end", "name": "notify", "parent_ids": ["spawn"],
+         "data": {"output": {"ok": True, "message": "PRIVATE CHILD NOTIFY"}}},
+        {"event": "on_tool_end", "name": "spawn_subagent", "run_id": "spawn",
+         "data": {"output": {"task_id": "task", "status": "success", "response": "PRIVATE CHILD OUTPUT"}}},
+        {"event": "on_chat_model_start", "run_id": "parent"},
+        {"event": "on_chat_model_stream", "data": {"chunk": _chunk("Parent answer")}},
+    ]
+    graph = MagicMock()
+    graph.astream_events = _make_astream_events(events)
+    console = MagicMock()
+    settings = Settings()
+    settings.output.show_tool_calls = show_tools
+    with patch("clanker.agent.create_agent_graph_async", new_callable=AsyncMock,
+               return_value=(graph, None)), patch("clanker.ui.streaming._teardown_live_displays"), patch(
+        "clanker.ui.streaming._heal_orphaned_tool_calls", new_callable=AsyncMock
+    ):
+        result = await stream_agent_response_async(
+            settings=settings, checkpointer=None, state={"messages": []},
+            config={"configurable": {"thread_id": "parent"}}, console=console,
+        )
+    assert result.response == "Parent answer"
+    assert "PRIVATE CHILD" not in str(console._textual_app.get_chat_log.return_value.mock_calls)
+    console._textual_app.get_chat_log.return_value.add_tool_complete.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_intermediate_call_thinking_reaches_chat_log() -> None:
     """Thinking from a model call that leads into a tool call must not be dropped.

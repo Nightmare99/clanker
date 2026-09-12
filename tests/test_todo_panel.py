@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from textual.app import App, ComposeResult
 
 from clanker.ui.app import TodoPanel
@@ -70,3 +71,36 @@ async def test_panel_caps_visible_items_with_overflow_line() -> None:
         plain = panel.content.plain
         assert "item 0" in plain
         assert "+3 more" in plain
+
+
+@pytest.mark.parametrize("count,width", [(7, 100), (11, 50)])
+async def test_actual_app_keeps_counted_rows_above_prompt(count, width) -> None:
+    from clanker.ui.app import ClankerApp
+    from clanker.ui.console import Console
+
+    app = ClankerApp(Console())
+
+    async def no_hero(*args):
+        pass
+
+    app._play_hero = no_hero
+    async with app.run_test(size=(width, 30)) as pilot:
+        panel = app.get_todo_panel()
+        panel.set_todos([
+            {"content": f"item {i} " + "long label " * 12,
+             "status": "completed" if i < 4 else "pending"}
+            for i in range(count)
+        ])
+        app.get_message_queue().add_pending("Queued follow-up")
+        await pilot.pause()
+        rows = [strip.text for strip in app.screen._compositor.render_strips()]
+        screen = "\n".join(rows)
+        assert f"4/{count} done" in screen
+        for i in range(min(count, panel.MAX_VISIBLE_ITEMS)):
+            assert f"item {i} " in screen
+        if count > panel.MAX_VISIBLE_ITEMS:
+            assert "+3 more" in screen
+        assert "Queued follow-up" in screen
+        assert panel.region.bottom <= app.query_one("#prompt-bar").region.y
+        assert app.get_message_queue().region.bottom <= panel.region.y
+        assert app.get_prompt_input().region.height == 1

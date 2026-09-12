@@ -323,6 +323,52 @@ def test_task_status_rendering_preserves_pending_state():
     assert is_failed_tool_result(normalize_tool_output(payload), "subagent_wait", {})
 
 
+@pytest.mark.parametrize("status", ["success", "error", "cancelled", "timed_out", "budget_exceeded"])
+async def test_main_tui_shows_task_lifecycle_without_child_output(status):
+    from clanker.ui.app import ClankerApp
+    from clanker.ui.console import Console
+
+    app = ClankerApp(Console())
+
+    async def no_hero(*args):
+        pass
+
+    app._play_hero = no_hero
+    run = SubagentRun(agent_name="reviewer", prompt="Review code", status="queued")
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.register_subagent_run(run)
+        chat = app.get_chat_log()
+        entry, = chat._tool_entries.values()
+        assert entry.tool_name == "spawn_subagent"
+        for phase in ("queued", "running", "waiting", "stopping"):
+            run.status = phase
+            await pilot.pause(0.15)
+            assert phase in entry.args
+            assert entry.status == "running"
+            assert entry.spinner_timer is not None
+        run.response = "PRIVATE CHILD TRANSCRIPT"
+        run.error = "PRIVATE CHILD ERROR"
+        run.status = status
+        await pilot.pause(0.15)
+        assert status in entry.args
+        assert entry.status == ("success" if status == "success" else "error")
+        assert entry.spinner_timer is None
+        assert entry.result == ""
+        assert entry.output_widget is None
+        screen = "\n".join(strip.text for strip in app.screen._compositor.render_strips())
+        assert "spawn_subagent" in screen
+        assert "PRIVATE CHILD" not in screen
+        assert app._subagent_runs[0].response == "PRIVATE CHILD TRANSCRIPT"
+
+
+@pytest.mark.parametrize("tool", ["spawn_subagent", "subagent_wait", "subagent_status", "subagent_message"])
+@pytest.mark.parametrize("payload", ['PRIVATE CHILD OUTPUT', '{"message":"PRIVATE CHILD OUTPUT"}', '{"response":"PRIVATE CHILD OUTPUT"}'])
+def test_subagent_summary_never_falls_back_to_transcript(tool, payload):
+    from clanker.ui.tool_summary import compact_result_summary
+
+    assert "PRIVATE CHILD" not in compact_result_summary(payload, tool, {})
+
+
 @pytest.mark.asyncio
 async def test_budget_includes_worktree_preparation(managed):
     def prepare(root):

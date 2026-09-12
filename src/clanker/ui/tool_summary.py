@@ -56,15 +56,15 @@ def compact_result_summary(
 
     parsed = parse_tool_json(result)
 
-    if parsed and (tool_name == "spawn_subagent" or tool_name.startswith("subagent_")):
-        if "status" in parsed:
+    if tool_name == "spawn_subagent" or tool_name.startswith("subagent_"):
+        if parsed and "status" in parsed:
             return truncate(f"{parsed.get('agent', 'task')} · {parsed['status']} · {parsed.get('task_id', '')}", max_chars)
-        if "tasks" in parsed:
+        if parsed and isinstance(parsed.get("tasks"), list):
             return f"{len(parsed['tasks'])} tasks"
-        if "message" in parsed:
-            return truncate(str(parsed["message"]), max_chars)
         if tool_name == "subagent_stop":
-            return "stop requested" if parsed.get("success") else "task not running"
+            return "stop requested" if parsed and parsed.get("success") else "task not running"
+        # Never fall back to a child response, error, or legacy transcript.
+        return "task details available in F2"
 
     if tool_name in ("write_file", "append_file"):
         # Diff is shown inline; just confirm with line count if available
