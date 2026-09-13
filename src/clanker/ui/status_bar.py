@@ -134,7 +134,7 @@ class StatusBar(Horizontal):
             elif remaining > 20:
                 style = "rgb(255,220,60)"
             else:
-                style = "rgb(255,80,80)"
+                style = "rgb(255,105,180)"
             bar_width = 16
             filled = int(round(remaining / 100.0 * bar_width))
             filled = max(0, min(bar_width, filled))

@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import itertools
+import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -13,7 +15,8 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Input, Label, Static
+from textual.theme import Theme
+from textual.widgets import Input, Label, Static, TextArea
 
 from clanker.changes import ChangeJournal, active_journal, change_turn
 from clanker.ui.changes_panel import ChangesScreen
@@ -25,6 +28,8 @@ from clanker.ui.clipboard_image import (
 )
 from clanker.ui.completion_menu import CompletionMenu
 from clanker.ui.history_modal import HistoryScreen
+from clanker.ui.message_composer import MessageComposer
+from clanker.ui.prompt_history import PromptDraft
 from clanker.ui.shortcut_help import ShortcutHelpScreen
 from clanker.ui.status_bar import StatusBar, WorkspaceStatus
 from clanker.ui.subagent_history import SubagentHistoryScreen, SubagentRun
@@ -108,9 +113,9 @@ class PromptInput(Input):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._history: list[str] = []
+        self._history: list[PromptDraft] = []
         self._history_index: int = -1
-        self._saved_input: str = ""
+        self._saved_input = PromptDraft()
         self._completion_menu: CompletionMenu | None = None
         self._menu_active = False
         # True once the user has explicitly taken keyboard control of the menu
@@ -139,9 +144,9 @@ class PromptInput(Input):
     def set_completion_menu(self, menu: CompletionMenu) -> None:
         self._completion_menu = menu
 
-    def set_history(self, history: list[str]) -> None:
+    def set_history(self, history: list[PromptDraft | str]) -> None:
         """Set app-scoped history (loaded from file)."""
-        self._history = list(history)
+        self._history = [item if isinstance(item, PromptDraft) else PromptDraft(item) for item in history]
         self._history_index = -1
 
     def set_history_add_callback(self, callback: callable) -> None:
@@ -497,29 +502,40 @@ class PromptInput(Input):
         self._hide_menu()
         if direction < 0:
             if self._history_index == -1:
-                self._saved_input = self.value
+                self._saved_input = self.snapshot_draft()
             next_idx = self._history_index + 1
             if next_idx < len(self._history):
                 self._history_index = next_idx
-                self.value = self._history[len(self._history) - 1 - self._history_index]
-                self.cursor_position = len(self.value)
+                self.restore_draft(self._history[len(self._history) - 1 - self._history_index])
         else:
             if self._history_index <= 0:
                 self._history_index = -1
-                self.value = self._saved_input
-                self._saved_input = ""
-                self.cursor_position = len(self.value)
+                self.restore_draft(self._saved_input)
+                self._saved_input = PromptDraft()
                 return
             self._history_index -= 1
-            self.value = self._history[len(self._history) - 1 - self._history_index]
-            self.cursor_position = len(self.value)
+            self.restore_draft(self._history[len(self._history) - 1 - self._history_index])
+
+    def snapshot_draft(self) -> PromptDraft:
+        return PromptDraft(self.value, list(self._pending_pastes), list(self._pending_images))
+
+    def restore_draft(self, draft: PromptDraft) -> None:
+        self.value = draft.text
+        self._pending_pastes = list(draft.pastes)
+        self._pending_images = list(draft.images)
+        self._image_counter = max(
+            (int(n) for n in re.findall(r"\[Image #(\d+)\]", draft.expanded_text())), default=0
+        )
+        self.cursor_position = len(self.value)
 
     def add_to_history(self, text: str) -> None:
         if text.strip():
-            self._history.append(text.strip())
+            draft = self.snapshot_draft()
+            draft.text = text.strip()
+            self._history.append(draft)
             self._history_index = -1
             if self._on_history_add:
-                self._on_history_add(text.strip())
+                self._on_history_add(draft)
 
 
 class MessageQueue(Static):
@@ -669,6 +685,7 @@ class ClankerApp(App):
         Binding("ctrl+c", "copy_or_interrupt", "Copy/Interrupt", show=True, priority=True),
         Binding("ctrl+d", "quit", "Quit", show=True),
         Binding("f1", "show_shortcut_help", "Help", show=True),
+        Binding("ctrl+up,f5", "compose_message", "Multiline message", show=True),
         Binding("f2", "show_subagents", "Subagents", show=True),
         Binding("f3", "show_history", "History", show=True),
         Binding("f4", "show_changes", "Changes", show=True),
@@ -682,35 +699,46 @@ class ClankerApp(App):
     ) -> None:
         super().__init__()
         self.clanker_console = console
+        self.register_theme(Theme(
+            name="clanker", primary="#b4ff3c", secondary="#00f0f0",
+            accent="#b4ff3c", success="#b4ff3c", error="#ff69b4",
+            warning="#ffdc3c", background="#000000", surface="#0f0f0f",
+            panel="#151515", foreground="#c8c8c8", dark=True,
+        ))
+        self.theme = "clanker"
         self.interrupt_requested = False
         self._interrupt_event = asyncio.Event()
         self._model_info = model_info
         self._update_info = update_info
         self._processing = False
-        self._input_history: list[str] = self._load_history()
+        self._input_history: list[PromptDraft] = self._load_history()
         self._input_queue: asyncio.Queue[str] = asyncio.Queue()
         # Retain task history for the session, including tasks still running
         # when the parent starts a new turn.
         self._subagent_runs: list[SubagentRun] = []
         self._change_journal = ChangeJournal()
 
-    def _load_history(self) -> list[str]:
+    def _load_history(self) -> list[PromptDraft]:
         """Load input history from file across sessions."""
         try:
+            structured = Path.home() / ".clanker" / "input_history.json"
+            if structured.exists():
+                return [PromptDraft.from_dict(item) for item in json.loads(structured.read_text())][-500:]
             history_file = Path.home() / ".clanker" / "input_history.txt"
             if history_file.exists():
                 lines = history_file.read_text().strip().split("\n")
-                return [l for l in lines if l.strip()][-500:]
-        except OSError:
+                return [PromptDraft(line) for line in lines if line.strip()][-500:]
+        except (OSError, ValueError, KeyError, TypeError):
             pass
         return []
 
     def _save_history(self) -> None:
         """Persist input history to file."""
         try:
-            history_file = Path.home() / ".clanker" / "input_history.txt"
+            history_file = Path.home() / ".clanker" / "input_history.json"
             history_file.parent.mkdir(parents=True, exist_ok=True)
-            history_file.write_text("\n".join(self._input_history[-500:]) + "\n")
+            history_file.touch(mode=0o600, exist_ok=True)
+            history_file.write_text(json.dumps([item.to_dict() for item in self._input_history[-500:]]))
         except OSError:
             pass
 
@@ -805,7 +833,7 @@ class ClankerApp(App):
 
     # --- Actions ---
 
-    def _on_input_history_add(self, text: str) -> None:
+    def _on_input_history_add(self, text: PromptDraft) -> None:
         self._input_history.append(text)
         self._save_history()
         prompt_input = self.get_prompt_input()
@@ -820,7 +848,7 @@ class ClankerApp(App):
         """
         focused = self.focused
         input_selection = (
-            focused.selected_text if isinstance(focused, Input) else None
+            focused.selected_text if isinstance(focused, (Input, TextArea)) else None
         )
         selected_text = input_selection or self.screen.get_selected_text()
         if selected_text:
@@ -967,8 +995,31 @@ class ClankerApp(App):
 
     # --- Input handling ---
 
+    def action_compose_message(self) -> None:
+        if isinstance(self.screen, MessageComposer):
+            return
+        prompt = self.get_prompt_input()
+        draft = prompt.snapshot_draft()
+        text = draft.expanded_text()
+        prompt._hide_menu()
+
+        def receive(composed: PromptDraft | None) -> None:
+            if composed is None:
+                return
+            # Reuse ordinary submission, including image attachments, command
+            # handling and follow-up queuing. Discard leaves the draft intact.
+            message = composed.text
+            placeholder = f"[pasted {len(message.splitlines())} lines]"
+            prompt.restore_draft(PromptDraft(placeholder, [(placeholder, message)], composed.images))
+            self._submit_prompt()
+
+        self.push_screen(MessageComposer(text, images=draft.images, history=prompt._history), receive)
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
+        self._submit_prompt()
+
+    def _submit_prompt(self) -> None:
         prompt_input = self.get_prompt_input()
 
         # History/recall keep the placeholder form -- Input can't safely
@@ -977,10 +1028,10 @@ class ClankerApp(App):
         raw = prompt_input.value.strip()
         if not raw:
             return
+        prompt_input.add_to_history(raw)
         text, images = prompt_input.pop_expanded_value()
         text = text.strip()
 
-        prompt_input.add_to_history(raw)
         prompt_input.value = ""
 
         if self._processing and not text.startswith("/"):
@@ -1066,7 +1117,8 @@ class ClankerApp(App):
         result = handle_command(
             text, console, session_manager, conversation_messages, chat_log
         )
-        self._refresh_selected_model()
+        if text.split(maxsplit=1)[0].lower() == "/model":
+            self._refresh_selected_model()
         if result == "exit":
             return "exit"
         if result and result.startswith("restore:"):

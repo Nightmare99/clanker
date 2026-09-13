@@ -19,7 +19,7 @@ from clanker.ui import tool_summary
 _STATUS_STYLE = {
     "running": "bold rgb(0,240,240)",
     "success": "bold rgb(180,255,60)",
-    "error": "bold rgb(255,80,80)",
+    "error": "bold rgb(255,105,180)",
 }
 _STATUS_ICON = {"success": "✓", "error": "✗"}
 _STATUS_STYLE.update({"queued": "dim", "waiting": "yellow", "needs_input": "yellow", "stopping": "yellow", "cancelled": "yellow", "timed_out": "yellow", "budget_exceeded": "yellow", "stalled": "yellow"})
@@ -288,8 +288,8 @@ class SubagentHistoryScreen(ModalScreen[None]):
             text.append("Response\n", style="bold white")
             text.append(run.response, style="rgb(200,200,200)")
         elif run.error:
-            text.append("Error\n", style="bold rgb(255,80,80)")
-            text.append(run.error, style="rgb(255,120,120)")
+            text.append("Error\n", style="bold rgb(255,105,180)")
+            text.append(run.error, style="rgb(255,105,180)")
 
         if run.input_tokens or run.output_tokens:
             tokens_line = f"\n\ntokens: {run.input_tokens:,} in / {run.output_tokens:,} out"

@@ -122,9 +122,9 @@ class ToolStatus(Static):
                     text.append(tool.result, style="rgb(130,220,100)")
             elif tool.status == "error":
                 text.append("  ", style="dim")
-                text.append("✗ ", style="bold red")
+                text.append("✗ ", style="bold rgb(255,105,180)")
                 if tool.result:
-                    text.append(tool.result, style="bold red")
+                    text.append(tool.result, style="bold rgb(255,105,180)")
 
             lines.append(text)
 

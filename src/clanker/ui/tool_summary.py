@@ -142,7 +142,7 @@ def compact_result_summary(
 
     if tool_name in ("bash", "execute_shell"):
         # Failure: result starts with "Command exited with code N\n{output}".
-        # Summarize as the exit-code line so the red ✗ has a clear message.
+        # Summarize as the exit-code line so the hot pink ✗ has a clear message.
         if result.startswith("Command exited with code"):
             first_line = result.splitlines()[0] if result.splitlines() else result
             extra = len(result.splitlines()) - 1
@@ -360,7 +360,7 @@ def build_edit_diff_text(
         if sign == "+":
             style, prefix = "green", "+ "
         elif sign == "-":
-            style, prefix = "red", "- "
+            style, prefix = "rgb(255,105,180)", "- "
         else:
             style, prefix = "dim", "  "
         t = Text()

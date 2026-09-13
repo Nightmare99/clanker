@@ -448,7 +448,7 @@ class ChatLog(VerticalScroll):
             "info": "rgb(0,240,240)",
             "success": "rgb(180,255,60)",
             "warning": "rgb(255,220,60)",
-            "error": "rgb(255,80,80)",
+            "error": "rgb(255,105,180)",
         }
         color = level_colors.get(msg.level, level_colors["info"])
         content = (msg.content or "").strip()
@@ -468,7 +468,7 @@ class ChatLog(VerticalScroll):
         return Static(text, classes="msg-system")
 
     def _error_message(self, msg: Message) -> Static:
-        text = Text(f"Error: {msg.content}", style="bold rgb(255,80,80)")
+        text = Text(f"Error: {msg.content}", style="bold rgb(255,105,180)")
         return Static(text, classes="msg-error")
 
     def _warning_message(self, msg: Message) -> Static:
@@ -512,7 +512,7 @@ class ChatLog(VerticalScroll):
         elif entry.status == "success":
             text.append(" ✓", style="bold rgb(180,255,60)")
         elif entry.status == "error":
-            text.append(" ✗", style="bold rgb(255,80,80)")
+            text.append(" ✗", style="bold rgb(255,105,180)")
 
         return text
 
@@ -545,7 +545,7 @@ class ChatLog(VerticalScroll):
         if not summary:
             return None
 
-        color = "rgb(130,220,100)" if success else "rgb(255,80,80)"
+        color = "rgb(130,220,100)" if success else "rgb(255,105,180)"
         text = Text(summary, style=color)
         return Static(text, classes="msg-tool-output tool-card")
 
@@ -623,7 +623,7 @@ class ChatLog(VerticalScroll):
         if success:
             header_text.append(" ✓", style="bold rgb(180,255,60)")
         else:
-            header_text.append(" ✗", style="bold rgb(255,80,80)")
+            header_text.append(" ✗", style="bold rgb(255,105,180)")
         if entry.header_widget:
             entry.header_widget.update(header_text)
 

@@ -150,7 +150,7 @@ class ChangesScreen(ModalScreen[None]):
             if self.on_undo:
                 self.on_undo(ids)
         except (OSError, ValueError) as exc:
-            notice.update(Text(str(exc), style="bold red"))
+            notice.update(Text(str(exc), style="bold rgb(255,105,180)"))
         finally:
             self._undoing = False
             self._confirm = ()

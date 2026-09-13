@@ -121,14 +121,14 @@ LOADING_MESSAGES = [
 CLANKER_THEME = Theme({
     "info": "cyan",
     "warning": "yellow",
-    "error": "red bold",
+    "error": "bold rgb(255,105,180)",
     "success": "green",
     # Tool badge colors — teal bg pill like the screenshot
     "tool": "bold rgb(0,210,180)",
     "tool.badge": "black on rgb(0,190,220)",
     "tool.arg": "rgb(200,220,210)",
     "tool.result": "rgb(130,220,100)",  # lime-ish green for ✓
-    "tool.error": "bold red",  # red ✗ for failed commands
+    "tool.error": "bold rgb(255,105,180)",  # hot pink ✗ for failed commands
     # Token-usage badge — muted dark mauve-pink pill (a subdued cousin of the
     # assistant-panel hot pink), tying the per-turn usage summary to the
     # response it sits beneath without competing with it for attention.
@@ -604,7 +604,7 @@ class Console:
                 style = "green"
                 prefix = "    + "
             elif sign == "-":
-                style = "red"
+                style = "rgb(255,105,180)"
                 prefix = "    - "
             else:
                 style = "dim"
@@ -767,7 +767,7 @@ class Console:
         """Print a success message."""
         self._console.print(Text(message, style="success"))
 
-    def print_panel(self, content: str, title: str = "", style: str = "blue") -> None:
+    def print_panel(self, content: str, title: str = "", style: str = "rgb(180,255,60)") -> None:
         """Print content in a panel."""
         panel = Panel(content, title=title, border_style=style)
         self._console.print(panel)
@@ -946,7 +946,7 @@ Commands:
             elif remaining > 20:
                 ctx_style = "yellow"
             else:
-                ctx_style = "red"
+                ctx_style = "rgb(255,105,180)"
 
             bar_width = 16
             filled = int(round(remaining / 100.0 * bar_width))

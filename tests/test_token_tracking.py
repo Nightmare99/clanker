@@ -133,13 +133,13 @@ class TestPrintTokenUsage:
         )
         assert "cache:" not in without_cache
 
-    def test_low_remaining_uses_red(self) -> None:
-        # 95% used → 5% remaining → red (ANSI 31).
+    def test_low_remaining_uses_hot_pink(self) -> None:
+        # 95% used → 5% remaining → hot pink.
         out = _render_to_ansi(
             lambda c: c.print_token_usage(190_000, 500, 95.0)
         )
         assert "5%" in out
-        assert "31m" in out
+        assert "38;2;255;105;180m" in out
 
     def test_gauge_is_right_aligned(self) -> None:
         # The gauge is padded flush to the console's right edge: the last visible

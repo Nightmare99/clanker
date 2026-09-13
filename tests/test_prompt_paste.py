@@ -211,6 +211,7 @@ async def test_submit_sends_expanded_text_but_histories_the_placeholder() -> Non
         sent_text = chat_log.add_message.call_args[0][0]
         assert sent_text == "please review:\na\nb\nc thanks"
 
-        assert prompt._history[-1] == "please review:\n[pasted 3 lines] thanks"
+        assert prompt._history[-1].text == "please review:\n[pasted 3 lines] thanks"
+        assert prompt._history[-1].expanded_text() == sent_text
         assert prompt.value == ""
         assert prompt._pending_pastes == []

@@ -130,7 +130,7 @@ def _render_to_ansi(callback) -> str:
     return cap.get()
 
 
-def test_failed_shell_command_shows_red_cross_not_green_tick() -> None:
+def test_failed_shell_command_shows_hot_pink_cross_not_green_tick() -> None:
     out = _render_to_ansi(
         lambda c: c.print_tool_result(
             "Command exited with code 1\nError: not found",
@@ -140,8 +140,7 @@ def test_failed_shell_command_shows_red_cross_not_green_tick() -> None:
     )
     assert "✗" in out
     assert "✓" not in out
-    # Red ANSI code present (31 = red).
-    assert "31m" in out
+    assert "38;2;255;105;180m" in out
 
 
 def test_successful_shell_command_shows_green_tick() -> None:

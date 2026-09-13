@@ -54,7 +54,7 @@ ChatLog .notify-warning {
 }
 
 ChatLog .notify-error {
-    border-left: thick rgb(255, 80, 80);
+    border-left: thick rgb(255, 105, 180);
 }
 
 ChatLog .thinking-card {
@@ -91,7 +91,7 @@ ChatLog .msg-system {
 }
 
 ChatLog .msg-error {
-    color: rgb(255, 80, 80);
+    color: rgb(255, 105, 180);
     width: 1fr;
 }
 
