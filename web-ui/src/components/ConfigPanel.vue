@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch, inject } from 'vue'
+import type { Ref } from 'vue'
 import {
   NLayout,
   NLayoutSider,
@@ -43,6 +44,8 @@ import {
   Star,
   PeopleOutline,
   SearchOutline,
+  SunnyOutline,
+  MoonOutline,
 } from '@vicons/ionicons5'
 import { h } from 'vue'
 
@@ -131,6 +134,10 @@ interface ModelConfig {
 
 // State
 const message = useMessage()
+const { isDark, toggleTheme } = inject<{ isDark: Ref<boolean>; toggleTheme: () => void }>('themeState', {
+  isDark: ref(true),
+  toggleTheme: () => {},
+})
 const loading = ref(true)
 const saving = ref(false)
 const activeKey = ref('model')
@@ -215,13 +222,13 @@ const modelProviderOptions = [
   { label: 'GitHub Copilot', value: 'GitHubCopilot', description: 'Auto-configured via Connect below' },
 ]
 
-// Provider colors and icons for visual distinction (neon palette)
-const providerStyles: Record<string, { color: string; bgColor: string }> = {
-  'OpenAI': { color: '#b6ff1a', bgColor: 'rgba(182, 255, 26, 0.12)' },
-  'AzureOpenAI': { color: '#00f0ff', bgColor: 'rgba(0, 240, 255, 0.12)' },
-  'Anthropic': { color: '#ff2bd6', bgColor: 'rgba(255, 43, 214, 0.12)' },
-  'Ollama': { color: '#ffe600', bgColor: 'rgba(255, 230, 0, 0.12)' },
-  'GitHubCopilot': { color: '#8957e5', bgColor: 'rgba(137, 87, 229, 0.12)' },
+// Provider colors and icons for visual distinction (neo-brutalist palette)
+const providerStyles: Record<string, { color: string; bgColor: string; borderColor: string }> = {
+  'OpenAI': { color: '#000000', bgColor: '#B6FF1A', borderColor: 'var(--nb-border)' },
+  'AzureOpenAI': { color: '#000000', bgColor: '#00F0FF', borderColor: 'var(--nb-border)' },
+  'Anthropic': { color: '#000000', bgColor: '#FF2BD6', borderColor: 'var(--nb-border)' },
+  'Ollama': { color: '#000000', bgColor: '#FFE500', borderColor: 'var(--nb-border)' },
+  'GitHubCopilot': { color: '#000000', bgColor: '#C4B5FD', borderColor: 'var(--nb-border)' },
 }
 
 const modelSortOptions = [
@@ -557,7 +564,7 @@ async function testModel(name: string) {
 }
 
 function getProviderStyle(provider: string) {
-  return providerStyles[provider] || { color: '#888', bgColor: 'rgba(136, 136, 136, 0.1)' }
+  return providerStyles[provider] || { color: '#000000', bgColor: '#E5E7EB', borderColor: 'var(--nb-border)' }
 }
 
 // Filtered + sorted view of the models list for the Models tab: search
@@ -777,19 +784,21 @@ onUnmounted(() => {
   <NLayout class="app-layout" has-sider>
     <!-- Sidebar -->
     <NLayoutSider
-      bordered
-      :width="200"
+      :width="220"
       :native-scrollbar="false"
       class="sidebar"
     >
       <div class="logo">
-        <span class="logo-icon">⚙️</span>
-        <span class="logo-text">CLANKER</span>
+        <div class="logo-badge">
+          <NIcon :size="18" class="logo-icon" :component="HardwareChipOutline" />
+          <span class="logo-text">CLANKER</span>
+        </div>
       </div>
       <NMenu
         v-model:value="activeKey"
         :options="menuOptions"
-        :root-indent="20"
+        :root-indent="14"
+        class="sidebar-menu"
       />
     </NLayoutSider>
 
@@ -800,7 +809,23 @@ onUnmounted(() => {
           <!-- Header -->
           <div class="content-header">
             <h1>{{ activeKey === 'model' || activeKey === 'agents' ? menuOptions.find(m => m.key === activeKey)?.label : menuOptions.find(m => m.key === activeKey)?.label + ' Settings' }}</h1>
-            <NSpace>
+            <NSpace align="center" :size="12">
+              <NTooltip>
+                <template #trigger>
+                  <NButton
+                    circle
+                    size="medium"
+                    class="header-theme-toggle"
+                    :aria-label="isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'"
+                    @click="toggleTheme"
+                  >
+                    <template #icon>
+                      <NIcon :size="18" :component="isDark ? SunnyOutline : MoonOutline" />
+                    </template>
+                  </NButton>
+                </template>
+                Switch to {{ isDark ? 'Light' : 'Dark' }} mode
+              </NTooltip>
               <NButton
                 v-if="hasChanges"
                 type="primary"
@@ -852,12 +877,12 @@ onUnmounted(() => {
             </div>
 
             <!-- GitHub Copilot Connect -->
-            <NCard class="copilot-card" :style="{ borderColor: providerStyles['GitHubCopilot'].color + '40' }">
+            <NCard class="copilot-card">
               <div class="copilot-card-content">
                 <div class="copilot-card-info">
                   <NTag
                     size="small"
-                    :color="{ color: providerStyles['GitHubCopilot'].bgColor, textColor: providerStyles['GitHubCopilot'].color, borderColor: 'transparent' }"
+                    :color="{ color: providerStyles['GitHubCopilot'].bgColor, textColor: providerStyles['GitHubCopilot'].color, borderColor: 'var(--nb-border)' }"
                   >
                     GitHub Copilot
                   </NTag>
@@ -895,7 +920,6 @@ onUnmounted(() => {
                 :key="model.name"
                 class="model-card"
                 :class="{ 'model-card-default': model.name === defaultModel }"
-                :style="{ borderColor: getProviderStyle(model.provider).color + '40' }"
               >
                 <!-- Card Header -->
                 <template #header>
@@ -903,7 +927,7 @@ onUnmounted(() => {
                     <div class="model-info">
                       <NTag
                         size="small"
-                        :color="{ color: getProviderStyle(model.provider).bgColor, textColor: getProviderStyle(model.provider).color, borderColor: 'transparent' }"
+                        :color="{ color: getProviderStyle(model.provider).bgColor, textColor: getProviderStyle(model.provider).color, borderColor: 'var(--nb-border)' }"
                       >
                         {{ model.provider }}
                       </NTag>
@@ -958,7 +982,7 @@ onUnmounted(() => {
                   </div>
                   <div v-if="model.cost_input != null || model.cost_output != null" class="model-detail-row">
                     <span class="detail-label">Pricing:</span>
-                    <span class="detail-value" style="font-size: 0.82em; color: var(--n-text-color-3)">
+                    <span class="detail-value detail-pricing">
                       <template v-if="model.cost_input != null">in ${{ model.cost_input }}/M</template>
                       <template v-if="model.cost_input != null && model.cost_output != null"> · </template>
                       <template v-if="model.cost_output != null">out ${{ model.cost_output }}/M</template>
@@ -972,6 +996,7 @@ onUnmounted(() => {
                   <NSpace justify="space-between" align="center">
                     <NSpace>
                       <NButton
+                        class="card-action-btn"
                         size="small"
                         :loading="testingModel === model.name"
                         @click="testModel(model.name)"
@@ -983,6 +1008,7 @@ onUnmounted(() => {
                       </NButton>
                       <NButton
                         v-if="model.name !== defaultModel"
+                        class="card-action-btn"
                         size="small"
                         @click="setAsDefault(model.name)"
                       >
@@ -993,7 +1019,7 @@ onUnmounted(() => {
                       </NButton>
                     </NSpace>
                     <NSpace>
-                      <NButton size="small" @click="openEditModel(model)">
+                      <NButton class="card-action-btn" size="small" @click="openEditModel(model)">
                         <template #icon>
                           <NIcon><CreateOutline /></NIcon>
                         </template>
@@ -1001,7 +1027,7 @@ onUnmounted(() => {
                       </NButton>
                       <NPopconfirm @positive-click="deleteModel(model.name)">
                         <template #trigger>
-                          <NButton size="small" type="error" quaternary>
+                          <NButton class="card-action-btn" size="small" type="error" quaternary>
                             <template #icon>
                               <NIcon><TrashOutline /></NIcon>
                             </template>
@@ -1793,45 +1819,184 @@ onUnmounted(() => {
 <style scoped>
 .app-layout {
   height: 100vh;
-  background: #000;
+  background: var(--nb-canvas);
 }
 
 .sidebar {
-  background: #000;
-  border-right: 1px solid rgba(0, 240, 255, 0.18) !important;
+  background: var(--nb-surface) !important;
+  border-right: 2px solid var(--nb-border) !important;
+  height: 100vh;
+}
+
+.sidebar :deep(.n-layout-sider-scroll-container) {
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+  min-height: 100% !important;
+  box-sizing: border-box !important;
 }
 
 .logo {
-  padding: 22px 16px 18px;
-  text-align: center;
-  border-bottom: 1px solid rgba(255, 43, 214, 0.25);
-  background: linear-gradient(180deg, rgba(255, 43, 214, 0.08), transparent);
+  padding: 16px 14px;
+  background: var(--nb-surface);
+  border-bottom: 2px solid var(--nb-border);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.logo-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--nb-lime);
+  color: #000000;
+  padding: 6px 14px;
+  border: 2px solid var(--nb-border);
+  box-shadow: 2.5px 2.5px 0px var(--nb-border);
+  border-radius: 4px;
 }
 
 .logo-icon {
-  font-size: 26px;
-  filter: drop-shadow(0 0 6px rgba(0, 240, 255, 0.7));
+  color: #000000;
+  display: flex;
+  align-items: center;
 }
 
 .logo-text {
-  display: block;
-  font-size: 18px;
-  font-weight: 800;
-  color: var(--neon-pink);
-  margin-top: 8px;
-  letter-spacing: 4px;
-  text-shadow:
-    0 0 6px rgba(255, 43, 214, 0.9),
-    0 0 14px rgba(255, 43, 214, 0.5);
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 2.5px;
+  line-height: 1;
+  color: #000000;
+}
+
+.sidebar-menu {
+  padding: 12px 10px;
+  flex: 1 0 auto;
+}
+
+/* Suppress Naive UI's default ::before background pill to eliminate double-pill and 8px side-gap artifacts */
+.sidebar :deep(.n-menu-item-content::before) {
+  display: none !important;
+  left: 0 !important;
+  right: 0 !important;
+  width: 100% !important;
+}
+
+/* Menu items styling: contained neo-brutalist buttons with breathing room */
+.sidebar :deep(.n-menu-item) {
+  margin: 4px 0 !important;
+  height: 40px !important;
+  width: 100% !important;
+}
+
+.sidebar :deep(.n-menu-item-content) {
+  padding: 0 12px !important;
+  height: 40px !important;
+  line-height: 40px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  border-radius: 4px !important;
+  border: 2px solid transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transition: background-color 0.1s ease, border-color 0.1s ease, transform 0.08s ease, box-shadow 0.08s ease, color 0.1s ease !important;
+}
+
+.sidebar :deep(.n-menu-item-content__icon) {
+  font-size: 18px !important;
+  margin-right: 10px !important;
+  color: var(--nb-ink) !important;
+  transition: color 0.1s ease !important;
+}
+
+.sidebar :deep(.n-menu-item-content-header) {
+  font-size: 13.5px !important;
+  font-weight: 700 !important;
+  color: var(--nb-ink) !important;
+  letter-spacing: 0.2px !important;
+  transition: color 0.1s ease !important;
+}
+
+/* Hover on unselected item: full-width crisp neo-brutalist button pop */
+.sidebar :deep(.n-menu-item-content:hover:not(.n-menu-item-content--selected)),
+.sidebar :deep(.n-menu-item-content--hover:not(.n-menu-item-content--selected)) {
+  background: var(--nb-menu-hover-bg, #FFFFFF) !important;
+  border: 2px solid var(--nb-border) !important;
+  box-shadow: 2.5px 2.5px 0px var(--nb-border) !important;
+  transform: translate(-1px, -1px) !important;
+}
+
+.sidebar :deep(.n-menu-item-content:hover:not(.n-menu-item-content--selected) .n-menu-item-content__icon),
+.sidebar :deep(.n-menu-item-content:hover:not(.n-menu-item-content--selected) .n-menu-item-content-header),
+.sidebar :deep(.n-menu-item-content--hover:not(.n-menu-item-content--selected) .n-menu-item-content__icon),
+.sidebar :deep(.n-menu-item-content--hover:not(.n-menu-item-content--selected) .n-menu-item-content-header) {
+  color: var(--nb-ink) !important;
+}
+
+/* Active / selected item: bold pink neo-brutalist badge */
+.sidebar :deep(.n-menu-item-content--selected) {
+  background: var(--nb-pink) !important;
+  border: 2px solid var(--nb-border) !important;
+  box-shadow: 2.5px 2.5px 0px var(--nb-border) !important;
+  transform: translate(-1px, -1px) !important;
+}
+
+.sidebar :deep(.n-menu-item-content--selected .n-menu-item-content__icon),
+.sidebar :deep(.n-menu-item-content--selected .n-menu-item-content-header) {
+  color: #000000 !important;
+  font-weight: 800 !important;
+}
+
+.sidebar :deep(.n-menu-item-content--selected:hover) {
+  background: var(--nb-pink) !important;
+  border: 2px solid var(--nb-border) !important;
+  box-shadow: 3px 3px 0px var(--nb-border) !important;
+  transform: translate(-1px, -1px) !important;
+}
+
+.sidebar :deep(.n-menu-item-content--selected:hover .n-menu-item-content__icon),
+.sidebar :deep(.n-menu-item-content--selected:hover .n-menu-item-content-header) {
+  color: #000000 !important;
+  font-weight: 800 !important;
+}
+
+/* Click/press tactile depression */
+.sidebar :deep(.n-menu-item-content:active) {
+  transform: translate(1px, 1px) !important;
+  box-shadow: 1px 1px 0px var(--nb-border) !important;
+}
+
+.header-theme-toggle {
+  background: var(--nb-surface) !important;
+  color: var(--nb-ink) !important;
+  border: 2px solid var(--nb-border) !important;
+  box-shadow: none !important;
+  transition: transform 0.08s ease, box-shadow 0.08s ease, background-color 0.08s ease !important;
+}
+
+.header-theme-toggle:hover {
+  background: var(--nb-lime) !important;
+  color: #000000 !important;
+  border-color: var(--nb-border) !important;
+  transform: translate(-1px, -1px) !important;
+  box-shadow: 2px 2px 0px var(--nb-border) !important;
+}
+
+.header-theme-toggle:active {
+  transform: translate(2px, 2px) !important;
+  box-shadow: none !important;
 }
 
 .main-content {
-  padding: 28px;
-  background: #000;
+  padding: 32px 36px;
+  background: var(--nb-canvas);
 }
 
 .content-wrapper {
-  max-width: 900px;
+  max-width: 960px;
 }
 
 .content-header {
@@ -1843,73 +2008,88 @@ onUnmounted(() => {
 .content-header h1 {
   margin: 0;
   font-size: 26px;
-  letter-spacing: 1.5px;
-  color: var(--neon-cyan);
+  font-weight: 900;
+  letter-spacing: 1px;
+  color: var(--nb-ink);
   text-transform: uppercase;
-  text-shadow:
-    0 0 6px rgba(0, 240, 255, 0.7),
-    0 0 14px rgba(0, 240, 255, 0.35);
 }
 
 .settings-card {
-  margin-bottom: 16px;
-  background: var(--oled-surface);
-  border: 1px solid rgba(0, 240, 255, 0.18);
-  box-shadow: 0 0 0 1px rgba(0, 240, 255, 0.04), 0 0 24px rgba(0, 240, 255, 0.05);
-}
-
-.empty-state {
-  color: #666;
-  text-align: center;
-  padding: 24px;
-  border: 1px dashed rgba(0, 240, 255, 0.2);
+  margin-bottom: 20px;
+  background: var(--nb-surface) !important;
+  border: 2px solid var(--nb-border) !important;
+  box-shadow: var(--nb-shadow) !important;
   border-radius: 4px;
 }
 
+.empty-state {
+  color: var(--nb-ink-muted);
+  text-align: center;
+  padding: 28px;
+  border: 2px dashed var(--nb-border);
+  background: var(--nb-surface-secondary);
+  border-radius: 4px;
+  font-weight: 600;
+}
+
 .form-hint {
-  color: #888;
+  color: var(--nb-ink-muted);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.55;
   margin: -8px 0 16px 184px;
-  padding: 8px 12px;
-  border-left: 2px solid rgba(255, 0, 128, 0.4);
-  background: rgba(255, 0, 128, 0.04);
+  padding: 10px 14px;
+  border: 1.5px solid var(--nb-border);
+  border-left: 5px solid var(--nb-pink);
+  background: var(--nb-hint-bg);
+  box-shadow: var(--nb-shadow-sm);
+  border-radius: 2px;
 }
 
 .form-hint code {
-  color: #00f0ff;
-  background: rgba(0, 240, 255, 0.08);
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-family: 'JetBrains Mono', monospace;
+  color: var(--nb-pink);
+  background: var(--nb-surface-secondary);
+  padding: 1px 6px;
+  border-radius: 2px;
+  border: 1px solid var(--nb-border);
+  font-family: 'Victor Mono', monospace;
   font-size: 11px;
+  font-weight: 700;
 }
 
 .form-hint strong {
-  color: #b6ff00;
+  color: var(--nb-ink);
+  font-weight: 800;
 }
 
 .mcp-servers {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .content-footer {
-  margin-top: 28px;
-  padding-top: 16px;
-  border-top: 1px dashed rgba(255, 43, 214, 0.25);
+  margin-top: 32px;
+  padding-top: 18px;
+  border-top: 2px solid var(--nb-border);
 }
 
 .content-footer code {
-  color: rgba(0, 240, 255, 0.55);
+  color: var(--nb-ink);
+  background: var(--nb-surface);
+  border: 1.5px solid var(--nb-border);
+  box-shadow: var(--nb-shadow-sm);
+  padding: 4px 10px;
   font-size: 12px;
   letter-spacing: 0.5px;
+  font-weight: 600;
+  display: inline-block;
+  border-radius: 2px;
 }
 
 .server-detail {
   margin-top: 8px;
-  color: #777;
+  color: var(--nb-ink-muted);
+  font-weight: 500;
 }
 
 /* Models Section */
@@ -1931,18 +2111,20 @@ onUnmounted(() => {
 
 .models-description {
   margin: 0;
-  color: #b0b0b0;
+  color: var(--nb-ink-muted);
   font-size: 14px;
   line-height: 1.6;
 }
 
 .models-description code {
-  background: var(--oled-surface-2);
+  background: var(--nb-surface);
   padding: 2px 8px;
   border-radius: 3px;
   font-size: 12px;
-  color: var(--neon-lime);
-  border: 1px solid rgba(182, 255, 26, 0.25);
+  color: var(--nb-ink);
+  border: 1.5px solid var(--nb-border);
+  box-shadow: 1px 1px 0px var(--nb-border);
+  font-weight: 700;
 }
 
 .models-toolbar {
@@ -1963,6 +2145,9 @@ onUnmounted(() => {
 
 .copilot-card {
   margin-bottom: 24px;
+  background: var(--nb-surface) !important;
+  border: 2px solid var(--nb-border) !important;
+  box-shadow: var(--nb-shadow) !important;
 }
 
 .copilot-card-content {
@@ -1981,67 +2166,63 @@ onUnmounted(() => {
 }
 
 .copilot-status-text {
-  color: #b0b0b0;
+  color: var(--nb-ink);
   font-size: 13px;
+  font-weight: 500;
 }
 
 .copilot-status-text code {
-  background: var(--oled-surface-2);
-  padding: 1px 6px;
+  background: var(--nb-surface);
+  padding: 2px 6px;
   border-radius: 3px;
   font-size: 12px;
+  border: 1px solid var(--nb-border);
+  box-shadow: 1px 1px 0px var(--nb-border);
+  font-weight: 600;
 }
 
 .copilot-user-code {
-  color: #8957e5;
-  letter-spacing: 0.05em;
+  color: #000000;
+  background: var(--nb-lime);
+  padding: 2px 8px;
+  border: 1.5px solid var(--nb-border);
+  box-shadow: var(--nb-shadow-sm);
+  letter-spacing: 0.08em;
+  font-weight: 800;
 }
 
 .models-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-  gap: 18px;
+  gap: 20px;
 }
 
 .model-card {
-  background: var(--oled-surface) !important;
-  border: 1px solid rgba(0, 240, 255, 0.2);
-  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+  background: var(--nb-surface) !important;
+  border: 2px solid var(--nb-border) !important;
+  box-shadow: var(--nb-shadow) !important;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
   position: relative;
   overflow: hidden;
-}
-
-.model-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--neon-pink), var(--neon-cyan), transparent);
-  opacity: 0.6;
+  border-radius: 4px;
 }
 
 .model-card:hover {
-  border-color: var(--neon-cyan);
-  transform: translateY(-2px);
-  box-shadow:
-    0 0 0 1px rgba(0, 240, 255, 0.3),
-    0 8px 32px rgba(0, 240, 255, 0.15);
+  transform: translate(-2px, -2px);
+  box-shadow: var(--nb-card-hover-shadow) !important;
+  border-color: var(--nb-card-hover-border) !important;
 }
 
 .model-card-default {
-  border-color: var(--neon-pink) !important;
-  box-shadow:
-    0 0 0 1px rgba(255, 43, 214, 0.4),
-    0 0 20px rgba(255, 43, 214, 0.25),
-    0 0 40px rgba(255, 43, 214, 0.1);
+  border: 2.5px solid var(--nb-border) !important;
+  box-shadow: var(--nb-card-default-shadow) !important;
+  background: var(--nb-surface) !important;
 }
 
-.model-card-default::before {
-  background: linear-gradient(90deg, var(--neon-pink), var(--neon-lime), var(--neon-cyan));
-  opacity: 1;
-  height: 2px;
+.model-card-default:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0px var(--nb-lime) !important;
+  border-color: var(--nb-border) !important;
 }
 
 .model-card-header {
@@ -2057,16 +2238,16 @@ onUnmounted(() => {
 }
 
 .model-name {
-  font-weight: 700;
+  font-weight: 800;
   font-size: 16px;
-  color: #fff;
+  color: var(--nb-ink);
   letter-spacing: 0.5px;
 }
 
 .default-star {
-  color: var(--neon-lime);
-  font-size: 18px;
-  filter: drop-shadow(0 0 4px rgba(182, 255, 26, 0.8));
+  color: var(--nb-lime);
+  font-size: 20px;
+  filter: drop-shadow(1px 1px 0px var(--nb-border));
 }
 
 .model-details {
@@ -2083,23 +2264,29 @@ onUnmounted(() => {
 }
 
 .detail-label {
-  color: var(--neon-cyan);
-  min-width: 84px;
+  color: var(--nb-ink-muted);
+  min-width: 88px;
   flex-shrink: 0;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 1px;
-  opacity: 0.8;
+  letter-spacing: 0.8px;
+  font-weight: 800;
 }
 
 .detail-value {
-  color: #ddd;
-  background: var(--oled-surface-2);
+  color: var(--nb-ink);
+  background: var(--nb-surface-secondary);
   padding: 2px 8px;
   border-radius: 3px;
   font-size: 12px;
   word-break: break-all;
-  border: 1px solid rgba(255, 43, 214, 0.12);
+  border: 1px solid var(--nb-border-subtle);
+  font-weight: 600;
+}
+
+.detail-pricing {
+  font-size: 11.5px;
+  color: var(--nb-ink);
 }
 
 .detail-url {
@@ -2109,11 +2296,17 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+.card-action-btn {
+  font-size: 12px !important;
+  font-weight: 700 !important;
+}
+
 .empty-models-card {
   text-align: center;
   padding: 48px 24px;
-  background: var(--oled-surface) !important;
-  border: 1px dashed rgba(255, 43, 214, 0.3);
+  background: var(--nb-surface) !important;
+  border: 2px dashed var(--nb-border) !important;
+  box-shadow: var(--nb-shadow) !important;
 }
 
 /* Agents Section */
@@ -2122,49 +2315,32 @@ onUnmounted(() => {
 }
 
 .agent-card {
-  background: var(--oled-surface) !important;
-  border: 1px solid rgba(182, 255, 26, 0.2);
-  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+  background: var(--nb-surface) !important;
+  border: 2px solid var(--nb-border) !important;
+  box-shadow: var(--nb-shadow) !important;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
   position: relative;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-}
-
-.agent-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--neon-lime), var(--neon-cyan), transparent);
-  opacity: 0.6;
+  border-radius: 4px;
 }
 
 .agent-card:hover {
-  border-color: var(--neon-lime);
-  transform: translateY(-2px);
-  box-shadow:
-    0 0 0 1px rgba(182, 255, 26, 0.3),
-    0 8px 32px rgba(182, 255, 26, 0.12);
+  transform: translate(-2px, -2px);
+  box-shadow: var(--nb-card-hover-shadow) !important;
+  border-color: var(--nb-card-hover-border) !important;
 }
 
 .agent-card-pinned {
-  border-color: var(--neon-lime) !important;
-  box-shadow:
-    0 0 0 1px rgba(182, 255, 26, 0.35),
-    0 0 20px rgba(182, 255, 26, 0.15);
-}
-
-.agent-card-pinned::before {
-  opacity: 1;
-  height: 2px;
+  border: 2.5px solid var(--nb-border) !important;
+  box-shadow: 5px 5px 0px var(--nb-pink) !important;
+  background: var(--nb-surface) !important;
 }
 
 .agent-icon {
-  color: var(--neon-lime);
-  filter: drop-shadow(0 0 4px rgba(182, 255, 26, 0.6));
+  color: var(--nb-ink);
+  font-size: 20px;
 }
 
 .agent-details {
@@ -2175,9 +2351,9 @@ onUnmounted(() => {
 
 .agent-description {
   margin: 0;
-  color: #ccc;
+  color: var(--nb-ink-muted);
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 1.6;
 }
 
 .agent-tools {
@@ -2187,11 +2363,14 @@ onUnmounted(() => {
 }
 
 .agent-tool-tag {
-  background: var(--oled-surface-2) !important;
-  color: var(--neon-cyan) !important;
-  border: 1px solid rgba(0, 240, 255, 0.15) !important;
-  font-family: 'JetBrains Mono', monospace;
+  background: var(--nb-lime) !important;
+  color: #000000 !important;
+  border: 1.5px solid var(--nb-border) !important;
+  font-family: 'Victor Mono', monospace;
   font-size: 11px !important;
+  font-weight: 700 !important;
+  box-shadow: none !important;
+  border-radius: 3px !important;
 }
 
 .agent-model-row {
