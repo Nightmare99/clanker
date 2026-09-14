@@ -16,6 +16,10 @@ pygments_imports = (
     + collect_submodules('pygments.styles')
 )
 
+# Textual uses __getattr__-based lazy imports in textual.widgets, so internal
+# submodules like _tab_pane, _tabbed_content, etc. are invisible to PyInstaller.
+textual_imports = collect_submodules('textual')
+
 # Get the project root
 project_root = Path(SPECPATH)
 
@@ -70,11 +74,8 @@ a = Analysis(
         'yaml',
         'dotenv',
         'rich',
+        # Textual - collected comprehensively above
         'textual',
-        'textual.widgets',
-        'textual.containers',
-        'textual.screen',
-        'textual.app',
         'prompt_toolkit',
         'click',
         # Pygments - rich.syntax / rich.markdown depend on lazy lexer lookup.
@@ -93,7 +94,7 @@ a = Analysis(
         # Web search and page reading
         'ddgs',
         'trafilatura',
-    ] + pygments_imports,
+    ] + pygments_imports + textual_imports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
