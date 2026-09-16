@@ -687,22 +687,50 @@ class ChatLog(VerticalScroll):
 
     # --- Thinking rendering ---
 
+    # Holds the header widget from add_thinking_start() so that the
+    # subsequent add_thinking() can append the body right below it
+    # instead of creating a duplicate badge.
+    _pending_thinking_header: Static | None = None
+
     def _thinking_badge_text(self) -> Text:
         text = Text()
         text.append(" Thinking ", style="black on rgb(180,140,255)")
         return text
 
+    def add_thinking_start(self) -> None:
+        """Mount the Thinking badge immediately (before content is available).
+
+        Called as soon as the first thinking token arrives so the user sees
+        feedback right away.  The body is filled in later by add_thinking().
+        """
+        if self._pending_thinking_header is not None:
+            # Already showing a badge for this thinking block.
+            return
+        header_widget = Static(self._thinking_badge_text(), classes="msg-tool")
+        self.mount(header_widget)
+        self._messages.append(header_widget)
+        self._pending_thinking_header = header_widget
+        self._scroll_to_bottom()
+
     def add_thinking(self, content: str) -> None:
         """Render a thinking block styled like a tool call: badge header + card body."""
         content = content.strip()
         if not content:
+            # Even with no content, clear any pending header so it doesn't
+            # linger into the next thinking block.
+            self._pending_thinking_header = None
             return
 
         display = content[:500] + "..." if len(content) > 500 else content
 
-        header_widget = Static(self._thinking_badge_text(), classes="msg-tool")
-        self.mount(header_widget)
-        self._messages.append(header_widget)
+        if self._pending_thinking_header is not None:
+            # Badge was already mounted by add_thinking_start() — reuse it.
+            header_widget = self._pending_thinking_header
+            self._pending_thinking_header = None
+        else:
+            header_widget = Static(self._thinking_badge_text(), classes="msg-tool")
+            self.mount(header_widget)
+            self._messages.append(header_widget)
 
         body_text = Text(display, style="dim italic rgb(190,180,220)")
         body_widget = Static(body_text, classes="msg-tool-output thinking-card")
@@ -750,6 +778,7 @@ class ChatLog(VerticalScroll):
         self._tool_counter = 0
         self._prune_placeholder = None
         self._pruned_count = 0
+        self._pending_thinking_header = None
 
     def _scroll_to_bottom(self) -> None:
         self.scroll_end(animate=False)

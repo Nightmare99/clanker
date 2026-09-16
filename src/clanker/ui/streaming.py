@@ -432,6 +432,13 @@ async def stream_agent_response_async(
             msg = message or console.get_loading_message()
             _update_loading(msg)
 
+    def _show_thinking_start() -> None:
+        """Signal that thinking has started to both console and TUI."""
+        console.print_thinking_start()
+        if textual_app:
+            with suppress(Exception):
+                textual_app.get_chat_log().add_thinking_start()
+
     def _flush_current_turn_text() -> str:
         """Emit the current model call's accumulated response/thinking, then clear it.
 
@@ -464,19 +471,31 @@ async def stream_agent_response_async(
 
         flushed_response = current_response
 
-        if current_response.strip():
-            console.print_assistant_message(current_response)
-            if textual_app:
-                with suppress(Exception):
-                    textual_app.get_chat_log().add_message(
-                        current_response, MessageType.ASSISTANT
-                    )
+        def _emit_response() -> None:
+            if current_response.strip():
+                console.print_assistant_message(current_response)
+                if textual_app:
+                    with suppress(Exception):
+                        textual_app.get_chat_log().add_message(
+                            current_response, MessageType.ASSISTANT
+                        )
 
-        if current_thinking:
-            console.print_thinking(current_thinking)
-            if textual_app:
-                with suppress(Exception):
-                    textual_app.get_chat_log().add_thinking(current_thinking)
+        def _emit_thinking() -> None:
+            if current_thinking:
+                console.print_thinking(current_thinking)
+                if textual_app:
+                    with suppress(Exception):
+                        textual_app.get_chat_log().add_thinking(current_thinking)
+
+        # Structured thinking (Anthropic) arrives before text, so render
+        # thinking first to preserve chronological order.  Ad-hoc <think>
+        # tag thinking arrives inline/after text, so response comes first.
+        if structured_thinking:
+            _emit_thinking()
+            _emit_response()
+        else:
+            _emit_response()
+            _emit_thinking()
 
         current_response = ""
         current_thinking = ""
@@ -881,7 +900,7 @@ async def stream_agent_response_async(
                                                 current_thinking += thinking_text
                                                 structured_thinking = True
                                                 if not thinking_shown:
-                                                    console.print_thinking_start()
+                                                    _show_thinking_start()
                                                     thinking_shown = True
                                         elif block.get("type") == "text":
                                             text = block.get("text", "")
@@ -894,7 +913,7 @@ async def stream_agent_response_async(
                                                 current_thinking += thinking_text
                                                 structured_thinking = True
                                                 if not thinking_shown:
-                                                    console.print_thinking_start()
+                                                    _show_thinking_start()
                                                     thinking_shown = True
                                         elif block.type == "text":
                                             text = getattr(block, "text", "")
@@ -926,19 +945,19 @@ async def stream_agent_response_async(
                                             remaining = remaining[start_idx + 7:]
                                             in_think_tag = True
                                             if not thinking_shown:
-                                                console.print_thinking_start()
+                                                _show_thinking_start()
                                                 thinking_shown = True
                                         elif end_idx != -1:
                                             current_thinking += remaining[:end_idx]
                                             remaining = remaining[end_idx + 8:]
                                             think_tag_closed = True
                                             if not thinking_shown and current_thinking:
-                                                console.print_thinking_start()
+                                                _show_thinking_start()
                                                 thinking_shown = True
                                         else:
                                             current_thinking += remaining
                                             if not thinking_shown:
-                                                console.print_thinking_start()
+                                                _show_thinking_start()
                                                 thinking_shown = True
                                             remaining = ""
 
