@@ -1081,6 +1081,17 @@ class ClankerApp(App):
             if processing
             else "Type your message... (ctrl+c interrupt)"
         )
+
+        # Hide token/context stats while the agent is executing
+        try:
+            # Use visibility (not display) for tokens so the 1fr spacer
+            # keeps the model label pinned to the right.
+            tokens_label = self.query_one("#status-tokens", Label)
+            tokens_label.styles.visibility = "hidden" if processing else "visible"
+            self.query_one("#status-context", Label).display = not processing
+        except Exception:
+            pass
+
         if not processing:
             prompt_input.focus()
             self.get_message_queue().clear()
