@@ -481,11 +481,14 @@ async def stream_agent_response_async(
                         )
 
         def _emit_thinking() -> None:
-            if current_thinking:
+            if current_thinking.strip():
                 console.print_thinking(current_thinking)
                 if textual_app:
                     with suppress(Exception):
                         textual_app.get_chat_log().add_thinking(current_thinking)
+            elif textual_app:
+                with suppress(Exception):
+                    textual_app.get_chat_log().cleanup_pending_thinking()
 
         # Structured thinking (Anthropic) arrives before text, so render
         # thinking first to preserve chronological order.  Ad-hoc <think>
@@ -920,6 +923,44 @@ async def stream_agent_response_async(
                                             if text:
                                                 current_response += text
 
+                            # OpenAI / Copilot reasoning models: after
+                            # _convert_to_v03_ai_message, reasoning content
+                            # lives in additional_kwargs["reasoning"] rather
+                            # than in the content list. Extract it so it
+                            # gets the same Thinking treatment as Anthropic's
+                            # structured thinking blocks.
+                            ak = getattr(chunk, "additional_kwargs", None) or {}
+                            ak_reasoning = ak.get("reasoning")
+                            if ak_reasoning:
+                                # Responses-API format: {"summary": [{"type": "summary_text", "text": "..."}]}
+                                # Chat-Completions fallback: plain string
+                                _got_reasoning = False
+                                if isinstance(ak_reasoning, dict):
+                                    for item in ak_reasoning.get("summary", []):
+                                        if isinstance(item, dict):
+                                            r_text = item.get("text", "")
+                                            if r_text:
+                                                current_thinking += r_text
+                                                _got_reasoning = True
+                                    # Also accept {"content": "..."} (older/custom)
+                                    if not _got_reasoning:
+                                        r_text = ak_reasoning.get("content", "")
+                                        if r_text:
+                                            current_thinking += r_text
+                                            _got_reasoning = True
+                                elif isinstance(ak_reasoning, str) and ak_reasoning:
+                                    current_thinking += ak_reasoning
+                                    _got_reasoning = True
+
+                                if _got_reasoning:
+                                    structured_thinking = True
+                                    if not thinking_shown:
+                                        _show_thinking_start()
+                                        thinking_shown = True
+                                    if not first_content_received:
+                                        first_content_received = True
+                                        _stop_loading()
+
                             elif content and isinstance(content, str):
                                 remaining = content
                                 while remaining:
@@ -955,10 +996,13 @@ async def stream_agent_response_async(
                                                 _show_thinking_start()
                                                 thinking_shown = True
                                         else:
-                                            current_thinking += remaining
-                                            if not thinking_shown:
-                                                _show_thinking_start()
-                                                thinking_shown = True
+                                            # No <think> tags found -- treat as
+                                            # normal response text.  (Previous
+                                            # code assumed tagless content was
+                                            # thinking, which caused a false
+                                            # "Thinking" badge for every model
+                                            # that streams plain strings.)
+                                            current_response += remaining
                                             remaining = ""
 
                     elif event_type == "on_chat_model_end":

@@ -553,6 +553,7 @@ class ChatLog(VerticalScroll):
         self, tool_name: str, args: str = "", tool_input: dict | None = None
     ) -> ToolEntry:
         """Add a running tool call with an inline spinner in the header."""
+        self.cleanup_pending_thinking()
         self._tool_counter += 1
         key = f"tool:{self._tool_counter}"
         entry = ToolEntry(
@@ -697,6 +698,15 @@ class ChatLog(VerticalScroll):
         text.append(" Thinking ", style="black on rgb(180,140,255)")
         return text
 
+    def cleanup_pending_thinking(self) -> None:
+        """Remove an orphan pending thinking header if no content was ever emitted."""
+        if self._pending_thinking_header is not None:
+            with suppress(Exception):
+                if self._pending_thinking_header in self._messages:
+                    self._messages.remove(self._pending_thinking_header)
+                self._pending_thinking_header.remove()
+            self._pending_thinking_header = None
+
     def add_thinking_start(self) -> None:
         """Mount the Thinking badge immediately (before content is available).
 
@@ -716,9 +726,7 @@ class ChatLog(VerticalScroll):
         """Render a thinking block styled like a tool call: badge header + card body."""
         content = content.strip()
         if not content:
-            # Even with no content, clear any pending header so it doesn't
-            # linger into the next thinking block.
-            self._pending_thinking_header = None
+            self.cleanup_pending_thinking()
             return
 
         display = content[:500] + "..." if len(content) > 500 else content
@@ -748,6 +756,7 @@ class ChatLog(VerticalScroll):
         title: str = "",
         level: str = "info",
     ) -> None:
+        self.cleanup_pending_thinking()
         msg = Message(content=content, type=msg_type, title=title, level=level)
         widget = self._create_message_widget(msg)
         self.mount(widget)
@@ -771,6 +780,7 @@ class ChatLog(VerticalScroll):
         self._maybe_prune()
 
     def clear(self) -> None:
+        self.cleanup_pending_thinking()
         for msg_widget in self._messages:
             msg_widget.remove()
         self._messages.clear()
@@ -778,7 +788,6 @@ class ChatLog(VerticalScroll):
         self._tool_counter = 0
         self._prune_placeholder = None
         self._pruned_count = 0
-        self._pending_thinking_header = None
 
     def _scroll_to_bottom(self) -> None:
         self.scroll_end(animate=False)
