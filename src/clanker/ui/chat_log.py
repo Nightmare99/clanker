@@ -363,7 +363,7 @@ class ChatLog(VerticalScroll):
         width: 100%;
         height: 1fr;
         overflow-y: scroll;
-        border: round rgb(0,240,240);
+        border: none;
         padding: 1;
     }
     """
