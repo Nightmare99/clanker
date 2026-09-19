@@ -10,8 +10,6 @@ import math
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from rich import box
-from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.text import Text
 from textual.containers import VerticalScroll
@@ -33,25 +31,34 @@ class MessageType(StrEnum):
 
 # Hero section colors
 _CYAN = "rgb(0,240,240)"
+_BLUE = "rgb(100,190,255)"
 _GREEN = "rgb(180,255,60)"
 _LIME = "rgb(180,255,60)"
 _WHITE = "white"
 _GREY = "rgb(100,100,100)"
 
-# Shades-of-lime shimmer over the ASCII art: how fast the brightness shifts
+# Cyan-to-blue gradient over the ASCII art banner: how fast the color shifts
 # across columns/rows, and how far the phase advances per tick (see
-# _HeroArt._lime_shade_style/_tick). Hue/saturation stay pinned to _LIME --
-# only brightness oscillates, so the wash always reads as lime, never a
-# rainbow. This wash keeps looping for the whole session -- unlike the wave
-# bounce below, it never settles -- since repainting it costs nothing beyond
-# this one widget (see _HeroArt's docstring).
-_LIME_HUE = 0.2308  # hue of _LIME (rgb(180,255,60)) in colorsys's 0..1 scale
-_LIME_SATURATION = 0.75
-_LIME_MIN_VALUE = 0.55  # darkest shade in the shimmer -- never fully dims to black
-_LIME_MAX_VALUE = 1.0  # brightest shade -- matches _LIME itself
-_LIME_COL_STEP = 0.02
-_LIME_ROW_STEP = 0.06
-_LIME_PHASE_STEP = 0.02
+# _HeroArt._gradient_style/_tick). Hue smoothly transitions between cyan and
+# blue across the art banner. This gradient wash keeps looping for the whole session
+# -- unlike the wave bounce below, it never settles -- since repainting it costs
+# nothing beyond this one widget (see _HeroArt's docstring).
+_CYAN_HUE = 0.5  # hue of cyan (180°) in colorsys's 0..1 scale
+_BLUE_HUE = 2 / 3  # hue of blue (240°) in colorsys's 0..1 scale
+_GRADIENT_SATURATION = 0.8
+_GRADIENT_VALUE = 1.0
+_GRADIENT_COL_STEP = 0.02
+_GRADIENT_ROW_STEP = 0.06
+_GRADIENT_PHASE_STEP = 0.02
+
+# Backwards compatibility aliases
+_LIME_HUE = _CYAN_HUE
+_LIME_SATURATION = _GRADIENT_SATURATION
+_LIME_MIN_VALUE = 0.55
+_LIME_MAX_VALUE = 1.0
+_LIME_COL_STEP = _GRADIENT_COL_STEP
+_LIME_ROW_STEP = _GRADIENT_ROW_STEP
+_LIME_PHASE_STEP = _GRADIENT_PHASE_STEP
 
 # How long the hero's vertical bounce keeps animating after reaching its
 # final ("Systems online...") state before it settles flat -- every letter
@@ -84,7 +91,7 @@ class _HeroArt(Static):
     does (which unconditionally requests a relayout, forcing the *whole*
     chat log to re-measure every mounted widget -- see
     ``ChatLog._maybe_prune``) is unneeded tax. A bare repaint only redraws
-    this one widget in place, so the shades-of-lime color wash can keep
+    this one widget in place, so the cyan-to-blue color gradient wash can keep
     looping for the life of the session at near-zero cost.
 
     The vertical bounce is a different story: it's a one-time flourish, not
@@ -106,11 +113,19 @@ class _HeroArt(Static):
         self._is_final: bool = False
         self._model_info: str = ""
         self._yolo_mode: bool = False
-        self._lime_phase = 0.0
+        self._gradient_phase = 0.0
         self._wave_phase = 0.0
         self._wave_settled = False
         self._tick_timer = None
         self._settle_timer = None
+
+    @property
+    def _lime_phase(self) -> float:
+        return self._gradient_phase
+
+    @_lime_phase.setter
+    def _lime_phase(self, val: float) -> None:
+        self._gradient_phase = val
 
     def on_mount(self) -> None:
         self._tick_timer = self.set_interval(0.08, self._tick, name="hero-shimmer")
@@ -170,25 +185,26 @@ class _HeroArt(Static):
         between ticks -- only per-character color and which grid row gets
         sampled for the bounce -- so there's nothing to re-measure.
         """
-        self._lime_phase = (self._lime_phase + _LIME_PHASE_STEP) % 1.0
+        self._gradient_phase = (self._gradient_phase + _GRADIENT_PHASE_STEP) % 1.0
         if not self._wave_settled:
             self._wave_phase = (self._wave_phase + _WAVE_PHASE_STEP) % math.tau
         self.refresh()
 
-    def _lime_shade_style(self, x: int, y: int) -> str:
-        """RGB style string for a shimmering shades-of-lime wash at grid position (x, y).
+    def _gradient_style(self, x: int, y: int) -> str:
+        """RGB style string for a cyan-to-blue gradient wash at grid position (x, y).
 
-        Hue and saturation are pinned to `_LIME`; only brightness (HSV value)
-        oscillates smoothly across the grid via a cosine (so it wraps without
-        a visible seam, unlike a raw sawtooth ramp) -- the result reads as
-        light/dark bands of lime sweeping across the art, never other hues.
+        Hue smoothly transitions between `_CYAN_HUE` and `_BLUE_HUE` across
+        the grid via a cosine wave so it wraps seamlessly without a visible
+        seam.
         """
-        wave = (x * _LIME_COL_STEP + y * _LIME_ROW_STEP + self._lime_phase) % 1.0
-        brightness = _LIME_MIN_VALUE + (_LIME_MAX_VALUE - _LIME_MIN_VALUE) * (
-            (1 + math.cos(wave * math.tau)) / 2
-        )
-        r, g, b = colorsys.hsv_to_rgb(_LIME_HUE, _LIME_SATURATION, brightness)
+        wave = (x * _GRADIENT_COL_STEP + y * _GRADIENT_ROW_STEP + self._gradient_phase) % 1.0
+        factor = (1 + math.cos(wave * math.tau)) / 2
+        hue = _CYAN_HUE + (_BLUE_HUE - _CYAN_HUE) * factor
+        r, g, b = colorsys.hsv_to_rgb(hue, _GRADIENT_SATURATION, _GRADIENT_VALUE)
         return f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"
+
+    def _lime_shade_style(self, x: int, y: int) -> str:
+        return self._gradient_style(x, y)
 
     def _wave_offset(self, x: int) -> int:
         """Vertical row offset (rows) for column *x*'s letter, at the current phase.
@@ -211,8 +227,8 @@ class _HeroArt(Static):
         lift = (math.sin(angle) + 1) / 2  # 0..1
         return -round(_WAVE_AMPLITUDE * lift)
 
-    def _append_lime_art(self, full: Text, art_lines: list[str]) -> None:
-        """Append ASCII art lines to *full*, with a shades-of-lime wash and a per-letter bob.
+    def _append_gradient_art(self, full: Text, art_lines: list[str]) -> None:
+        """Append ASCII art lines to *full*, with a cyan-to-blue gradient wash and a per-letter bob.
 
         Each column is resampled from a row shifted by ``_wave_offset(x)`` so
         each letter appears to bounce up and down. The grid is padded with
@@ -234,30 +250,32 @@ class _HeroArt(Static):
                 src_y = y - self._wave_offset(x)
                 ch = grid[src_y][x]
                 if ch.strip():
-                    full.append(ch, style=f"bold {self._lime_shade_style(x, y)}")
+                    full.append(ch, style=f"bold {self._gradient_style(x, y)}")
                 else:
                     full.append(ch)
             if y < _WAVE_AMPLITUDE + height - 1:
                 full.append("\n")
 
+    _append_lime_art = _append_gradient_art
+
     def _build_text(self) -> Text:
         full = Text()
 
-        # ASCII art — shades-of-lime wash
-        self._append_lime_art(full, self._art_lines)
+        # ASCII art — cyan-to-blue gradient wash
+        self._append_gradient_art(full, self._art_lines)
 
         full.append("\n")
 
         if self._is_final:
-            # Systems online — green
+            # Systems online — cyan
             full.append(
-                "  Systems online. Circuits humming. Ready to build.\n", style=f"bold {_GREEN}"
+                "  Systems online. Circuits humming. Ready to build.\n", style=f"bold {_CYAN}"
             )
             full.append("\n")
 
-            # Model line — label white, name lime
+            # Model line — label white, name blue
             full.append("  Model: ", style=_WHITE)
-            full.append(self._model_info, style=f"bold {_LIME}")
+            full.append(self._model_info, style=f"bold {_BLUE}")
             full.append("\n")
 
             # YOLO indicator
@@ -273,8 +291,8 @@ class _HeroArt(Static):
             # Commands hint — grey
             full.append('  Type "/" for commands', style=_GREY)
         elif self._init_text:
-            # Init / systems online text — green
-            full.append(self._init_text, style=f"bold {_GREEN}")
+            # Init / systems online text — cyan
+            full.append(self._init_text, style=f"bold {_CYAN}")
             full.append("\n")
 
         return full
@@ -372,12 +390,12 @@ class ChatLog(VerticalScroll):
     def add_update_banner(self, current: str, latest: str, install_cmd: str) -> None:
         """Mount a stylized 'update available' card, meant to sit below the hero."""
         text = Text()
-        text.append(" ⬆  UPDATE AVAILABLE ", style=f"bold black on {_LIME}")
+        text.append(" ⬆  UPDATE AVAILABLE ", style=f"bold black on {_CYAN}")
         text.append("\n\n")
         text.append("  ", style="")
         text.append(f"v{current}", style=f"dim {_GREY}")
         text.append("  ─────▶  ", style=f"bold {_CYAN}")
-        text.append(f"v{latest}", style=f"bold {_LIME}")
+        text.append(f"v{latest}", style=f"bold {_BLUE}")
         text.append("\n\n")
         text.append("  ", style="")
         text.append("$ ", style=f"dim {_GREY}")
@@ -701,7 +719,7 @@ class ChatLog(VerticalScroll):
     def cleanup_pending_thinking(self) -> None:
         """Remove an orphan pending thinking header if no content was ever emitted."""
         if self._pending_thinking_header is not None:
-            with suppress(Exception):
+            with contextlib.suppress(Exception):
                 if self._pending_thinking_header in self._messages:
                     self._messages.remove(self._pending_thinking_header)
                 self._pending_thinking_header.remove()
