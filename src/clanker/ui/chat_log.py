@@ -76,9 +76,33 @@ _HERO_SETTLE_SECONDS = 4.0
 _WAVE_AMPLITUDE = 1
 # Column boundaries between letters in _CLNKR_ART -- "C|L|N|K|R". Tuned to the
 # current logo text; update if the ASCII art in app.py changes.
-_WAVE_LETTER_BOUNDS = (1, 9, 17, 26, 35, 43)
+_WAVE_LETTER_BOUNDS = (0, 11, 21, 31, 43, 55)
 _WAVE_LETTER_PHASE_SHIFT = 0.9  # radians of phase delay between adjacent letters
 _WAVE_PHASE_STEP = 0.6  # radians per tick (time speed)
+
+
+def _detect_letter_bounds(art_lines: list[str]) -> tuple[int, ...] | None:
+    """Detect column boundaries for glyphs separated by blank columns."""
+    lines = [line for line in art_lines if line.strip()]
+    if len(lines) < 2:
+        return None
+    width = max(len(line) for line in lines)
+    col_has_char = [any(x < len(line) and line[x] != " " for line in lines) for x in range(width)]
+    spans: list[tuple[int, int]] = []
+    in_letter = False
+    start = 0
+    for x, has in enumerate(col_has_char):
+        if has and not in_letter:
+            start = x
+            in_letter = True
+        elif not has and in_letter:
+            spans.append((start, x))
+            in_letter = False
+    if in_letter:
+        spans.append((start, width))
+    if len(spans) < 2:
+        return None
+    return tuple([s for s, _ in spans] + [spans[-1][1]])
 
 
 class _HeroArt(Static):
@@ -116,6 +140,7 @@ class _HeroArt(Static):
         self._gradient_phase = 0.0
         self._wave_phase = 0.0
         self._wave_settled = False
+        self._letter_bounds: tuple[int, ...] = _WAVE_LETTER_BOUNDS
         self._tick_timer = None
         self._settle_timer = None
 
@@ -147,6 +172,9 @@ class _HeroArt(Static):
         during the ~1-2s boot sequence, not on every animation tick.
         """
         self._art_lines = art.split("\n")
+        detected = _detect_letter_bounds(self._art_lines)
+        if detected is not None:
+            self._letter_bounds = detected
         self._init_text = init_text
         self._is_final = False
         self.refresh(layout=True)
@@ -159,6 +187,9 @@ class _HeroArt(Static):
         see ``set_art``.
         """
         self._art_lines = art.split("\n")
+        detected = _detect_letter_bounds(self._art_lines)
+        if detected is not None:
+            self._letter_bounds = detected
         self._model_info = model_info
         self._yolo_mode = yolo_mode
         self._is_final = True
@@ -221,8 +252,9 @@ class _HeroArt(Static):
         """
         if self._wave_settled:
             return 0
-        letter_index = bisect.bisect_right(_WAVE_LETTER_BOUNDS, x) - 1
-        letter_index = max(0, min(letter_index, len(_WAVE_LETTER_BOUNDS) - 2))
+        bounds = getattr(self, "_letter_bounds", _WAVE_LETTER_BOUNDS)
+        letter_index = bisect.bisect_right(bounds, x) - 1
+        letter_index = max(0, min(letter_index, len(bounds) - 2))
         angle = self._wave_phase + letter_index * _WAVE_LETTER_PHASE_SHIFT
         lift = (math.sin(angle) + 1) / 2  # 0..1
         return -round(_WAVE_AMPLITUDE * lift)

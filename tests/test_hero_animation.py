@@ -7,10 +7,12 @@ import colorsys
 import math
 import re
 
+from clanker.ui.app import _CLNKR_ART
 from clanker.ui.chat_log import (
     _BLUE_HUE,
     _CYAN_HUE,
     _GRADIENT_PHASE_STEP,
+    _detect_letter_bounds,
     _HeroArt,
 )
 
@@ -126,3 +128,33 @@ def test_set_final_only_schedules_settle_timer_once() -> None:
     hero.set_final("CLNKR", "model-a", False)
 
     assert len(calls) == 1
+
+
+def test_detect_letter_bounds_for_clnkr_art() -> None:
+    bounds = _detect_letter_bounds(_CLNKR_ART.split("\n"))
+    assert bounds == (0, 11, 21, 31, 43, 55)
+    # 5 letters -> 6 boundary points
+    assert len(bounds) == 6
+
+
+def test_last_two_letters_do_not_wobble_together() -> None:
+    """Regression test: K and R in _CLNKR_ART must not wobble together.
+    They must have distinct offsets during transitions in the wave cycle.
+    """
+    hero = _make_hero()
+    hero.set_art(_CLNKR_ART)
+
+    # Column 36 is inside 'K' (cols 31..41), column 48 is inside 'R' (cols 43..54)
+    k_col = 36
+    r_col = 48
+
+    # Across a full wave cycle, K and R must differ in offset during transitions
+    diff_count = 0
+    total_steps = 60
+    for step in range(total_steps):
+        hero._wave_phase = step * (math.tau / total_steps)
+        if hero._wave_offset(k_col) != hero._wave_offset(r_col):
+            diff_count += 1
+
+    # They should differ in a significant portion (~30%) of the cycle, never 0%
+    assert diff_count >= 10
