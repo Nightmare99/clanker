@@ -176,7 +176,7 @@ def _interaction_handler(task: ManagedTask, app: Any) -> Callable[..., dict[str,
             task.run.error = "This task needs user input. Resolve the question in the parent conversation and start a new task."
             task.cancel("needs_input")
             return cancelled
-        from clanker.ui.task_prompt import TaskPromptScreen
+        from clanker.ui.task_prompt import show_prompt_modal
 
         deadline = task.run.started_at + task.run.timeout_seconds
 
@@ -190,23 +190,17 @@ def _interaction_handler(task: ManagedTask, app: Any) -> Callable[..., dict[str,
                 break
         else:
             return cancelled
-        screen = TaskPromptScreen(task.run.agent_name, question, options, **kwargs)
-        response: list[dict[str, Any]] = []
-        answered = threading.Event()
-
-        def receive(result: dict[str, Any]) -> None:
-            response.append(result)
-            answered.set()
 
         try:
             task.run.status = "waiting"
-            app.call_from_thread(app.push_screen, screen, receive)
-            while not answered.wait(0.05):
-                if stopped():
-                    with contextlib.suppress(Exception):
-                        app.call_from_thread(screen.action_cancel)
-                    return cancelled
-            return response[0] if response else cancelled
+            return show_prompt_modal(
+                app,
+                task.run.agent_name,
+                question,
+                options,
+                check_cancelled=stopped,
+                **kwargs,
+            )
         finally:
             if not task.stop.is_set():
                 task.run.status = "running"

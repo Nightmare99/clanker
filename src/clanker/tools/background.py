@@ -25,7 +25,7 @@ import signal
 import tempfile
 import threading
 import time
-from collections.abc import Awaitable
+from collections.abc import Coroutine
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -65,7 +65,7 @@ class Job:
     ended_at: float | None = None
     bytes_written: int = 0
     tail: bytearray = field(default_factory=bytearray)
-    _reader_task: asyncio.Task | None = None
+    _reader_task: asyncio.Task[None] | None = None
     _timeout_handle: asyncio.TimerHandle | None = None
     _done: asyncio.Event | None = None  # set when state leaves "running"
 
@@ -119,11 +119,11 @@ class JobManager:
     def loop(self) -> asyncio.AbstractEventLoop:
         return self._loop
 
-    def submit(self, coro: Awaitable[T]) -> Future[T]:
+    def submit(self, coro: Coroutine[Any, Any, T]) -> Future[T]:
         """Schedule a coroutine on the manager's loop, return a Future."""
         return asyncio.run_coroutine_threadsafe(coro, self._loop)
 
-    def run(self, coro: Awaitable[T], timeout: float | None = None) -> T:
+    def run(self, coro: Coroutine[Any, Any, T], timeout: float | None = None) -> T:
         """Schedule a coroutine and block until it completes."""
         return self.submit(coro).result(timeout=timeout)
 
@@ -374,6 +374,30 @@ class JobManager:
                     await self._terminate(job)
 
         await asyncio.wrap_future(self.submit(_do()))
+
+    def close(self, timeout: float = 3.0) -> None:
+        """Terminate all running jobs, stop the loop, and join the thread."""
+        if not self._thread.is_alive():
+            return
+        try:
+            async def _cleanup() -> None:
+                running = [j for j in self._jobs.values() if j.state == "running"]
+                for job in running:
+                    job.state = "killed"
+                    with contextlib.suppress(Exception):
+                        await self._terminate(job)
+
+            if self._loop.is_running():
+                future = self.submit(_cleanup())
+                with contextlib.suppress(Exception):
+                    future.result(timeout=timeout)
+        finally:
+            if self._loop.is_running():
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join(timeout=timeout)
+            if not self._loop.is_closed():
+                with contextlib.suppress(Exception):
+                    self._loop.close()
 
 
 _manager: JobManager | None = None

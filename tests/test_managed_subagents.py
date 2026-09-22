@@ -233,7 +233,7 @@ async def test_tasks_panel_messages_and_stop(managed):
 async def test_in_app_approval_response_and_cancellation(managed):
     from clanker.ui.task_prompt import TaskPromptScreen
 
-    run = SubagentRun("test", "Run checks")
+    run = SubagentRun("test", "Run checks", timeout_seconds=5)
     task = module.ManagedTask(run)
     app = App()
     async with app.run_test(size=(80, 28)) as pilot:
@@ -249,15 +249,21 @@ async def test_in_app_approval_response_and_cancellation(managed):
 
         app.screen.query_one(SelectionList).select(0)
         await pilot.click("#question-submit")
-        assert await pending == {"selected": ["Yes"], "cancelled": False}
+        assert await asyncio.wait_for(pending, timeout=5.0) == {"selected": ["Yes"], "cancelled": False}
         assert run.status == "running"
+
+        for _ in range(50):
+            await pilot.pause(0.02)
+            if not isinstance(app.screen, TaskPromptScreen):
+                break
+
         pending = asyncio.create_task(asyncio.to_thread(handler, "Run more?", ["Yes", "No"]))
         for _ in range(50):
             await pilot.pause(0.02)
             if isinstance(app.screen, TaskPromptScreen):
                 break
         task.cancel()
-        assert (await pending)["cancelled"]
+        assert (await asyncio.wait_for(pending, timeout=5.0))["cancelled"]
         await pilot.pause()
         assert not isinstance(app.screen, TaskPromptScreen)
 

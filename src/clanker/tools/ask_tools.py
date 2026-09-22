@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
+from contextvars import ContextVar
+from typing import Any
 
 from langchain_core.tools import tool
 
@@ -28,26 +30,35 @@ logger = get_logger("tools.ask")
 # Upper bound on options to keep the menu usable.
 MAX_OPTIONS = 10
 
-# Thread-local asker callback set by the streaming layer.
+# Asker callback set by the streaming layer.
 # Signature: (question, options, multi_select, allow_other, allow_cancel) -> dict
+# Uses ContextVar so it propagates across asyncio.to_thread / run_in_executor boundaries.
+# Falls back to threading.local for thread isolation if ContextVar is unset.
+_ask_callback_var: ContextVar[Callable[..., dict[str, Any]] | None] = ContextVar(
+    "_ask_callback", default=None
+)
 _thread_locals = threading.local()
 
 
-def set_ask_callback(callback: Callable[..., dict] | None) -> None:
+def set_ask_callback(callback: Callable[..., dict[str, Any]] | None) -> None:
     """Register the interactive asker used by ask_user.
 
     Called by the streaming layer before graph execution so ask_user can drive
     the Rich/prompt_toolkit selector. Pass None to clear it (falls back to a
     plain stdin prompt).
 
-    Uses thread-local storage so parallel subagents each get their own
-    isolated callback scope.
+    Uses ContextVar (with thread-local fallback) so parallel subagents and
+    async threadpool workers each get their own isolated callback scope.
     """
+    _ask_callback_var.set(callback)
     _thread_locals._ask_callback = callback
 
 
-def get_ask_callback() -> Callable[..., dict] | None:
+def get_ask_callback() -> Callable[..., dict[str, Any]] | None:
     """Return the currently registered asker callback."""
+    cb = _ask_callback_var.get()
+    if cb is not None:
+        return cb
     return getattr(_thread_locals, "_ask_callback", None)
 
 
@@ -58,7 +69,7 @@ def ask_user(
     multi_select: bool = False,
     allow_other: bool = True,
     allow_cancel: bool = True,
-) -> dict:
+) -> dict[str, Any]:
     """Ask the user a multiple-choice question and wait for their answer.
 
     Use this when you hit a genuine fork that only the user can decide and that

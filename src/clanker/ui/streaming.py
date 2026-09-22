@@ -5,14 +5,18 @@ Coordinates the async agent stream with the Textual TUI. The streaming logic
 rendering layer now pushes into Textual widgets instead of Rich Live displays.
 """
 
+from __future__ import annotations
+
 import asyncio
 import os
 import signal
 import sys
 import threading
+from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 if TYPE_CHECKING:
     from clanker.ui.console import Console
@@ -31,21 +35,26 @@ from clanker.tools.notify_tools import get_notify_callback, set_notify_callback
 from clanker.ui import tool_summary
 from clanker.ui.tool_display import ToolDisplayHandler, normalize_tool_output
 
+_active_console_var: ContextVar[Any] = ContextVar("_active_console", default=None)
 _local_state = threading.local()
 
 
-def get_active_console() -> "Console":
+def get_active_console() -> Console:
     """Get the currently active Console wrapper instance, or a default one."""
+    console = _active_console_var.get()
+    if console is not None:
+        return cast("Console", console)
     if getattr(_local_state, "active_console", None) is not None:
-        return _local_state.active_console
+        return cast("Console", _local_state.active_console)
     from clanker.ui.console import Console
+
     return Console()
 
 # Persistent event loop for the streaming session
 _persistent_loop: asyncio.AbstractEventLoop | None = None
 
 # Track the currently running streaming task for signal-based cancellation
-_current_streaming_task: asyncio.Task | None = None
+_current_streaming_task: asyncio.Task[StreamResult] | None = None
 _interrupted: bool = False
 
 # Backward-compatible stub: Textual TUI no longer uses Rich Live spinner.
@@ -68,7 +77,7 @@ def reset_interrupted() -> None:
     _interrupted = False
 
 
-def _asyncio_exception_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+def _asyncio_exception_handler(loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
     """Custom exception handler to suppress expected cleanup errors."""
     exception = context.get("exception")
     message = context.get("message", "")
@@ -107,7 +116,7 @@ def cleanup_event_loop() -> None:
         _persistent_loop = None
 
 
-def _teardown_live_displays(rich_console, stop_loading, tool_handler) -> None:
+def _teardown_live_displays(rich_console: Any, stop_loading: Any, tool_handler: Any) -> None:
     """Backward-compatible stub. Textual TUI no longer uses Rich Live displays."""
     with suppress(Exception):
         stop_loading()
@@ -117,7 +126,7 @@ def _teardown_live_displays(rich_console, stop_loading, tool_handler) -> None:
         rich_console.clear_live()
 
 
-async def _heal_orphaned_tool_calls(graph, config) -> None:
+async def _heal_orphaned_tool_calls(graph: Any, config: dict[str, Any]) -> None:
     """Repair orphaned tool_use blocks left in the checkpoint."""
     heal_logger = get_logger("streaming")
     try:
@@ -142,7 +151,7 @@ async def _heal_orphaned_tool_calls(graph, config) -> None:
         heal_logger.debug("Failed to heal orphaned tool calls: %s", exc)
 
 
-async def _compact_oversized_tool_call_args(graph, config, settings) -> None:
+async def _compact_oversized_tool_call_args(graph: Any, config: dict[str, Any], settings: Settings) -> None:
     """Shrink oversized tool-call args in the committed checkpoint after a 413."""
     heal_logger = get_logger("streaming")
     try:
@@ -194,7 +203,7 @@ class StreamResult:
 
 
 @contextmanager
-def _suppress_subprocess_stderr():
+def _suppress_subprocess_stderr() -> Iterator[None]:
     """Suppress stderr from subprocesses at fd level."""
     saved_stderr_fd: int | None = None
     original_stderr_fd: int | None = None
@@ -217,7 +226,7 @@ def _suppress_subprocess_stderr():
             os.close(saved_stderr_fd)
 
 
-def _get_tool_arg_summary(tool_name: str, tool_input: dict) -> str:
+def _get_tool_arg_summary(tool_name: str, tool_input: dict[str, Any]) -> str:
     """Get a short argument summary for a tool call."""
     args = tool_input or {}
     if tool_name in ("read_file", "write_file", "edit_file", "append_file"):
@@ -256,7 +265,7 @@ def _get_tool_arg_summary(tool_name: str, tool_input: dict) -> str:
         return ""
 
 
-def _extract_user_query(messages: list) -> str | None:
+def _extract_user_query(messages: list[Any]) -> str | None:
     """Best-effort text of the newest HumanMessage in *messages*.
 
     Used to build `get_system_prompt`'s `user_query`, which drives
@@ -287,17 +296,17 @@ def _extract_user_query(messages: list) -> str | None:
 
 async def stream_agent_response_async(
     settings: Settings,
-    checkpointer,
-    state: dict,
-    config: dict,
-    console,
-    tools: list | None = None,
-    middleware: list | None = None,
+    checkpointer: Any,
+    state: dict[str, Any],
+    config: dict[str, Any],
+    console: Any,
+    tools: list[Any] | None = None,
+    middleware: list[Any] | None = None,
     system_prompt: str | None = None,
-    progress_callback=None,
+    progress_callback: Callable[..., Any] | None = None,
     model_name: str | None = None,
-    input_queue: "asyncio.Queue[str] | None" = None,
-    event_callback=None,
+    input_queue: asyncio.Queue[str] | None = None,
+    event_callback: Callable[..., Any] | None = None,
 ) -> StreamResult:
     """Async handler for streaming agent response."""
     from langgraph.errors import GraphRecursionError
@@ -306,8 +315,10 @@ async def stream_agent_response_async(
     from clanker.ui.chat_log import MessageType
 
     # Track active console and callbacks
+    reset_interrupted()
     old_console = getattr(_local_state, "active_console", None)
     _local_state.active_console = console
+    _active_console_var.set(console)
 
     old_notify = get_notify_callback()
     old_ask = get_ask_callback()
@@ -345,7 +356,7 @@ async def stream_agent_response_async(
     async def _compaction_occurred() -> bool:
         try:
             snapshot = await graph.aget_state(config)
-            return (snapshot.values or {}).get("compaction_count", 0) > _compaction_count_before
+            return bool((snapshot.values or {}).get("compaction_count", 0) > _compaction_count_before)
         except Exception:
             return False
 
@@ -367,9 +378,9 @@ async def stream_agent_response_async(
 
     # Track TUI tool state per run_id for debounced loading indicators
     from clanker.ui.chat_log import ToolEntry
-    _tui_tool_pending: dict[str, dict] = {}  # run_id -> {name, args}
+    _tui_tool_pending: dict[str, dict[str, Any]] = {}  # run_id -> {name, args, input}
     _tui_tool_entries: dict[str, ToolEntry] = {}  # run_id -> mounted entry (after debounce fires)
-    _tui_debounce_tasks: dict[str, asyncio.Task] = {}  # run_id -> debounce task
+    _tui_debounce_tasks: dict[str, asyncio.Task[None]] = {}  # run_id -> debounce task
 
     # Loading state
     first_content_received = False
@@ -383,14 +394,15 @@ async def stream_agent_response_async(
     in_summarization_call = False
 
     # Debounced tool loader: mounts LoadingIndicator after delay if tool still running
-    async def _tool_debounce(run_id: str, tool_name: str, args: str, tool_input: dict) -> None:
+    async def _tool_debounce(run_id: str, tool_name: str, args: str, tool_input: dict[str, Any]) -> None:
         await asyncio.sleep(0.2)
         if run_id in _tui_tool_pending and run_id not in _tui_tool_entries:
             # Tool still running after 200ms — show loader
             try:
-                chat_log = textual_app.get_chat_log()
-                entry = chat_log.add_tool_start(tool_name, args, tool_input=tool_input)
-                _tui_tool_entries[run_id] = entry
+                if textual_app is not None:
+                    chat_log = textual_app.get_chat_log()
+                    entry = chat_log.add_tool_start(tool_name, args, tool_input=tool_input)
+                    _tui_tool_entries[run_id] = entry
             except Exception:
                 pass
             finally:
@@ -523,13 +535,37 @@ async def stream_agent_response_async(
     set_notify_callback(_notify_callback)
 
     # Register ask callback
-    def _ask_callback(question, options, *, multi_select, allow_other, allow_cancel):
-        from clanker.ui.prompts import select_options
-
+    def _ask_callback(
+        question: str,
+        options: list[str],
+        *,
+        multi_select: bool,
+        allow_other: bool,
+        allow_cancel: bool,
+    ) -> dict[str, Any]:
         _stop_loading()
         with suppress(Exception):
             tool_handler.finalize_live()
         try:
+            if textual_app is not None:
+                # In TUI mode, prompt_toolkit / input() are invisible to the
+                # user because Textual owns the terminal. Push a modal
+                # dialog and block until the user responds.
+                from clanker.ui.task_prompt import show_prompt_modal
+
+                return show_prompt_modal(
+                    textual_app,
+                    "clanker",
+                    question,
+                    options,
+                    multi_select=multi_select,
+                    allow_other=allow_other,
+                    allow_cancel=allow_cancel,
+                    check_cancelled=lambda: _interrupted,
+                )
+
+            from clanker.ui.prompts import select_options
+
             return select_options(
                 question,
                 options,
@@ -543,13 +579,32 @@ async def stream_agent_response_async(
     set_ask_callback(_ask_callback)
 
     # Register approval callback
-    def _approval_callback(question, options, *, preface=None):
-        from clanker.ui.prompts import select_options
-
+    def _approval_callback(
+        question: str,
+        options: list[str],
+        *,
+        preface: str | None = None,
+    ) -> dict[str, Any]:
         _stop_loading()
         with suppress(Exception):
             tool_handler.finalize_live()
         try:
+            if textual_app is not None:
+                from clanker.ui.task_prompt import show_prompt_modal
+
+                return show_prompt_modal(
+                    textual_app,
+                    "clanker",
+                    question,
+                    options,
+                    allow_other=False,
+                    allow_cancel=False,
+                    preface=preface,
+                    check_cancelled=lambda: _interrupted,
+                )
+
+            from clanker.ui.prompts import select_options
+
             return select_options(
                 question,
                 options,
@@ -646,13 +701,11 @@ async def stream_agent_response_async(
 
                                 # Fire progress callback for subagent tracking
                                 if progress_callback:
-                                    try:
+                                    with suppress(Exception):
                                         progress_callback(
                                             "start", tool_name_ev, arg_str,
                                             tool_input=tool_input,
                                         )
-                                    except Exception:
-                                        pass
 
                                 # todo_write/todo_read never get a transcript entry in the
                                 # TUI -- the pinned panel above the input bar (updated at
@@ -724,6 +777,21 @@ async def stream_agent_response_async(
                             _start_loading()
                             continue
                         elif tool_name_end.lower() == "ask_user":
+                            if textual_app and settings.output.show_tool_calls:
+                                from clanker.ui.tool_summary import parse_tool_json
+
+                                output = normalize_tool_output(event.get("data", {}).get("output"))
+                                parsed = parse_tool_json(output)
+                                if parsed:
+                                    selected = parsed.get("selected", [])
+                                    cancelled = parsed.get("cancelled", False)
+                                    if cancelled:
+                                        summary = "question cancelled"
+                                    else:
+                                        summary = f"selected: {', '.join(selected)}"
+                                    textual_app.get_chat_log().add_tool_complete(
+                                        "ask_user", summary, "", success=not cancelled
+                                    )
                             _start_loading()
                             continue
 
@@ -734,10 +802,8 @@ async def stream_agent_response_async(
 
                             # Fire progress callback for subagent tracking
                             if progress_callback:
-                                try:
+                                with suppress(Exception):
                                     progress_callback("end", tool_name_end, "", tool_output)
-                                except Exception:
-                                    pass
 
                             if textual_app and tool_name_end in ("todo_write", "todo_read"):
                                 # No transcript entry -- the pinned panel above the input
@@ -755,11 +821,6 @@ async def stream_agent_response_async(
                                 try:
                                     chat_log = textual_app.get_chat_log()
 
-                                    is_error = console._is_failed_tool_result(
-                                        tool_output, tool_name_end,
-                                        tool_handler._pending_inputs[0][2] if tool_handler._pending_inputs else None
-                                    ) if tool_handler._pending_inputs else False
-
                                     run_id_end = event.get("run_id", "")
 
                                     # Cancel debounce task if tool finished before it fired
@@ -767,14 +828,28 @@ async def stream_agent_response_async(
                                     if debounce_task is not None and not debounce_task.done():
                                         debounce_task.cancel()
                                         # Suppress CancelledError — consume it in the next await
-                                        try:
+                                        with suppress(asyncio.CancelledError):
                                             await debounce_task
-                                        except asyncio.CancelledError:
-                                            pass
 
                                     # Check if debounce timer already mounted a loader
                                     existing_entry = _tui_tool_entries.pop(run_id_end, None)
                                     pending_info = _tui_tool_pending.pop(run_id_end, None)
+
+                                    tool_input_end: dict[str, Any] | None = None
+                                    if existing_entry is not None and getattr(existing_entry, "tool_input", None):
+                                        tool_input_end = existing_entry.tool_input
+                                    elif pending_info is not None and "input" in pending_info:
+                                        tool_input_end = pending_info["input"]
+                                    if tool_input_end is None:
+                                        raw_input = event.get("data", {}).get("input")
+                                        if isinstance(raw_input, dict):
+                                            tool_input_end = raw_input
+
+                                    is_error = bool(
+                                        console._is_failed_tool_result(
+                                            tool_output, tool_name_end, tool_input_end
+                                        )
+                                    )
 
                                     if existing_entry is not None:
                                         # Loader was already showing — replace with result
@@ -792,12 +867,12 @@ async def stream_agent_response_async(
                                         )
                                     else:
                                         # Fallback: no tracking info available
-                                        tool_input_end = event.get("data", {}).get("input", {})
-                                        arg_str_end = _get_tool_arg_summary(tool_name_end, tool_input_end)
+                                        fb_input = tool_input_end or {}
+                                        arg_str_end = _get_tool_arg_summary(tool_name_end, fb_input)
                                         chat_log.add_tool_complete(
                                             tool_name_end, arg_str_end, tool_output,
                                             success=not is_error,
-                                            tool_input=tool_input_end,
+                                            tool_input=fb_input,
                                         )
                                 except Exception:
                                     pass
@@ -1155,6 +1230,7 @@ async def stream_agent_response_async(
         set_ask_callback(old_ask)
         set_approval_callback(old_approval)
         _local_state.active_console = old_console
+        _active_console_var.set(old_console)
 
     # Flush whatever the final model call accumulated (response and/or thinking).
     final_response = _flush_current_turn_text()
@@ -1183,12 +1259,12 @@ async def stream_agent_response_async(
 
 def stream_agent_response_sync(
     settings: Settings,
-    checkpointer,
-    state: dict,
-    config: dict,
-    console,
-    tools: list | None = None,
-    middleware: list | None = None,
+    checkpointer: Any,
+    state: dict[str, Any],
+    config: dict[str, Any],
+    console: Any,
+    tools: list[Any] | None = None,
+    middleware: list[Any] | None = None,
     system_prompt: str | None = None,
 ) -> StreamResult:
     """Synchronous wrapper for async stream_agent_response."""
@@ -1198,7 +1274,7 @@ def stream_agent_response_sync(
     original_handler = None
     try:
         original_handler = signal.getsignal(signal.SIGINT)
-        def _sigint_handler(signum, frame):
+        def _sigint_handler(signum: int, frame: Any) -> None:
             _cancel_streaming_task()
         signal.signal(signal.SIGINT, _sigint_handler)
     except ValueError:
@@ -1219,8 +1295,8 @@ def stream_agent_response_sync(
             )
 
             if is_main_thread:
-                res_container = []
-                def run_isolated():
+                res_container: list[StreamResult | Exception] = []
+                def run_isolated() -> None:
                     new_loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(new_loop)
                     try:
@@ -1240,7 +1316,9 @@ def stream_agent_response_sync(
                 t.join()
                 if res_container and isinstance(res_container[0], Exception):
                     raise res_container[0]
-                return res_container[0] if res_container else StreamResult(response="")
+                if res_container and isinstance(res_container[0], StreamResult):
+                    return res_container[0]
+                return StreamResult(response="")
             else:
                 future = asyncio.run_coroutine_threadsafe(coro, active_loop)
                 return future.result()

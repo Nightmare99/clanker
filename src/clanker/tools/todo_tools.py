@@ -15,11 +15,18 @@ clobbering each other through a shared list.
 from __future__ import annotations
 
 import threading
+from contextvars import ContextVar
+from typing import Any
 
 from langchain_core.tools import tool
 
 _VALID_STATUSES = ("pending", "in_progress", "completed")
 
+# Uses ContextVar so the store propagates across asyncio.to_thread / run_in_executor boundaries.
+# Falls back to threading.local for thread isolation if ContextVar is unset.
+_todo_store_var: ContextVar[TodoStore | None] = ContextVar(
+    "_todo_store", default=None
+)
 _thread_locals = threading.local()
 
 
@@ -33,7 +40,7 @@ class TodoItem:
         self.status = status
         self.active_form = active_form
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, str]:
         return {
             "content": self.content,
             "status": self.status,
@@ -59,10 +66,13 @@ class TodoStore:
 
 
 def get_todo_store() -> TodoStore:
-    """Return the current thread's todo store, creating it on first use."""
-    store = getattr(_thread_locals, "todo_store", None)
+    """Return the current context/thread's todo store, creating it on first use."""
+    store = _todo_store_var.get()
+    if store is None:
+        store = getattr(_thread_locals, "todo_store", None)
     if store is None:
         store = TodoStore()
+        _todo_store_var.set(store)
         _thread_locals.todo_store = store
     return store
 
@@ -107,7 +117,7 @@ def clear_todos_if_completed() -> bool:
     return True
 
 
-def _summary(items: list[TodoItem]) -> dict:
+def _summary(items: list[TodoItem]) -> dict[str, int]:
     return {
         "total": len(items),
         "completed": sum(1 for i in items if i.status == "completed"),
@@ -117,7 +127,7 @@ def _summary(items: list[TodoItem]) -> dict:
 
 
 @tool
-def todo_write(todos: list[dict]) -> dict:
+def todo_write(todos: list[dict[str, Any]]) -> dict[str, Any]:
     """Write out (or update) the current task's todo list / plan.
 
     Optional planning tool -- use it for multi-step or non-trivial work
@@ -178,7 +188,7 @@ def todo_write(todos: list[dict]) -> dict:
 
 
 @tool
-def todo_read() -> dict:
+def todo_read() -> dict[str, Any]:
     """Read the current todo list / plan.
 
     Use this to check progress -- e.g. after a long detour, several tool

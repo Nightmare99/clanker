@@ -13,6 +13,8 @@ callbacks.
 
 import threading
 from collections.abc import Callable
+from contextvars import ContextVar
+from typing import Any
 
 from langchain_core.tools import tool
 
@@ -20,9 +22,14 @@ from clanker.logging import get_logger
 
 logger = get_logger("tools.notify")
 
-# Thread-local output callback set by the streaming layer.
+# Output callback set by the streaming layer.
 # Signature: (message: str, level: str, title: str | None) -> None
 # When None, falls back to plain print().
+# Uses ContextVar so it propagates across asyncio.to_thread / run_in_executor boundaries.
+# Falls back to threading.local for thread isolation if ContextVar is unset.
+_notify_callback_var: ContextVar[Callable[[str, str, str | None], None] | None] = (
+    ContextVar("_notify_callback", default=None)
+)
 _thread_locals = threading.local()
 
 
@@ -32,23 +39,27 @@ def set_notify_callback(callback: Callable[[str, str, str | None], None] | None)
     Called by the streaming layer before graph execution begins so that
     notify() can write directly to the Rich console mid-stream.
 
-    Uses thread-local storage so parallel subagents each get their own
-    isolated callback scope.
+    Uses ContextVar (with thread-local fallback) so parallel subagents and
+    async threadpool workers each get their own isolated callback scope.
 
     Args:
         callback: Function that accepts (message, level, title) and prints to
                   the console, or None to clear the callback.
     """
+    _notify_callback_var.set(callback)
     _thread_locals._output_callback = callback
 
 
 def get_notify_callback() -> Callable[[str, str, str | None], None] | None:
     """Return the currently registered notify callback."""
+    cb = _notify_callback_var.get()
+    if cb is not None:
+        return cb
     return getattr(_thread_locals, "_output_callback", None)
 
 
 @tool
-def notify(message: str, level: str = "info", title: str | None = None) -> dict:
+def notify(message: str, level: str = "info", title: str | None = None) -> dict[str, Any]:
     """Send an immediate status update or progress message to the user.
 
     Use this tool liberally and often to keep the user continuously informed

@@ -38,13 +38,10 @@ def _fresh_manager(monkeypatch, tmp_path):
     monkeypatch.setattr(bg, "_JOB_LOG_DIR", tmp_path / "logs")
     monkeypatch.setattr(bg, "_manager", None)
     yield
-    # Best-effort cleanup of any still-running jobs.
+    # Best-effort cleanup of any still-running jobs, stopping loop & thread.
     mgr = bg._manager
     if mgr is not None:
-        for job in list(mgr.all()):
-            if job.state == "running":
-                with contextlib.suppress(Exception):
-                    asyncio.get_event_loop().run_until_complete(mgr._terminate(job))
+        mgr.close()
 
 
 # ---------------------------------------------------------------------------

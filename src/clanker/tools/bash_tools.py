@@ -7,7 +7,10 @@ import signal
 import subprocess
 import threading
 import time
+from collections.abc import Callable
+from contextvars import ContextVar
 from functools import partial
+from typing import Any
 
 from langchain.tools import tool
 
@@ -56,27 +59,36 @@ _APPROVE_YES = "Yes, execute"
 _APPROVE_ALWAYS = "Yes, and don't ask again (this session)"
 _APPROVE_NO = "No, reject and stop"
 
-# Thread-local approval prompter set by the streaming layer, mirroring the
+# Approval prompter set by the streaming layer, mirroring the
 # notify/ask callbacks. Signature: (question, options, preface) -> dict with
 # {"selected": [...], "cancelled": bool}. When None, a plain stdin prompt is used.
+# Uses ContextVar so it propagates across asyncio.to_thread / run_in_executor boundaries.
+# Falls back to threading.local for thread isolation if ContextVar is unset.
+_approval_callback_var: ContextVar[Callable[..., dict[str, Any]] | None] = ContextVar(
+    "_approval_callback", default=None
+)
 _approval_thread_locals = threading.local()
 
 
-def set_approval_callback(callback) -> None:
+def set_approval_callback(callback: Callable[..., dict[str, Any]] | None) -> None:
     """Register the interactive approval prompter.
 
     Called by the streaming layer before graph execution so the bash approval
     gate can use the same arrow-key menu as ask_user (with spinner coordination).
     Pass None to clear it (falls back to a plain numbered stdin prompt).
 
-    Uses thread-local storage so parallel subagents each get their own
-    isolated callback scope.
+    Uses ContextVar (with thread-local fallback) so parallel subagents and
+    async threadpool workers each get their own isolated callback scope.
     """
+    _approval_callback_var.set(callback)
     _approval_thread_locals._approval_callback = callback
 
 
-def get_approval_callback():
+def get_approval_callback() -> Callable[..., dict[str, Any]] | None:
     """Return the currently registered approval callback."""
+    cb = _approval_callback_var.get()
+    if cb is not None:
+        return cb
     return getattr(_approval_thread_locals, "_approval_callback", None)
 
 
@@ -150,7 +162,7 @@ def prompt_for_approval(command: str) -> bool:
     return True
 
 
-def _approval_fallback(preface: str, options: list[str]) -> dict:
+def _approval_fallback(preface: str, options: list[str]) -> dict[str, Any]:
     """Numbered-list approval prompt for non-interactive / piped stdin."""
     print()
     print(preface)
