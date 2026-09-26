@@ -62,7 +62,9 @@ Inside the interactive session:
 | `/mcp` | Show MCP server status |
 | `/logs` | Show logging status and log files |
 | `/history` | List past conversations |
-| `/restore <id>` | Restore a previous session |
+| `/restore` or `/resume` | Open a picker for saved conversations, newest first |
+| `/restore <id>` or `/resume <id>` | Resume a known session ID directly |
+| `/import` | Import a local Codex, Claude Code, OpenCode, or GitHub Copilot CLI conversation |
 | `/memories` | Show stored memories |
 | `/remember <text>` | Save a memory |
 | `/forget <id>` | Delete a memory |
@@ -88,6 +90,33 @@ Switched to model: GPT-4o (AzureOpenAI)
 ```
 
 Models are configured in `~/.clanker/models.json` or via `clanker config`.
+
+### Resuming and importing conversations
+
+Use `/restore` or `/resume` to browse this workspace's saved conversations.
+The picker sorts by the most recent update, displays 10 entries per page,
+and supports filtering by title or ID. Use PageUp/PageDown or the page buttons,
+then Enter to resume. Escape cancels without changing the current conversation.
+The CLI flag `clanker --resume <session-id>` still resumes a known ID at startup.
+
+Use `/import` for a guided import: choose the source, choose a local session,
+review its title and message count, then select **Import**. It creates a new
+Clanker session in the current workspace and opens it for your next message.
+Only sessions from the current workspace with a user prompt appear in the picker;
+setup records such as Codex's injected `AGENTS.md` instructions are excluded.
+Existing Clanker and source sessions are left intact. Clanker imports user
+prompts and assistant replies as text. Source tool calls, tool results,
+reasoning, system instructions, and image bytes are not transferred. A source
+session's tools or model settings are not carried into Clanker.
+
+The wizard discovers local histories at `~/.codex/sessions/` (and
+`archived_sessions/`), `~/.claude/projects/`,
+`~/.local/share/opencode/opencode.db`, and
+`~/.copilot/session-state/*/events.jsonl`. It honors `CODEX_HOME`,
+`CLAUDE_CONFIG_DIR`, `XDG_DATA_HOME`, and `COPILOT_HOME` where applicable.
+GitHub Copilot import covers the Copilot **CLI** history; editor chat history
+uses different storage. The same flow is available with numbered pages in
+`--no-tui` mode.
 
 ## Keyboard Shortcuts
 
@@ -124,8 +153,9 @@ journaled. Closing Clanker clears the in-memory journal; conversation restore
 does not restore undo history. The agent is told which files you undo so it
 can re-read them on its next turn.
 
-Input history is persisted across sessions to `~/.clanker/input_history.txt`
-(last 500 entries).
+Input history is persisted across sessions to `~/.clanker/input_history.json`
+(last 500 entries, including pasted content and image attachments). Existing
+`input_history.txt` entries are loaded when the JSON history does not exist.
 
 ### Pasting
 
@@ -150,8 +180,8 @@ shown as a compact placeholder rather than dropped or garbled:
 - **Backspace/Delete** removes a whole placeholder in one keystroke rather
   than eating into it character by character — including when the cursor
   has been moved into the middle of one.
-- Input history (↑/↓ recall) keeps the placeholder form, since the field
-  can't safely redisplay an already-expanded multi-line paste.
+- Input history (↑/↓ recall) keeps the placeholder form in the single-line
+  field; opening the multiline composer restores the full pasted text.
 
 ### Sending Messages While the Agent Is Working
 

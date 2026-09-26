@@ -296,11 +296,7 @@ class SessionManager:
         sessions = []
 
         # Look for .meta.json files
-        for meta_path in sorted(
-            self._storage.conversations_dir.glob("*.meta.json"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        ):
+        for meta_path in self._storage.conversations_dir.glob("*.meta.json"):
             try:
                 with open(meta_path, encoding="utf-8") as f:
                     metadata = json.load(f)
@@ -321,10 +317,14 @@ class SessionManager:
                     "model": metadata.get("model"),
                     "message_count": message_count,
                 })
-            except (json.JSONDecodeError, KeyError):
+            except (json.JSONDecodeError, KeyError, OSError):
                 continue
 
-        return sessions
+        return sorted(
+            sessions,
+            key=lambda session: session.get("updated_at") or session.get("created_at") or "",
+            reverse=True,
+        )
 
     def delete_session(self, session_id: str) -> bool:
         """Delete a session and its data.

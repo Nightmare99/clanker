@@ -27,6 +27,7 @@ from clanker.ui.clipboard_image import (
     read_clipboard_image,
 )
 from clanker.ui.completion_menu import CompletionMenu
+from clanker.ui.conversation_picker import ConversationPickerScreen, ImportSelection, ImportWizardScreen
 from clanker.ui.history_modal import HistoryScreen
 from clanker.ui.message_composer import MessageComposer
 from clanker.ui.prompt_history import PromptDraft
@@ -58,7 +59,7 @@ _SLASH_COMMANDS = [
     "/changes", "/tasks",
     "/clear", "/compact", "/config", "/copilot-login", "/exit", "/forget",
     "/help", "/history", "/list_memories", "/logs", "/memories", "/model",
-    "/mcp", "/remember", "/restore", "/skill", "/workflow",
+    "/import", "/mcp", "/remember", "/restore", "/resume", "/skill", "/workflow",
 ]
 
 
@@ -1127,6 +1128,24 @@ class ClankerApp(App):
             self.action_show_subagents()
             return "skip"
 
+        command = text.strip().lower()
+        head = command.split(maxsplit=1)[0]
+        if head in ("/restore", "/resume", "/import") and getattr(self, "_processing", False):
+            self.get_chat_log().add_message(
+                "Wait for the current turn before switching conversations.", MessageType.WARNING
+            )
+            return "skip"
+        if command in ("/restore", "/resume"):
+            self.push_screen(
+                ConversationPickerScreen(self._session_manager.list_sessions()),
+                self._restore_session,
+            )
+            return "skip"
+        if command == "/import":
+            working_directory = self._working_dir or self._session_manager._workspace_path
+            self.push_screen(ImportWizardScreen(working_directory), self._import_session)
+            return "skip"
+
         if text.strip().lower() == "/copilot-login":
             # Runs in a background worker instead of through handle_command's
             # blocking poll loop -- that loop runs on the same thread as the
@@ -1161,43 +1180,69 @@ class ClankerApp(App):
         if result == "exit":
             return "exit"
         if result and result.startswith("restore:"):
-            session_id = result.split(":", 1)[1]
-            messages = session_manager.get_session_messages(session_id)
-            if messages:
-                if conversation_messages:
-                    session_manager.save_conversation_snapshot(conversation_messages)
-                session_manager.resume_session(session_id)
-                # Mutate in place rather than rebinding -- `conversation_messages`
-                # is the SAME list object as `self._conversation_messages`, which
-                # `_run_agent` keeps appending to and using for future snapshot
-                # saves, and which the history modal (F3) reads directly. A
-                # rebind here would silently drop the restored history from both.
-                conversation_messages.clear()
-                conversation_messages.extend(messages)
-                self._pending_restore_messages = list(messages)
-                self._refresh_selected_model()
-                from clanker.config import get_default_model, get_model_by_name
-
-                restored_name = session_manager.model_name if session_manager else None
-                cm = (get_model_by_name(restored_name) if restored_name else None) or get_default_model()
-                token_tracker = getattr(self, "_token_tracker", None)
-                if cm and token_tracker:
-                    token_tracker.model_name = cm.name
-                    token_tracker.context_window = cm.max_input_tokens
-                chat_log.add_message(
-                    f"Restored session {session_id} with {len(messages)} messages",
-                    MessageType.INFO,
-                )
-            else:
-                chat_log.add_message(
-                    f"Session {session_id} not found", MessageType.WARNING
-                )
+            self._restore_session(result.split(":", 1)[1])
             return "skip"
         if result and (result.startswith("workflow:") or result.startswith("skill:")):
             return result.split(":", 1)[1]
         if result is None or result == "":
             return "skip"
         return "skip"
+
+    def _restore_session(self, session_id: str | None) -> None:
+        if not session_id:
+            return
+        session_manager = self._session_manager
+        conversation_messages = self._conversation_messages
+        chat_log = self.get_chat_log()
+        if session_id == session_manager.session_id:
+            chat_log.add_message(f"Session {session_id} is already active.", MessageType.INFO)
+            return
+        messages = session_manager.get_session_messages(session_id)
+        if not messages:
+            chat_log.add_message(f"Session {session_id} not found", MessageType.WARNING)
+            return
+        if conversation_messages:
+            session_manager.save_conversation_snapshot(conversation_messages)
+        session_manager.resume_session(session_id)
+        # Keep the list object shared with F3 and the agent execution path.
+        conversation_messages.clear()
+        conversation_messages.extend(messages)
+        self._pending_restore_messages = list(messages)
+        self._refresh_selected_model()
+        self._refresh_session_model_usage()
+        chat_log.add_message(
+            f"Restored session {session_id} with {len(messages)} messages", MessageType.INFO
+        )
+
+    def _refresh_session_model_usage(self) -> None:
+        from clanker.config import get_default_model, get_model_by_name
+
+        active_name = self._session_manager.model_name
+        model = (get_model_by_name(active_name) if active_name else None) or get_default_model()
+        tracker = getattr(self, "_token_tracker", None)
+        if model and tracker:
+            tracker.model_name = model.name
+            tracker.context_window = model.max_input_tokens
+
+    def _import_session(self, selection: ImportSelection | None) -> None:
+        if selection is None:
+            return
+        manager = self._session_manager
+        if self._conversation_messages:
+            manager.save_conversation_snapshot(self._conversation_messages)
+        manager.new_session()
+        manager.set_title(f"{selection.candidate.source}: {selection.candidate.title}"[:100])
+        manager.save_conversation_snapshot(selection.messages)
+        self._conversation_messages.clear()
+        self._conversation_messages.extend(selection.messages)
+        self._pending_restore_messages = list(selection.messages)
+        self._refresh_selected_model()
+        self._refresh_session_model_usage()
+        self.get_chat_log().add_message(
+            f"Imported {len(selection.messages)} messages from {selection.candidate.source} "
+            f"as session {manager.session_id}. Continue the conversation below.",
+            MessageType.SUCCESS,
+        )
 
     # --- Agent execution ---
 
@@ -1395,7 +1440,7 @@ class ClankerApp(App):
             elif cmd == "/workflow":
                 from clanker.workflows import list_workflows
                 completions = list_workflows()
-            elif cmd == "/restore":
+            elif cmd in ("/restore", "/resume"):
                 completions = []
                 try:
                     sm = self._session_manager

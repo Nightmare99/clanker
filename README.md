@@ -59,6 +59,11 @@ clanker --yolo                 # Auto-execute bash commands (skip approval)
 clanker --check-update         # Check for updates
 ```
 
+Inside Clanker, `/restore` (or `/resume`) opens a paginated conversation
+picker. `/import` guides you through importing Codex, Claude Code, OpenCode,
+or GitHub Copilot CLI sessions from the current workspace. See the
+[usage guide](docs/usage.md#resuming-and-importing-conversations).
+
 ## Documentation
 
 | Topic | Description |

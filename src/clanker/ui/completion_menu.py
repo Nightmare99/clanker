@@ -10,7 +10,7 @@ from textual.geometry import Offset
 from textual.widgets import Static
 
 # Commands that accept subcommand arguments for completion
-_SUBCOMMAND_CMDS = {"/model", "/skill", "/workflow", "/restore"}
+_SUBCOMMAND_CMDS = {"/model", "/skill", "/workflow", "/restore", "/resume"}
 
 # Cap on visible rows before the menu scrolls instead of growing further.
 # Kept in sync with the CSS max-height below (+2 there accounts for the border).

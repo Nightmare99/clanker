@@ -3,6 +3,7 @@
 
 import contextlib
 import os
+import sqlite3
 import sys
 import time
 import warnings
@@ -354,23 +355,21 @@ def handle_command(
                 console.print(f"           {created}  ({s['message_count']} messages)")
                 lines.append(f"  {s['id']}  {title}")
                 lines.append(f"           {created}  ({s['message_count']} messages)")
-            footer = "\nUse /restore <id> to resume a conversation."
+            footer = "\nUse /restore or /resume to pick a conversation."
             console.print_info(footer)
             lines.append(footer)
         _mirror("\n".join(lines))
 
-    elif cmd.startswith("/restore"):
+    elif parts[0].lower() in ("/restore", "/resume"):
         parts = command.strip().split(maxsplit=1)
         if len(parts) < 2:
-            console.print_warning("Usage: /restore <session-id>")
-            console.print_info("Use /history to see available sessions.")
-            _mirror(
-                "Usage: /restore <session-id>\nUse /history to see available sessions.",
-                MessageType.WARNING,
-            )
+            return "restore_picker"
         else:
             session_id = parts[1].strip()
             return f"restore:{session_id}"
+
+    elif cmd == "/import":
+        return "import_wizard"
 
     elif cmd == "/compact":
         if conversation_messages is None:
@@ -599,7 +598,7 @@ class CommandCompleter:
 
     COMMANDS = [
         "/help", "/exit", "/quit", "/q", "/clear", "/model", "/copilot-login",
-        "/config", "/mcp", "/logs", "/history", "/restore", "/compact",
+        "/config", "/mcp", "/logs", "/history", "/restore", "/resume", "/import", "/compact",
         "/memories", "/remember", "/forget", "/workflow", "/skill",
     ]
 
@@ -928,6 +927,28 @@ def main(
                 run_interactive_legacy(console, settings, resume_session=resume)
 
 
+def _choose_legacy(items, label, prompt_session, console, title):
+    """Small paged picker for --no-tui sessions and import wizard steps."""
+    if not items:
+        console.print_info(f"{title}: no conversations found.")
+        return None
+    page = 0
+    pages = (len(items) + 9) // 10
+    while True:
+        console.print_info(f"{title} ({len(items)} total, page {page + 1}/{pages})")
+        for index, item in enumerate(items[page * 10:(page + 1) * 10], start=1):
+            console.print(f"  {index}. {escape(str(label(item)))}")
+        answer = prompt_session.prompt("Number, n next, p previous, q cancel: ").strip().lower()
+        if answer == "q" or not answer:
+            return None
+        if answer == "n":
+            page = min(page + 1, pages - 1)
+        elif answer == "p":
+            page = max(page - 1, 0)
+        elif answer.isdigit() and 1 <= int(answer) <= len(items[page * 10:(page + 1) * 10]):
+            return items[page * 10 + int(answer) - 1]
+
+
 def run_interactive_legacy(
     console: Console,
     settings: Settings,
@@ -967,7 +988,7 @@ def run_interactive_legacy(
 
     class CommandCompleter(Completer):
         COMMANDS = ["/help", "/exit", "/quit", "/q", "/clear", "/model", "/copilot-login",
-                    "/config", "/mcp", "/logs", "/history", "/restore", "/compact",
+                    "/config", "/mcp", "/logs", "/history", "/restore", "/resume", "/import", "/compact",
                     "/memories", "/remember", "/forget", "/workflow", "/skill"]
 
         def get_completions(self, document, complete_event):
@@ -1021,7 +1042,47 @@ def run_interactive_legacy(
                         session_manager.save_conversation_snapshot(conversation_messages)
                     cleanup_event_loop()
                     break
-                elif result and result.startswith("restore:"):
+                elif result == "restore_picker":
+                    sessions = session_manager.list_sessions()
+                    sessions.sort(key=lambda s: s.get("updated_at") or s.get("created_at") or "", reverse=True)
+                    selected = _choose_legacy(
+                        sessions, lambda s: f"{s.get('title') or 'Untitled'}  ·  {s.get('updated_at', '')[:16]}  ·  {s.get('id')}",
+                        prompt_session, console, "Choose a conversation",
+                    )
+                    result = f"restore:{selected['id']}" if selected else None
+                elif result == "import_wizard":
+                    from clanker.memory.importers import SOURCES, discover, load
+
+                    source = _choose_legacy(
+                        list(SOURCES), str, prompt_session, console, "Import: choose source"
+                    )
+                    if source:
+                        candidates = discover(source, working_dir)
+                        candidate = _choose_legacy(
+                            candidates,
+                            lambda c: f"{c.title}  ·  {c.updated_at[:16]}  ·  {c.session_id}",
+                            prompt_session, console, f"Import: choose {source} conversation",
+                        )
+                        if candidate:
+                            try:
+                                imported = load(candidate)
+                            except (OSError, ValueError, sqlite3.Error) as exc:
+                                console.print_warning(f"Could not import session: {exc}")
+                                continue
+                            console.print_info(
+                                f"{candidate.title} · {len(imported)} messages · {candidate.cwd or 'workspace unknown'}"
+                            )
+                            if prompt_session.prompt("Import this conversation? [y/N] ").strip().lower() == "y":
+                                if conversation_messages:
+                                    session_manager.save_conversation_snapshot(conversation_messages)
+                                session_manager.new_session()
+                                session_manager.set_title(f"{source}: {candidate.title}"[:100])
+                                session_manager.save_conversation_snapshot(imported)
+                                conversation_messages = list(imported)
+                                pending_restore_messages = list(imported)
+                                console.print_info(f"Imported as session {session_manager.session_id}")
+                    continue
+                if result and result.startswith("restore:"):
                     session_id = result.split(":", 1)[1]
                     messages = session_manager.get_session_messages(session_id)
                     if messages:

@@ -171,7 +171,9 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("History & Memory", [
         ("/history", "List past conversations"),
-        ("/restore", "Resume a previous session (usage: /restore <id>)"),
+        ("/restore", "Pick a conversation to resume (or /restore <id>)"),
+        ("/resume", "Alias for /restore"),
+        ("/import", "Import a Codex, Claude Code, OpenCode, or Copilot CLI conversation"),
         ("/compact", "Compact the current conversation history manually"),
         ("/memories", "Show stored workspace memories"),
         ("/remember", "Store a memory (usage: /remember <text>)"),
@@ -964,4 +966,3 @@ Commands:
             text.append_text(gauge)
 
         self._console.print(text)
-
