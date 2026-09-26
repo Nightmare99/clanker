@@ -152,6 +152,9 @@ def handle_command(
         _mirror(build_help_text(markup=False))
 
     elif cmd == "/clear":
+        if conversation_messages:
+            session_manager.save_conversation_snapshot(conversation_messages)
+            conversation_messages.clear()
         console.clear()
         session_manager.new_session()
 
@@ -603,6 +606,12 @@ class CommandCompleter:
     ]
 
 
+def _print_resume_hint(console: Console, session_id: str) -> None:
+    """Show a command that reopens the saved conversation from this workspace."""
+    console.print_info(f"Session ID: {session_id}")
+    console.print_info(f"Resume here: clanker --resume {session_id}")
+
+
 def run_interactive(
     console: Console,
     settings: Settings,
@@ -700,6 +709,7 @@ def run_interactive(
     # Cleanup on exit
     if conversation_messages:
         session_manager.save_conversation_snapshot(conversation_messages)
+        _print_resume_hint(console, session_manager.session_id)
     cleanup_event_loop()
 
 
@@ -1017,6 +1027,7 @@ def run_interactive_legacy(
     from clanker.agent.prompts import load_user_instructions
     _has_user_instructions = bool(load_user_instructions())
     console.print_welcome(user_instructions_loaded=_has_user_instructions)
+    console.print_info(f"Session ID: {session_manager.session_id}")
 
     active_model_name = session_manager.model_name
     current_model = (get_model_by_name(active_model_name) if active_model_name else None) or get_default_model()
@@ -1037,6 +1048,9 @@ def run_interactive_legacy(
 
             if user_input.startswith("/"):
                 result = handle_command(user_input, console, session_manager, conversation_messages)
+                if user_input.lower() == "/clear":
+                    pending_restore_messages = []
+                    console.print_info(f"Session ID: {session_manager.session_id}")
                 if result == "exit":
                     if conversation_messages:
                         session_manager.save_conversation_snapshot(conversation_messages)
@@ -1166,6 +1180,9 @@ def run_interactive_legacy(
                 session_manager.save_conversation_snapshot(conversation_messages)
             console.print("\n[bold cyan]*BZZZT*[/bold cyan] Powering down. [bold cyan]*click*[/bold cyan]")
             break
+
+    if conversation_messages:
+        _print_resume_hint(console, session_manager.session_id)
 
 
 @main.command()

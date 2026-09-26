@@ -11,7 +11,7 @@ _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇"
 
 
 class StatusBar(Horizontal):
-    """Top status bar showing tokens and selected model."""
+    """Top status bar showing the session, usage, and selected model."""
 
     can_focus = False
 
@@ -28,6 +28,13 @@ class StatusBar(Horizontal):
 
     StatusBar.visible {
         visibility: visible;
+    }
+
+    #status-session {
+        color: rgb(180,255,60);
+        text-style: bold;
+        width: auto;
+        margin-right: 1;
     }
 
     #status-model {
@@ -48,6 +55,7 @@ class StatusBar(Horizontal):
     }
     """
 
+    session_id = reactive("")
     model_name = reactive("")
     token_info = reactive("")
     context_info = reactive("")
@@ -70,13 +78,14 @@ class StatusBar(Horizontal):
         self._render_subagent_info()
 
     def compose(self) -> ComposeResult:
+        yield Label("", id="status-session", markup=False)
         yield Label("", id="status-subagents")
         yield Label("", id="status-tokens")
         yield Label("", id="status-model", markup=False)
 
     def _update_visibility(self) -> None:
         has_content = bool(
-            self.model_name or self.token_info or self.subagent_info
+            self.session_id or self.model_name or self.token_info or self.subagent_info
         )
         if has_content:
             self.add_class("visible")
@@ -85,6 +94,10 @@ class StatusBar(Horizontal):
 
     def watch_model_name(self, value: str) -> None:
         self.query_one("#status-model", Label).update(f"  {value}" if value else "")
+        self._update_visibility()
+
+    def watch_session_id(self, value: str) -> None:
+        self.query_one("#status-session", Label).update(f"Session ID: {value}" if value else "")
         self._update_visibility()
 
     def watch_token_info(self, value: str) -> None:

@@ -765,6 +765,7 @@ class ClankerApp(App):
 
     def on_mount(self) -> None:
         self._refresh_selected_model()
+        self._refresh_session_id()
         bottom_status = self.query_one(WorkspaceStatus)
         self.watch(self.get_status_bar(), "context_info", bottom_status.set_context)
         self.watch(self.get_status_bar(), "loading_info", bottom_status.set_loading)
@@ -840,6 +841,14 @@ class ClankerApp(App):
         model = (get_model_by_name(model_name) if model_name else None) or get_default_model()
         if status_bar:
             status_bar.model_name = model.name if model else ""
+
+    def _refresh_session_id(self) -> None:
+        try:
+            status_bar = self.get_status_bar()
+        except Exception:
+            return
+        manager = self._session_manager
+        status_bar.session_id = manager.session_id if manager else ""
 
     def get_todo_panel(self) -> TodoPanel:
         return self.query_one("#todo-panel", TodoPanel)
@@ -1167,6 +1176,9 @@ class ClankerApp(App):
         result = handle_command(
             text, console, session_manager, conversation_messages, chat_log
         )
+        self._refresh_session_id()
+        if head == "/clear":
+            self._pending_restore_messages = []
         if text.split(maxsplit=1)[0].lower() == "/model":
             self._refresh_selected_model()
             from clanker.config import get_default_model, get_model_by_name
@@ -1204,6 +1216,7 @@ class ClankerApp(App):
         if conversation_messages:
             session_manager.save_conversation_snapshot(conversation_messages)
         session_manager.resume_session(session_id)
+        self._refresh_session_id()
         # Keep the list object shared with F3 and the agent execution path.
         conversation_messages.clear()
         conversation_messages.extend(messages)
@@ -1231,6 +1244,7 @@ class ClankerApp(App):
         if self._conversation_messages:
             manager.save_conversation_snapshot(self._conversation_messages)
         manager.new_session()
+        self._refresh_session_id()
         manager.set_title(f"{selection.candidate.source}: {selection.candidate.title}"[:100])
         manager.save_conversation_snapshot(selection.messages)
         self._conversation_messages.clear()

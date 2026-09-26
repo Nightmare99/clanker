@@ -98,6 +98,9 @@ The picker sorts by the most recent update, displays 10 entries per page,
 and supports filtering by title or ID. Use PageUp/PageDown or the page buttons,
 then Enter to resume. Escape cancels without changing the current conversation.
 The CLI flag `clanker --resume <session-id>` still resumes a known ID at startup.
+The active session ID appears in the TUI's top status bar. When you exit a
+conversation with messages, Clanker prints its ID and the
+`clanker --resume <session-id>` command in the terminal. Run it from the same workspace.
 
 Use `/import` for a guided import: choose the source, choose a local session,
 review its title and message count, then select **Import**. It creates a new
