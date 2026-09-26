@@ -720,6 +720,13 @@ class ClankerApp(App):
         # when the parent starts a new turn.
         self._subagent_runs: list[SubagentRun] = []
         self._change_journal = ChangeJournal()
+        self._session_manager = None
+        self._token_tracker = None
+        self._conversation_messages = []
+        self._pending_restore_messages = []
+        self._settings = None
+        self._working_dir = None
+        self._user_instructions_loaded = False
 
     def _load_history(self) -> list[PromptDraft]:
         """Load input history from file across sessions."""
@@ -820,10 +827,18 @@ class ClankerApp(App):
         self.push_screen(ShortcutHelpScreen())
 
     def _refresh_selected_model(self) -> None:
-        from clanker.config import get_default_model
+        from clanker.config import get_default_model, get_model_by_name
 
-        model = get_default_model()
-        self.get_status_bar().model_name = model.name if model else ""
+        try:
+            status_bar = self.get_status_bar()
+        except Exception:
+            return
+
+        session_manager = getattr(self, "_session_manager", None)
+        model_name = getattr(session_manager, "model_name", None) if session_manager else None
+        model = (get_model_by_name(model_name) if model_name else None) or get_default_model()
+        if status_bar:
+            status_bar.model_name = model.name if model else ""
 
     def get_todo_panel(self) -> TodoPanel:
         return self.query_one("#todo-panel", TodoPanel)
@@ -939,7 +954,8 @@ class ClankerApp(App):
         from clanker.ui.streaming import reset_interrupted
 
         self.interrupt_requested = False
-        self._interrupt_event.clear()
+        if hasattr(self, "_interrupt_event"):
+            self._interrupt_event.clear()
         reset_interrupted()
 
     def add_subagent_tokens(
@@ -957,10 +973,11 @@ class ClankerApp(App):
         and cost so the status bar shows accurate session totals.
         """
         try:
-            from clanker.config import get_default_model
+            from clanker.config import get_default_model, get_model_by_name
 
             token_tracker = self._token_tracker
-            cm = get_default_model()
+            session_model = self._session_manager.model_name if self._session_manager else None
+            cm = (get_model_by_name(session_model) if session_model else None) or get_default_model()
             if cost_usd is not None:
                 turn_cost = cost_usd
             elif cm:
@@ -1133,6 +1150,14 @@ class ClankerApp(App):
         )
         if text.split(maxsplit=1)[0].lower() == "/model":
             self._refresh_selected_model()
+            from clanker.config import get_default_model, get_model_by_name
+
+            active_model_name = session_manager.model_name if session_manager else None
+            cm = (get_model_by_name(active_model_name) if active_model_name else None) or get_default_model()
+            token_tracker = getattr(self, "_token_tracker", None)
+            if cm and token_tracker:
+                token_tracker.model_name = cm.name
+                token_tracker.context_window = cm.max_input_tokens
         if result == "exit":
             return "exit"
         if result and result.startswith("restore:"):
@@ -1150,6 +1175,15 @@ class ClankerApp(App):
                 conversation_messages.clear()
                 conversation_messages.extend(messages)
                 self._pending_restore_messages = list(messages)
+                self._refresh_selected_model()
+                from clanker.config import get_default_model, get_model_by_name
+
+                restored_name = session_manager.model_name if session_manager else None
+                cm = (get_model_by_name(restored_name) if restored_name else None) or get_default_model()
+                token_tracker = getattr(self, "_token_tracker", None)
+                if cm and token_tracker:
+                    token_tracker.model_name = cm.name
+                    token_tracker.context_window = cm.max_input_tokens
                 chat_log.add_message(
                     f"Restored session {session_id} with {len(messages)} messages",
                     MessageType.INFO,
@@ -1213,6 +1247,7 @@ class ClankerApp(App):
         try:
             logger.info("Processing user message: %s", user_input[:100])
 
+            session_model = session_manager.model_name if session_manager else None
             result: StreamResult = await stream_agent_response_async(
                 settings,
                 session_manager.checkpointer,
@@ -1220,11 +1255,16 @@ class ClankerApp(App):
                 session_manager.get_config(),
                 console,
                 input_queue=self._input_queue,
+                model_name=session_model,
             )
 
             if result.input_tokens > 0 or result.output_tokens > 0:
-                cm = get_default_model()
+                from clanker.config import get_default_model, get_model_by_name
+
+                cm = (get_model_by_name(session_model) if session_model else None) or get_default_model()
                 token_tracker.context_window = cm.max_input_tokens if cm else None
+                if cm:
+                    token_tracker.model_name = cm.name
                 turn_cost = cm.compute_cost(
                     result.input_tokens,
                     result.output_tokens,

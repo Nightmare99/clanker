@@ -376,7 +376,7 @@ async def _execute(task: ManagedTask, agent_config: Any, settings: Settings, con
             tools=_resolve_tools(agent_config.tools),
             system_prompt=_build_subagent_system_prompt(agent_config.system_prompt)
             + f"\nWorking directory: {run.working_directory}\nAll relative paths and shell commands use this directory.",
-            model_name=agent_config.model,
+            model_name=run.model,
             input_queue=inbox,
             event_callback=_event_handler(task, settings.subagents.repeated_failure_limit),
         )
@@ -534,6 +534,15 @@ async def spawn_subagent(
     max_tokens = max_tokens if max_tokens is not None else settings.subagents.max_tokens
     if timeout_seconds <= 0 or max_tokens <= 0:
         return {"success": False, "error": "Time and token budgets must be positive."}
+    parent_console = get_active_console()
+    app = getattr(parent_console, "_textual_app", None)
+    parent_model = agent_config.model
+    if not parent_model and app is not None:
+        session_manager = getattr(app, "_session_manager", None)
+        if session_manager is not None:
+            sm_model = getattr(session_manager, "model_name", None)
+            if isinstance(sm_model, str):
+                parent_model = sm_model
     run = SubagentRun(
         agent_name=agent_name,
         prompt=prompt,
@@ -541,13 +550,11 @@ async def spawn_subagent(
         timeout_seconds=min(timeout_seconds, settings.subagents.timeout_seconds),
         max_tokens=min(max_tokens, settings.subagents.max_tokens),
         working_directory=root,
-        model=agent_config.model,
+        model=parent_model,
     )
     task = ManagedTask(run)
     with _lock:
         _tasks[run.task_id] = task
-    parent_console = get_active_console()
-    app = getattr(parent_console, "_textual_app", None)
     if app is not None:
         app.register_subagent_run(run)
     context = copy_context()

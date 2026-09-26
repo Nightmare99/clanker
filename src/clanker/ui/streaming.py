@@ -1248,6 +1248,7 @@ def stream_agent_response_sync(
     tools: list[Any] | None = None,
     middleware: list[Any] | None = None,
     system_prompt: str | None = None,
+    model_name: str | None = None,
 ) -> StreamResult:
     """Synchronous wrapper for async stream_agent_response."""
     global _current_streaming_task, _interrupted
@@ -1273,7 +1274,8 @@ def stream_agent_response_sync(
         if active_loop is not None and active_loop.is_running():
             coro = stream_agent_response_async(
                 settings, checkpointer, state, config, console,
-                tools=tools, middleware=middleware, system_prompt=system_prompt
+                tools=tools, middleware=middleware, system_prompt=system_prompt,
+                model_name=model_name,
             )
 
             if is_main_thread:
@@ -1285,7 +1287,8 @@ def stream_agent_response_sync(
                         res = new_loop.run_until_complete(
                             stream_agent_response_async(
                                 settings, checkpointer, state, config, console,
-                                tools=tools, middleware=middleware, system_prompt=system_prompt
+                                tools=tools, middleware=middleware, system_prompt=system_prompt,
+                                model_name=model_name,
                             )
                         )
                         res_container.append(res)
@@ -1309,7 +1312,8 @@ def stream_agent_response_sync(
         _current_streaming_task = loop.create_task(
             stream_agent_response_async(
                 settings, checkpointer, state, config, console,
-                tools=tools, middleware=middleware, system_prompt=system_prompt
+                tools=tools, middleware=middleware, system_prompt=system_prompt,
+                model_name=model_name,
             )
         )
         return loop.run_until_complete(_current_streaming_task)

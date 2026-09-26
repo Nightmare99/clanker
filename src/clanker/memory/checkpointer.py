@@ -1,5 +1,6 @@
 """Checkpointer setup for session persistence."""
 
+import contextlib
 import json
 import uuid
 from datetime import datetime
@@ -129,11 +130,13 @@ def _dict_to_message(data: dict):
 class SessionManager:
     """Manage session lifecycle and configuration."""
 
-    def __init__(self, workspace_path: str | None = None):
+    def __init__(self, workspace_path: str | None = None, model_name: str | None = None):
         """Initialize the session manager.
 
         Args:
             workspace_path: Optional workspace path for storage.
+            model_name: Optional explicit model name to pin to this session.
+                        If omitted, initializes from the current default model.
         """
         self._current_session: str | None = None
         self._checkpointer = None
@@ -141,6 +144,28 @@ class SessionManager:
         self._storage = get_workspace_storage(workspace_path)
         self._session_title: str | None = None
         self._session_created: str | None = None
+        if model_name is not None:
+            self._model_name: str | None = model_name
+        else:
+            try:
+                from clanker.config import get_default_model
+                default = get_default_model()
+                self._model_name = default.name if default else None
+            except Exception:
+                self._model_name = None
+
+    @property
+    def model_name(self) -> str | None:
+        """Get the model pinned to this session."""
+        return self._model_name
+
+    @model_name.setter
+    def model_name(self, value: str | None) -> None:
+        """Set the model pinned to this session."""
+        self._model_name = value
+        if self._current_session is not None:
+            with contextlib.suppress(Exception):
+                self._save_session_metadata()
 
     @property
     def session_id(self) -> str:
@@ -175,6 +200,8 @@ class SessionManager:
         if metadata:
             self._session_title = metadata.get("title")
             self._session_created = metadata.get("created_at")
+            if "model" in metadata and metadata.get("model") is not None:
+                self._model_name = metadata.get("model")
 
     def get_config(self) -> dict:
         """Get the configuration for graph invocation."""
@@ -213,6 +240,7 @@ class SessionManager:
             "title": self._session_title or "Untitled",
             "created_at": self._session_created or datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
+            "model": self._model_name,
         }
 
         with open(meta_path, "w", encoding="utf-8") as f:
@@ -245,6 +273,7 @@ class SessionManager:
             "title": self._session_title or "Untitled",
             "created_at": self._session_created or datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
+            "model": self._model_name,
             "message_count": len(messages),
             "messages": [_message_to_dict(m) for m in messages],
         }
@@ -289,6 +318,7 @@ class SessionManager:
                     "title": metadata.get("title", "Untitled"),
                     "created_at": metadata.get("created_at", ""),
                     "updated_at": metadata.get("updated_at", ""),
+                    "model": metadata.get("model"),
                     "message_count": message_count,
                 })
             except (json.JSONDecodeError, KeyError):

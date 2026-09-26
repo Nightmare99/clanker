@@ -6,10 +6,6 @@ import os
 import sys
 import time
 import warnings
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from clanker.ui.app import ClankerApp
 
 warnings.filterwarnings("ignore", message="Core Pydantic V1 functionality")
 
@@ -174,11 +170,16 @@ def handle_command(
     elif cmd.startswith("/model"):
         model_names = list_model_names()
         if len(parts) == 1:
-            current = get_default_model()
+            session_model = session_manager.model_name if session_manager else None
+            current = (get_model_by_name(session_model) if session_model else None) or get_default_model()
+            default_model = get_default_model()
             lines = []
             if current:
-                console.print_info(f"Current model: {current.name} ({current.provider})")
-                lines.append(f"Current model: {current.name} ({current.provider})")
+                model_desc = f"Current model: {current.name} ({current.provider})"
+                if default_model and default_model.name != current.name:
+                    model_desc += f"  (default: {default_model.name})"
+                console.print_info(model_desc)
+                lines.append(model_desc)
             else:
                 console.print_warning("No model configured.")
                 lines.append("No model configured.")
@@ -204,6 +205,8 @@ def handle_command(
             target_name = parts[1].strip()
             model = get_model_by_name(target_name)
             if model:
+                if session_manager:
+                    session_manager.model_name = target_name
                 set_default_model(target_name)
                 console.print_success(f"Switched to model: {model.name} ({model.provider})")
                 console.print_info("Note: Changes take effect on next message.")
@@ -268,7 +271,8 @@ def handle_command(
     elif cmd == "/config":
         settings = get_settings()
         lines = [f"Config file: {CONFIG_PATH}", f"Agent name: {settings.agent.name}"]
-        current_model = get_default_model()
+        session_model = session_manager.model_name if session_manager else None
+        current_model = (get_model_by_name(session_model) if session_model else None) or get_default_model()
         if current_model:
             lines.append(f"Model: {current_model.name}")
             lines.append(f"Provider: {current_model.provider}")
@@ -600,7 +604,12 @@ class CommandCompleter:
     ]
 
 
-def run_interactive(console: Console, settings: Settings, resume_session: str | None = None) -> None:
+def run_interactive(
+    console: Console,
+    settings: Settings,
+    resume_session: str | None = None,
+    initial_model: str | None = None,
+) -> None:
     """Run the interactive TUI."""
     logger.info("Starting interactive TUI mode")
 
@@ -610,7 +619,7 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
     # block exits -- including via sys.exit() below -- right before the TUI
     # takes the alternate screen.
     with console.loading_spinner("Booting up...") as update_status:
-        session_manager = SessionManager()
+        session_manager = SessionManager(model_name=initial_model)
 
         resumed_messages: list | None = None
         if resume_session:
@@ -618,6 +627,8 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
             messages = session_manager.get_session_messages(resume_session)
             if messages:
                 session_manager.resume_session(resume_session)
+                if initial_model:
+                    session_manager.model_name = initial_model
                 resumed_messages = messages
                 console.print_info(f"Resuming session {resume_session} with {len(messages)} messages")
             else:
@@ -626,12 +637,13 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
         logger.debug("Session manager initialized: session_id=%s", session_manager.session_id)
 
         try:
-            current_model = get_default_model()
+            active_model_name = session_manager.model_name
+            current_model = (get_model_by_name(active_model_name) if active_model_name else None) or get_default_model()
             if current_model:
                 logger.info("Validating model config: %s (provider=%s)",
                             current_model.name, current_model.provider)
                 update_status(f"Validating {current_model.name}...")
-            create_model(settings)
+            create_model(settings, model_name=active_model_name)
             logger.info("Model configuration validated successfully")
         except ValueError as e:
             logger.error("Failed to validate model config: %s", e)
@@ -642,7 +654,8 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
         from clanker.agent.prompts import load_user_instructions
         _has_user_instructions = bool(load_user_instructions())
 
-        current_model = get_default_model()
+        active_model_name = session_manager.model_name
+        current_model = (get_model_by_name(active_model_name) if active_model_name else None) or get_default_model()
         tracker_model_name = current_model.name if current_model else "unknown"
         token_tracker = SessionTokenTracker(
             model_name=tracker_model_name,
@@ -691,17 +704,23 @@ def run_interactive(console: Console, settings: Settings, resume_session: str | 
     cleanup_event_loop()
 
 
-def run_single_prompt(prompt: str, console: Console, settings: Settings) -> None:
+def run_single_prompt(
+    prompt: str,
+    console: Console,
+    settings: Settings,
+    initial_model: str | None = None,
+) -> None:
     """Run a single prompt and exit."""
-    session_manager = SessionManager()
+    session_manager = SessionManager(model_name=initial_model)
+    active_model_name = session_manager.model_name
 
     try:
-        create_model(settings)
+        create_model(settings, model_name=active_model_name)
     except ValueError as e:
         console.print_error(str(e))
         sys.exit(1)
 
-    current_model = get_default_model()
+    current_model = (get_model_by_name(active_model_name) if active_model_name else None) or get_default_model()
     tracker_model_name = current_model.name if current_model else "unknown"
     token_tracker = SessionTokenTracker(
         model_name=tracker_model_name,
@@ -720,10 +739,11 @@ def run_single_prompt(prompt: str, console: Console, settings: Settings) -> None
             state,
             session_manager.get_config(),
             console,
+            model_name=active_model_name,
         )
 
         if result.input_tokens > 0 or result.output_tokens > 0:
-            current_model_cfg = get_default_model()
+            current_model_cfg = (get_model_by_name(active_model_name) if active_model_name else None) or get_default_model()
             turn_cost = current_model_cfg.compute_cost(
                 result.input_tokens,
                 result.output_tokens,
@@ -871,30 +891,49 @@ def main(
         if current_model:
             logger.debug("Using model: %s (%s)", current_model.name, current_model.provider)
 
+    initial_model: str | None = None
     if provider or model:
         from clanker.config.models import ModelConfig, add_model
-        current = get_default_model()
-        temp_model = ModelConfig(
-            name="cli-override",
-            provider=provider or (current.provider if current else "OpenAI"),
-            model=model or (current.model if current else None),
-            base_url=current.base_url if current else None,
-            deployment_name=current.deployment_name if current else None,
-            api_key=current.api_key if current else None,
-        )
-        add_model(temp_model)
-        set_default_model("cli-override")
+        existing = get_model_by_name(model) if model and not provider else None
+        if existing:
+            initial_model = existing.name
+        else:
+            current = get_default_model()
+            temp_model = ModelConfig(
+                name="cli-override",
+                provider=provider or (current.provider if current else "OpenAI"),
+                model=model or (current.model if current else None),
+                base_url=current.base_url if current else None,
+                deployment_name=current.deployment_name if current else None,
+                api_key=current.api_key if current else None,
+            )
+            add_model(temp_model)
+            initial_model = "cli-override"
 
     if prompt:
-        run_single_prompt(prompt, console, settings)
+        if initial_model:
+            run_single_prompt(prompt, console, settings, initial_model=initial_model)
+        else:
+            run_single_prompt(prompt, console, settings)
     else:
         if tui:
-            run_interactive(console, settings, resume_session=resume)
+            if initial_model:
+                run_interactive(console, settings, resume_session=resume, initial_model=initial_model)
+            else:
+                run_interactive(console, settings, resume_session=resume)
         else:
-            run_interactive_legacy(console, settings, resume_session=resume)
+            if initial_model:
+                run_interactive_legacy(console, settings, resume_session=resume, initial_model=initial_model)
+            else:
+                run_interactive_legacy(console, settings, resume_session=resume)
 
 
-def run_interactive_legacy(console: Console, settings: Settings, resume_session: str | None = None) -> None:
+def run_interactive_legacy(
+    console: Console,
+    settings: Settings,
+    resume_session: str | None = None,
+    initial_model: str | None = None,
+) -> None:
     """Legacy interactive REPL using prompt-toolkit (for --no-tui mode)."""
     from prompt_toolkit import PromptSession
     from prompt_toolkit.completion import Completer, Completion
@@ -902,20 +941,23 @@ def run_interactive_legacy(console: Console, settings: Settings, resume_session:
 
     logger.info("Starting legacy interactive mode")
 
-    session_manager = SessionManager()
+    session_manager = SessionManager(model_name=initial_model)
     resumed_messages: list | None = None
     if resume_session:
         messages = session_manager.get_session_messages(resume_session)
         if messages:
             session_manager.resume_session(resume_session)
+            if initial_model:
+                session_manager.model_name = initial_model
             resumed_messages = messages
             console.print_info(f"Resuming session {resume_session} with {len(messages)} messages")
         else:
             console.print_warning(f"Session {resume_session} not found, starting new session")
 
+    active_model_name = session_manager.model_name
     try:
-        current_model = get_default_model()
-        create_model(settings)
+        current_model = (get_model_by_name(active_model_name) if active_model_name else None) or get_default_model()
+        create_model(settings, model_name=active_model_name)
     except ValueError as e:
         console.print_error(str(e))
         sys.exit(1)
@@ -955,7 +997,8 @@ def run_interactive_legacy(console: Console, settings: Settings, resume_session:
     _has_user_instructions = bool(load_user_instructions())
     console.print_welcome(user_instructions_loaded=_has_user_instructions)
 
-    current_model = get_default_model()
+    active_model_name = session_manager.model_name
+    current_model = (get_model_by_name(active_model_name) if active_model_name else None) or get_default_model()
     token_tracker = SessionTokenTracker(
         model_name=current_model.name if current_model else "unknown",
         context_window=current_model.max_input_tokens if current_model else None,
@@ -985,6 +1028,10 @@ def run_interactive_legacy(console: Console, settings: Settings, resume_session:
                         if conversation_messages:
                             session_manager.save_conversation_snapshot(conversation_messages)
                         session_manager.resume_session(session_id)
+                        active_name = session_manager.model_name
+                        cm = (get_model_by_name(active_name) if active_name else None) or get_default_model()
+                        token_tracker.model_name = cm.name if cm else "unknown"
+                        token_tracker.context_window = cm.max_input_tokens if cm else None
                         conversation_messages = list(messages)
                         pending_restore_messages = list(messages)
                         console.print_info(f"Restored session {session_id} with {len(messages)} messages")
@@ -1009,10 +1056,13 @@ def run_interactive_legacy(console: Console, settings: Settings, resume_session:
                 result = stream_agent_response_sync(
                     settings, session_manager.checkpointer, state,
                     session_manager.get_config(), console,
+                    model_name=session_manager.model_name,
                 )
 
                 if result.input_tokens > 0 or result.output_tokens > 0:
-                    cm = get_default_model()
+                    active_name = session_manager.model_name
+                    cm = (get_model_by_name(active_name) if active_name else None) or get_default_model()
+                    token_tracker.model_name = cm.name if cm else "unknown"
                     token_tracker.context_window = cm.max_input_tokens if cm else None
                     turn_cost = cm.compute_cost(
                         result.input_tokens, result.output_tokens,
