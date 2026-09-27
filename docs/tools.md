@@ -23,6 +23,7 @@ The agent has access to these built-in tools:
 | `recall` | Memory | Retrieve relevant memories |
 | `forget` | Memory | Delete a stored memory |
 | `list_memories` | Memory | List all stored memories |
+| `revise_memory` | Memory | Supersede an outdated memory |
 | `load_skill` | Skills | Load instructions for a skill |
 | `load_agent` | Subagents | Load configuration for an agent |
 | `spawn_subagent` | Subagents | Spawn a configured subagent to handle a subtask |
@@ -43,7 +44,7 @@ web configuration UI (`clanker config`).
 |----------|------|-------|---------|
 | Core | — | `read_file`, `write_file`, `edit_file`, `append_file`, `list_directory`, `execute_shell`, `bash_background`, `bash_status`, `bash_output`, `bash_wait`, `bash_kill`, `glob_search`, `grep_search` | Always on |
 | Web Browsing | `web_browsing` | `web_search`, `web_read` | Enabled |
-| Memory | `memory` | `remember`, `recall`, `forget`, `list_memories` | Enabled |
+| Memory | `memory` | `remember`, `recall`, `revise_memory`, `forget`, `list_memories` | Enabled |
 | Skills | `skills` | `load_skill` | Enabled |
 | Subagents | `subagents` | `load_agent`, `spawn_subagent`, `subagent_status`, `subagent_message`, `subagent_stop`, `subagent_wait` | Enabled |
 | Communication | `communication` | `notify`, `ask_user` | Enabled |
@@ -180,11 +181,9 @@ them in the background and keep working:
 
 ## Memory
 
-The agent stores and recalls facts about the workspace across conversations —
-project conventions, your preferences, config details, recurring issues and
-their fixes. See [Memory](memory.md) for the full picture, including how
-relevant memories get pulled into context automatically at the start of a
-conversation.
+The agent stores and recalls durable knowledge across conversations. Memories
+are workspace-scoped by default; explicit global preferences can apply across
+projects. See [Memory](memory.md) for retrieval, revision, and TUI controls.
 
 ### remember
 
@@ -197,6 +196,9 @@ something worth keeping.
 - `tags` — comma-separated tags (e.g. `"convention, testing"`), default none.
 - `auto` — mark the memory as agent-generated rather than user-requested
   (default `false`).
+- `kind` — `fact`, `preference`, `decision`, or `episode` (default `fact`).
+- `scope` — `workspace` (default) or explicitly `global`.
+- `evidence` — an optional repository path, conversation ID, or URL.
 
 **Returns:** A dict with `ok`, `message`, `memory_id`, and `tags`.
 
@@ -210,7 +212,13 @@ Search memories by tags and/or keywords.
 - `n_results` — maximum memories to return (default 5).
 
 **Returns:** A dict with `ok`, `found`, `count`, and `memories` (each with
-`id`, `content`, `tags`, `source`, `created_at`).
+`id`, `content`, `tags`, `source`, `kind`, `scope`, `evidence`, and timestamps).
+
+### revise_memory
+
+Replace an outdated memory while retaining the old record as stale history.
+
+**Parameters:** `memory_id`, `replacement`, and optional `evidence`.
 
 ### forget
 
@@ -230,7 +238,7 @@ overview or finding an id to pass to `forget`.
 - `limit` — maximum memories to return (default 20).
 
 **Returns:** A dict with `ok`, `count`, `total`, and `memories` (each with
-`id`, a truncated `content`, `tags`, `source`).
+`id`, a truncated `content`, `tags`, `source`, `kind`, `scope`, and status).
 
 **Example workflow:**
 ```

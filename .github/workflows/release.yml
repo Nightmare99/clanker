@@ -64,6 +64,15 @@ jobs:
         run: |
           pyinstaller clanker.spec
 
+      - name: Verify bundled SQLite FTS5
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            dist/clanker.exe --memory-index-check
+          else
+            dist/clanker --memory-index-check
+          fi
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

@@ -65,7 +65,7 @@ Inside the interactive session:
 | `/restore` or `/resume` | Open a picker for saved conversations, newest first |
 | `/restore <id>` or `/resume <id>` | Resume a known session ID directly |
 | `/import` | Import a local Codex, Claude Code, OpenCode, or GitHub Copilot CLI conversation |
-| `/memories` | Show stored memories |
+| `/memories` | Search and manage workspace and global memories in the TUI |
 | `/remember <text>` | Save a memory |
 | `/forget <id>` | Delete a memory |
 | `/exit` | Exit Clanker |
@@ -132,9 +132,12 @@ uses different storage. The same flow is available with numbered pages in
 | `Ctrl+C` | Copy the current text selection, if any (in-field or screen-wide). If nothing is selected, interrupts the agent instead. |
 | `Ctrl+D` | Quit Clanker. |
 | `Ctrl+V` / paste | Paste text or an image — see [Pasting](#pasting) below. |
+| `F1` | Open the keyboard shortcut help popup. |
 | `F2` | Open the **Subagents** panel — view past and in-flight subagent runs, their prompts, status, and tool call history for the session (see [Agents → Progress and history](agents.md#progress-and-history)). |
-| `F4` | Open **Changes**: review recorded file-tool edits and undo an edit or a turn with conflict checks. Also available as `/changes`. |
 | `F3` | Open the **History** panel — the full conversation so far, independent of how much the chat log has trimmed from view (see [TUI Performance](configuration.md#tui-performance)) and populated even after `/restore`, when the restored turns aren't replayed into the chat log. |
+| `F4` | Open **Changes**: review recorded file-tool edits and undo an edit or a turn with conflict checks. Also available as `/changes`. |
+| `F5` / `Ctrl+↑` | Open the multiline Markdown composer. |
+| `F6` | Open **Memories** to search, inspect, and manage stored memories. Also available as `/memories`. |
 | `Esc` | Cancel an open menu or approval prompt. |
 
 Use `/tasks` as an alternative to F2. Task history stays available for the entire

@@ -18,7 +18,7 @@ from clanker.tools.file_tools import (
     read_project_instructions,
     write_file,
 )
-from clanker.tools.memory_tools import forget, list_memories, recall, remember
+from clanker.tools.memory_tools import forget, list_memories, recall, remember, revise_memory
 from clanker.tools.notify_tools import notify
 from clanker.tools.search_tools import glob_search, grep_search
 from clanker.tools.skill_tools import load_skill
@@ -63,6 +63,7 @@ ALL_TOOLS = [
     recall,
     forget,
     list_memories,
+    revise_memory,
     # Web tools
     web_search,
     web_read,
@@ -88,7 +89,7 @@ def get_tools() -> list:
     if not settings.tools.web_browsing:
         excluded.extend([web_search, web_read])
     if not settings.tools.memory:
-        excluded.extend([remember, recall, forget, list_memories])
+        excluded.extend([remember, recall, forget, list_memories, revise_memory])
     if not settings.tools.skills:
         excluded.append(load_skill)
     if not settings.tools.subagents:
@@ -126,6 +127,7 @@ __all__ = [
     "load_skill",
     "load_agent",
     "remember",
+    "revise_memory",
     "recall",
     "forget",
     "list_memories",

@@ -1,126 +1,97 @@
 # Memory
 
-Memory lets the agent persist facts across conversations — project
-conventions, your preferences, config details, recurring issues and their
-fixes — so it doesn't have to relearn them every session. It's workspace
-memory: stored per-project, not shared globally.
-
-This is a different thing from context compaction (the `context:` block in
-[General Settings](configuration.md#general-settings), which automatically
-summarizes a long conversation to stay within the model's context window) and
-from the `memory:` block in that same settings file (which only controls
-session/conversation persistence, not knowledge storage). Memory, here, is the
-agent's own longer-term knowledge store, independent of any one conversation.
+Clanker keeps durable facts across conversations: project conventions,
+preferences, decisions, and verified fixes. Workspace memories belong to the
+current project. You can explicitly choose `global` for a preference that
+should apply across projects. Conversation history and active task state remain
+separate from this long-term knowledge.
 
 ## How it works
 
-1. **Proactive storage**: the agent is instructed to call `remember`
-   on its own — without being asked — whenever it notices something worth
-   keeping: a convention, a preference, a config detail, a fix to a recurring
-   problem, a decision the user stated.
-2. **Automatic injection**: at the start of a conversation, a handful of
-   relevant memories are pulled into the system prompt automatically —
-   matched against your first message when possible, or the most recent
-   memories otherwise. The agent doesn't need to call `recall` just to see
-   what it already knows.
-3. **On-demand retrieval**: `recall` is for digging up something more
-   specific than what showed up unprompted, by keyword and/or tag.
+1. `remember` stores a fact, preference, decision, or episode. Exact duplicates
+   reuse the existing record. Credential-shaped values are rejected. Inferred
+   memories are marked `auto`, distinct from user-stated guidance.
+2. Each turn retrieves relevant active memories. Search uses a disposable
+   SQLite FTS5 index plus keyword and tag ranking; prompt injection has a token
+   budget. `recall` lets the agent look up more. If FTS5 is unavailable in the
+   Python build, keyword search remains available.
+3. `revise_memory` supersedes an outdated record while retaining its stale
+   predecessor for review. A memory citing a repository file is withheld from
+   retrieval if that file changes until the memory is verified again.
+4. `/memories` opens a searchable TUI panel. You can inspect provenance and
+   match reasons, edit content and tags, pin, verify, mark stale, or delete.
 
-## Storage
+Memories are context to check against the repository, not instructions that
+override the user or project files. Imported conversations remain transcripts;
+their contents are not automatically promoted into durable memory.
 
-Memories are stored as individual markdown files with YAML frontmatter,
-under `.clanker/memories/` in the current workspace:
+## Storage and migration
 
-```
-.clanker/memories/
-  a1b2c3d4.md
-  e5f6a7b8.md
-```
+The Markdown files remain authoritative. Workspace files live at
+`.clanker/memories/<id>.md`; explicitly global files live at
+`~/.clanker/memories/<id>.md`. The SQLite index at
+`.clanker/memory-index.sqlite` can be deleted and rebuilt from the files.
+Existing Markdown files load without being rewritten.
 
-**`a1b2c3d4.md`**:
+Each memory has a type (`fact`, `preference`, `decision`, or `episode`), scope,
+source (`user`, `auto`, or `system`), tags, timestamps, status, optional
+evidence, and optional metadata. New files use YAML frontmatter:
 
 ```markdown
 ---
 id: a1b2c3d4
 source: user
-created: 2026-08-21T10:15:00
-tags: [convention, testing]
+created: '2026-08-21T10:15:00+00:00'
+updated: '2026-08-21T10:15:00+00:00'
+kind: fact
+scope: workspace
+pinned: false
+status: active
+tags:
+- convention
+verified: null
+evidence: pyproject.toml
+metadata: {}
 ---
 
-This project uses pytest with asyncio_mode=auto (set in pyproject.toml).
-Async test functions don't need @pytest.mark.asyncio.
+This project uses pytest with asyncio_mode=auto.
 ```
 
-`source` is `user` (explicitly requested), `auto` (the agent noticed and
-stored it on its own), or `system`. There is no personal (`~`) memory store —
-memory is always scoped to the current workspace.
+Writes are atomic. When evidence names an existing repository file, Clanker
+records its modification time; a later change makes the memory require
+re-verification. A conversation ID or URL may also be recorded as evidence,
+but only repository files receive automatic change detection.
 
-## Tools
+## Tools and controls
 
-| Tool | Parameters | Description |
-|------|------------|--------------|
-| `remember` | `content`, `tags` | Store information for future sessions |
-| `recall` | `query`, `tags`, `n_results` (default 5) | Retrieve relevant memories by keyword and/or tag |
-| `forget` | `memory_id` | Delete a specific memory |
-| `list_memories` | `limit` (default 20) | List everything stored for this workspace |
+| Tool | Purpose |
+|------|---------|
+| `remember(content, tags, auto, kind, scope, evidence)` | Save durable knowledge; workspace scope is the default |
+| `recall(query, tags, n_results)` | Search active memories |
+| `revise_memory(memory_id, replacement, evidence)` | Replace an outdated fact while keeping its history |
+| `forget(memory_id)` | Delete a memory |
+| `list_memories(limit)` | Inspect stored entries |
 
-`tags` is a comma-separated string (e.g. `"convention, testing"`). Tagging
-consistently makes both `recall` and the automatic injection more precise —
-common tags include `convention`, `preference`, `architecture`, `config`, and
-`issue`.
+Use `/remember <text>` for a quick workspace memory, **F6** or `/memories` to browse and
+edit in the TUI, and `/forget <id>` to delete by ID. In `--no-tui` mode,
+`/memories` prints a text list. The TUI's **Add** form can select `global`
+scope; the agent's `remember` tool can do the same when explicitly appropriate.
 
-**Example usage by the agent:**
-```
-remember("Uses uv for dependency management, not pip directly.", tags="convention")
-recall(tags="convention")
-→ {found: true, memories: [{content: "Uses uv for dependency management...", tags: ["convention"], ...}]}
-```
+Subagents can read memories from their parent's workspace even when they use a
+Git worktree. They cannot change long-term memories; the parent session
+curates writes.
 
-## Using memory
+Memory tools and automatic injection can be disabled with `tools.memory: false`
+in `~/.clanker/config.yaml`. See [Configuration](configuration.md#tool-feature-flags).
 
-### Automatic (the normal case)
+## Retrieval evaluation
 
-You don't need to do anything — the agent stores and recalls memories on its
-own as it works:
+From a development checkout, run `python scripts/eval_memory.py`. The bundled
+synthetic fixture measures recall, precision, stale-memory leakage, latency,
+and estimated injected tokens. The evaluator creates a temporary workspace and
+never reads live memory files. Add representative cases to
+`tests/fixtures/memory_eval.json` before tuning search.
 
-```
-❯ We use uv instead of pip for this project
-  > remember: "Uses uv for dependency management, not pip directly." (tags: convention)
-
-# ...in a later session...
-❯ Add a new dependency
-  [relevant memories already in context, including the uv convention above]
-  > execute_shell: uv add <package>
-```
-
-### Manual
-
-```
-❯ /memories
-Workspace memories (2):
-
-  a1b2c3d4  Uses uv for dependency management, not pip directly. [convention]
-  e5f6a7b8  User prefers tabs over spaces [preference]
-
-❯ /remember Always run the linter before committing
-Stored in memory: Always run the linter before committing
-
-❯ /forget a1b2c3d4
-Memory a1b2c3d4 has been deleted.
-```
-
-## Configuration
-
-Memory tools (`remember`, `recall`, `forget`, `list_memories`) can be disabled
-via the `memory` flag in `~/.clanker/config.yaml`:
-
-```yaml
-tools:
-  memory: false
-```
-
-When disabled, the agent loses access to all four tools, the automatic
-memory-injection at conversation start is skipped, and the tools' docs are
-stripped from the system prompt. See
-[Configuration → Tool Feature Flags](configuration.md#tool-feature-flags)
-for details.
+Memory management is separate from conversation compaction and `/resume`.
+Compaction handles the current context window; `/resume` loads a saved
+conversation; long-term memory carries selected knowledge across sessions.

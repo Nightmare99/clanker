@@ -1,0 +1,16 @@
+{
+  "memories": [
+    {"key": "tests", "content": "This project uses pytest with asyncio_mode=auto.", "tags": ["testing"]},
+    {"key": "deps", "content": "Use uv to install project dependencies.", "tags": ["tooling"], "kind": "preference", "pinned": true},
+    {"key": "auth", "content": "The login handler is in src/auth/service.py.", "tags": ["architecture"]},
+    {"key": "old_auth", "content": "The login handler is in src/legacy_auth.py.", "tags": ["architecture"], "status": "stale"},
+    {"key": "deploy", "content": "Deployments run through the release workflow.", "tags": ["deployment"]}
+  ],
+  "queries": [
+    {"query": "How do I run asynchronous tests?", "relevant": ["tests"]},
+    {"query": "Where is the login handler?", "relevant": ["auth"]},
+    {"query": "How are dependencies installed?", "relevant": ["deps"]},
+    {"query": "Where is the release workflow?", "relevant": ["deploy"]},
+    {"query": "What is the weather tomorrow?", "relevant": []}
+  ]
+}

@@ -262,7 +262,7 @@ context window tokens.
 ```yaml
 tools:
   web_browsing: true   # web_search, web_read
-  memory: true         # remember, recall, forget, list_memories
+  memory: true         # remember, recall, revise_memory, forget, list_memories
   skills: true         # load_skill
   subagents: true      # load_agent, spawn_subagent
   communication: true  # notify, ask_user
@@ -271,7 +271,7 @@ tools:
 | Flag | Tools Affected | Description |
 |------|---------------|-------------|
 | `web_browsing` | `web_search`, `web_read` | Web search and page reading |
-| `memory` | `remember`, `recall`, `forget`, `list_memories` | Cross-session memory persistence |
+| `memory` | `remember`, `recall`, `revise_memory`, `forget`, `list_memories` | Cross-session memory persistence |
 | `skills` | `load_skill` | On-demand skill loading |
 | `subagents` | `load_agent`, `spawn_subagent`, `subagent_status`, `subagent_message`, `subagent_stop`, `subagent_wait` | Delegating subtasks to specialized agents |
 | `communication` | `notify`, `ask_user` | Mid-task status updates and user questions |

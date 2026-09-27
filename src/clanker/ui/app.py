@@ -27,8 +27,13 @@ from clanker.ui.clipboard_image import (
     read_clipboard_image,
 )
 from clanker.ui.completion_menu import CompletionMenu
-from clanker.ui.conversation_picker import ConversationPickerScreen, ImportSelection, ImportWizardScreen
+from clanker.ui.conversation_picker import (
+    ConversationPickerScreen,
+    ImportSelection,
+    ImportWizardScreen,
+)
 from clanker.ui.history_modal import HistoryScreen
+from clanker.ui.memory_screen import MemoryScreen
 from clanker.ui.message_composer import MessageComposer
 from clanker.ui.prompt_history import PromptDraft
 from clanker.ui.shortcut_help import ShortcutHelpScreen
@@ -693,6 +698,7 @@ class ClankerApp(App):
         Binding("f2", "show_subagents", "Subagents", show=True),
         Binding("f3", "show_history", "History", show=True),
         Binding("f4", "show_changes", "Changes", show=True),
+        Binding("f6", "show_memories", "Memories", show=True),
     ]
 
     def __init__(
@@ -910,6 +916,14 @@ class ClankerApp(App):
 
     def action_show_history(self) -> None:
         self.push_screen(HistoryScreen(self._conversation_messages))
+
+    def action_show_memories(self) -> None:
+        from clanker.memory.memories import get_memory_store
+
+        working_directory = self._working_dir or getattr(
+            self._session_manager, "_workspace_path", None
+        ) or Path.cwd()
+        self.push_screen(MemoryScreen(get_memory_store(working_directory)))
 
     def action_show_changes(self) -> None:
         self.push_screen(ChangesScreen(
@@ -1153,6 +1167,9 @@ class ClankerApp(App):
         if command == "/import":
             working_directory = self._working_dir or self._session_manager._workspace_path
             self.push_screen(ImportWizardScreen(working_directory), self._import_session)
+            return "skip"
+        if command == "/memories":
+            self.action_show_memories()
             return "skip"
 
         if text.strip().lower() == "/copilot-login":

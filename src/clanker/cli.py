@@ -5,6 +5,7 @@ import contextlib
 import os
 import sqlite3
 import sys
+import tempfile
 import time
 import warnings
 
@@ -439,7 +440,7 @@ def handle_command(
             for line in lines:
                 console.print_info(line)
         else:
-            header = f"Workspace memories ({len(memories)}):\n"
+            header = f"Memories ({len(memories)}):\n"
             console.print_info(header)
             lines.append(header)
             for m in memories[:20]:
@@ -808,6 +809,7 @@ class ClankerGroup(click.Group):
 @click.option("--memories", is_flag=True, help="List stored memories and exit")
 @click.option("--version", "-v", is_flag=True, help="Show version and exit")
 @click.option("--check-update", is_flag=True, help="Check for updates and exit")
+@click.option("--memory-index-check", is_flag=True, hidden=True)
 @click.option("--yolo", is_flag=True, help="Skip bash command approval")
 @click.option("--tui/--no-tui", default=True, help="Use TUI mode (default) or legacy console mode")
 @click.pass_context
@@ -821,6 +823,7 @@ def main(
     memories: bool,
     version: bool,
     check_update: bool,
+    memory_index_check: bool,
     yolo: bool,
     tui: bool,
 ) -> None:
@@ -830,6 +833,22 @@ def main(
 
     if version:
         click.echo(f"Clanker v{__version__}")
+        return
+
+    if memory_index_check:
+        from clanker.memory.index import fts5_available
+        from clanker.memory.memories import MemoryStore
+
+        if not fts5_available():
+            click.echo("SQLite FTS5 unavailable in this build", err=True)
+            ctx.exit(1)
+        with tempfile.TemporaryDirectory() as directory:
+            store = MemoryStore(directory, include_global=False)
+            probe = store.add("SQLite FTS5 bundled memory index probe")
+            if not any(memory.id == probe.id for memory in store.search("bundled index")):
+                click.echo("Memory index probe failed", err=True)
+                ctx.exit(1)
+        click.echo("SQLite FTS5 available")
         return
 
     if check_update:
@@ -870,7 +889,7 @@ def main(
         if not mems:
             console.print_info("No memories stored for this workspace.")
         else:
-            console.print_info(f"Workspace memories ({len(mems)}):\n")
+            console.print_info(f"Memories ({len(mems)}):\n")
             for m in mems:
                 content = m.content[:70] + "..." if len(m.content) > 70 else m.content
                 tags = f" [{', '.join(m.tags)}]" if m.tags else ""

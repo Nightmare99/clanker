@@ -34,10 +34,12 @@ from clanker.execution import (
     task_stop,
     working_directory,
 )
+from clanker.logging import get_logger
 from clanker.ui.subagent_history import SubagentRun, SubagentToolCall
 from clanker.ui.tool_display import normalize_tool_output
 
 _SUBAGENT_MAX_WORDS = 800
+logger = get_logger("subagent")
 _SUBAGENT_CONCISE_INSTRUCTIONS = """
 
 ## Output conciseness
@@ -66,6 +68,10 @@ def _resolve_tools(tool_names: list[str]) -> list[BaseTool]:
         "bash_output",
         "bash_wait",
         "bash_kill",
+        # Long-term memory changes are curated by the parent session.
+        "remember",
+        "forget",
+        "revise_memory",
     }
     available = [t for t in get_tools() if t.name not in excluded]
     if not tool_names:
@@ -342,6 +348,17 @@ async def _execute(task: ManagedTask, agent_config: Any, settings: Settings, con
     from clanker.ui.streaming import stream_agent_response_async
 
     run = task.run
+    memory_context = ""
+    if settings.tools.memory:
+        from clanker.execution import memory_directory
+        from clanker.memory.memories import get_memory_store
+
+        try:
+            memory_context = get_memory_store(memory_directory()).get_relevant_context(
+                run.prompt, max_memories=3, token_budget=400,
+            )
+        except (OSError, ValueError):
+            logger.exception("Could not load optional subagent memory context")
     inbox: asyncio.Queue[str] = asyncio.Queue()
     checkpointer = MemorySaver()
     state = {
@@ -375,7 +392,8 @@ async def _execute(task: ManagedTask, agent_config: Any, settings: Settings, con
             console=console,
             tools=_resolve_tools(agent_config.tools),
             system_prompt=_build_subagent_system_prompt(agent_config.system_prompt)
-            + f"\nWorking directory: {run.working_directory}\nAll relative paths and shell commands use this directory.",
+            + f"\nWorking directory: {run.working_directory}\nAll relative paths and shell commands use this directory."
+            + (f"\n<workspace_memory>\n{memory_context}\n</workspace_memory>" if memory_context else ""),
             model_name=run.model,
             input_queue=inbox,
             event_callback=_event_handler(task, settings.subagents.repeated_failure_limit),
@@ -433,6 +451,9 @@ def _run(
         deadline_timer = threading.Timer(run.timeout_seconds, task.cancel, args=("timed_out",))
         deadline_timer.daemon = True
         deadline_timer.start()
+        from clanker.execution import task_memory_directory
+
+        task_memory_directory.set(run.working_directory)
         if isolation == "worktree":
             run.working_directory = _create_worktree(run.working_directory)
         task_directory.set(run.working_directory)

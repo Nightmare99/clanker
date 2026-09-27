@@ -7,6 +7,7 @@ from contextvars import ContextVar
 from typing import Any
 
 task_directory: ContextVar[str | None] = ContextVar("task_directory", default=None)
+task_memory_directory: ContextVar[str | None] = ContextVar("task_memory_directory", default=None)
 task_stop: ContextVar[threading.Event | None] = ContextVar("task_stop", default=None)
 task_interaction: ContextVar[Callable[..., dict[str, Any]] | None] = ContextVar(
     "task_interaction", default=None
@@ -15,6 +16,11 @@ task_interaction: ContextVar[Callable[..., dict[str, Any]] | None] = ContextVar(
 
 def working_directory() -> str:
     return task_directory.get() or os.getcwd()
+
+
+def memory_directory() -> str:
+    """Keep worktree subagents on their parent's workspace memory scope."""
+    return task_memory_directory.get() or working_directory()
 
 
 def check_cancelled() -> None:

@@ -35,6 +35,7 @@ class ShortcutHelpScreen(ModalScreen[None]):
                 "[cyan]F3[/]          Conversation history\n"
                 "[cyan]F4[/]          File changes\n"
                 "[cyan]Ctrl+Up / F5[/] Multiline Markdown message\n"
+                "[cyan]F6[/]          Memories\n"
                 "[cyan]Ctrl+C[/]      Copy selection / interrupt agent\n"
                 "[cyan]Ctrl+D[/]      Quit\n"
                 "[cyan]Up / Down[/]   Input history / completion choices\n"

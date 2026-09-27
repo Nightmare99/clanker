@@ -85,3 +85,8 @@ class TestPromptVsSubcommandDisambiguation:
         result = _runner().invoke(main, ["--version"])
         assert result.exit_code == 0
         assert "Clanker v" in result.output
+
+    def test_memory_index_check_exercises_fts5_and_search(self) -> None:
+        result = _runner().invoke(main, ["--memory-index-check"])
+        assert result.exit_code == 0, result.output
+        assert "SQLite FTS5 available" in result.output

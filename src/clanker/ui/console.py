@@ -175,7 +175,7 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("/resume", "Alias for /restore"),
         ("/import", "Import a Codex, Claude Code, OpenCode, or Copilot CLI conversation"),
         ("/compact", "Compact the current conversation history manually"),
-        ("/memories", "Show stored workspace memories"),
+        ("/memories", "Search and manage memories"),
         ("/remember", "Store a memory (usage: /remember <text>)"),
         ("/forget", "Delete a memory (usage: /forget <id>)"),
     ]),
