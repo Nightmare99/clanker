@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 
 def fts5_available() -> bool:
     """Probe the SQLite library bundled with this Python executable."""
     try:
-        with sqlite3.connect(":memory:") as connection:
+        with closing(sqlite3.connect(":memory:")) as connection:
             connection.execute("CREATE VIRTUAL TABLE memory_probe USING fts5(content)")
         return True
     except sqlite3.Error:
@@ -38,7 +39,7 @@ class MemoryIndex:
             return {}
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            with sqlite3.connect(self.path, timeout=2) as connection:
+            with closing(sqlite3.connect(self.path, timeout=2)) as connection, connection:
                 connection.execute("CREATE TABLE IF NOT EXISTS files (id TEXT PRIMARY KEY, path TEXT, mtime_ns INTEGER)")
                 connection.execute(
                     "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(id UNINDEXED, content, tags)"

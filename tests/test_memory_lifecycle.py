@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock
 
 import pytest
@@ -96,6 +98,14 @@ def test_fts_index_tracks_external_edits_and_has_lexical_fallback(tmp_path, monk
 
     monkeypatch.setattr(store._index, "search", lambda query, documents: None)
     assert [m.id for m in store.search("login handler")] == [memory.id]
+
+
+def test_fts_index_releases_file_before_temporary_workspace_cleanup():
+    with TemporaryDirectory() as directory:
+        store = MemoryStore(directory, include_global=False)
+        memory = store.add("SQLite index cleanup test")
+        assert [m.id for m in store.search("index cleanup")] == [memory.id]
+    assert not Path(directory).exists()
 
 
 def test_context_is_bounded_and_excludes_stale_notes(tmp_path):
