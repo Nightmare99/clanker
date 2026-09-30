@@ -17,8 +17,8 @@ The agent has access to these built-in tools:
 | `bash_kill` | Core | Terminate a background job |
 | `glob_search` | Core | Find files by pattern |
 | `grep_search` | Core | Search file contents with regex |
-| `web_search` | Web Browsing | Search the web via DuckDuckGo |
-| `web_read` | Web Browsing | Extract clean content from a web page |
+| `web_search` | Web Browsing | Search the web via DDGS metasearch |
+| `web_read` | Web Browsing | Extract a web page's main content as Markdown |
 | `remember` | Memory | Store info for future sessions |
 | `recall` | Memory | Retrieve relevant memories |
 | `forget` | Memory | Delete a stored memory |
@@ -93,32 +93,49 @@ Searches file contents using regular expressions. Returns matching lines with co
 
 ### web_search
 
-Searches the web using DuckDuckGo. No API key required.
+Searches the web using DDGS metasearch. No API key required. It requests extra
+candidates so duplicate and overly concentrated results can be removed without
+shortening the answer unnecessarily. Candidates are ranked by whole-word matches
+in titles and snippets, tracking URL variants are deduplicated, and broad searches
+return at most three results per domain. An explicit `site` filter removes that
+domain cap. Fewer results may be returned when too few candidates remain.
 
 **Parameters:**
 - `query` — Search query string. Be specific for best results.
 - `max_results` — Number of results to return (1–10, default 5).
+- `fetch_top` — Include extracted Markdown for the top 0–3 results (default 0), up to 4,000 characters per page. Pages are fetched concurrently and returned in result order.
+- `site` — Restrict results to a domain and its subdomains, such as `docs.python.org` (default empty). Supply a domain, without a scheme or path.
+- `recency` — Request results from the past day (`d`), week (`w`), month (`m`), or year (`y`) through the search provider (default empty, no time filter).
 
-**Returns:** Titles, URLs, and content snippets for each result.
+**Returns:** Titles, URLs, and content snippets for each result, plus extracted
+page content when `fetch_top` is set. A failed page fetch is reported alongside
+its search result; the remaining results are still returned.
 
 **Example usage by the agent:**
 ```
-web_search("python asyncio gather exception handling", max_results=3)
+web_search("asyncio TaskGroup exception handling", site="docs.python.org", max_results=3)
+web_search("Python release announcements", site="python.org", recency="m", fetch_top=2)
 ```
 
 ### web_read
 
-Fetches a web page and extracts the main content as clean text, stripping navigation, ads, scripts, and boilerplate HTML.
+Fetches a web page and extracts its main content as Markdown, preserving headings,
+code formatting, tables, and links while stripping navigation and boilerplate.
 
 **Parameters:**
 - `url` — The URL to read (must start with `http://` or `https://`).
 - `max_length` — Maximum characters to return (1000–50000, default 20000).
 
-**Returns:** Clean extracted text content from the page.
+**Returns:** The source URL and extracted Markdown, with a truncation marker when
+the content exceeds `max_length`. Raw text and code pages can return plain text.
 
 **Notes:**
+- Rejects direct local/private URLs and limits downloads to 5 MB compressed or
+  10 MB decompressed.
 - Uses browser-like headers to avoid bot detection on most sites.
 - Falls back to an alternative fetcher if the primary method fails.
+- Does not execute JavaScript or extract PDF content. Pages whose content requires
+  JavaScript may return incomplete content.
 - Some sites with aggressive anti-bot protection (Cloudflare JS challenges) cannot be read. The tool will return an HTTP error code in those cases.
 
 **Example workflow:**
@@ -129,11 +146,11 @@ web_read("https://fastapi.tiangolo.com/advanced/middleware/")  → reads full co
 
 ## Web Search Configuration
 
-Web search is enabled by default. To disable it, add to `~/.clanker/config.yaml`:
+Web search and page reading are enabled by default. To disable both, add to `~/.clanker/config.yaml`:
 
 ```yaml
-web_search:
-  enabled: false
+tools:
+  web_browsing: false
 ```
 
 When disabled, `web_search` and `web_read` are removed from the agent entirely (no wasted prompt tokens).

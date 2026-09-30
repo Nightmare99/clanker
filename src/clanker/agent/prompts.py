@@ -206,6 +206,7 @@ WEB_TOOLS_SECTION = """\
 ## Web research
 - Use web tools when the user requests current information or sources, when facts are likely to have changed, or when local evidence is insufficient.
 - Prefer primary and authoritative sources. For technical questions, prioritize official documentation and original specifications. Distinguish sourced facts from inference.
+- Use `web_search` with `site` when targeting official docs and `recency` for time-sensitive claims. Read the relevant page before relying on a snippet, and include its URL when citing it.
 - If a page fails, try a small number of relevant alternatives. Do not browse reflexively when the repository already contains the answer.
 
 """

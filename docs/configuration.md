@@ -223,9 +223,9 @@ memory:
   persist_sessions: true
   max_history_length: 100
 
-# Web search (uses DuckDuckGo, no API key needed)
-web_search:
-  enabled: true
+# Web browsing (DDGS metasearch, no API key needed)
+tools:
+  web_browsing: true
 ```
 
 ### TUI Performance
@@ -278,6 +278,10 @@ tools:
 
 Changes take effect on the next conversation turn. You can also toggle these
 from the **Tools** tab in the web configuration UI (`clanker config`).
+
+For web search domain and recency filters, page extraction, and size limits, see
+[Web tools](tools.md#web_search). These are tool arguments rather than additional
+configuration keys.
 
 ## Subagent execution limits
 

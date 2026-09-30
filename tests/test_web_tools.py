@@ -56,12 +56,12 @@ class TestWebSearch:
 
             # Over max
             web_search.invoke({"query": "test", "max_results": 50})
-            mock_instance.text.assert_called_with("test", max_results=10)
+            mock_instance.text.assert_called_with("test", max_results=20)
 
             # Under min
             mock_instance.reset_mock()
             web_search.invoke({"query": "test", "max_results": 0})
-            mock_instance.text.assert_called_with("test", max_results=1)
+            mock_instance.text.assert_called_with("test", max_results=10)
 
     def test_search_handles_exception(self) -> None:
         """Test graceful handling of search errors."""
@@ -220,6 +220,50 @@ class TestWebSearch:
 
         assert mock_fetch_extract.call_count == MAX_FETCH_TOP
 
+    def test_search_refills_results_after_deduplication(self) -> None:
+        """Request spare candidates before deduping and diversifying."""
+        mock_results = [
+            {"title": "Python docs", "href": "https://docs.python.org/guide", "body": "Python"},
+            {"title": "Mirror", "href": "https://docs.python.org/guide/?utm_source=search", "body": "Python"},
+            {"title": "Python tutorial", "href": "https://tutorial.example.com/python", "body": "Python"},
+            {"title": "Python reference", "href": "https://reference.example.com/python", "body": "Python"},
+        ]
+        with patch("ddgs.DDGS") as mock_ddgs_class:
+            mock_instance = mock_ddgs_class.return_value
+            mock_instance.text.return_value = mock_results
+            result = web_search.invoke({"query": "Python", "max_results": 3})
+        mock_instance.text.assert_called_once_with("Python", max_results=10)
+        assert result.count(". [") == 3
+        assert "utm_source" not in result
+
+    def test_search_site_and_recency_are_applied_and_validated(self) -> None:
+        mock_results = [
+            {"title": "Official", "href": "https://docs.python.org/3/library/asyncio.html", "body": "asyncio"},
+            {"title": "Other", "href": "https://notpython.org/asyncio", "body": "asyncio"},
+        ]
+        with patch("ddgs.DDGS") as mock_ddgs_class:
+            mock_instance = mock_ddgs_class.return_value
+            mock_instance.text.return_value = mock_results
+            result = web_search.invoke({
+                "query": "asyncio", "site": "docs.python.org", "recency": "w", "max_results": 3,
+            })
+        mock_instance.text.assert_called_once_with(
+            "asyncio site:docs.python.org", max_results=10, timelimit="w",
+        )
+        assert "docs.python.org" in result
+        assert "notpython.org" not in result
+        assert "Error" in web_search.invoke({"query": "asyncio", "recency": "hour"})
+        assert "Error" in web_search.invoke({"query": "asyncio", "site": "docs.python.org OR evil"})
+
+    def test_rerank_matches_complete_words(self) -> None:
+        from clanker.tools.web_tools import _rerank
+
+        results = [
+            {"title": "Pythonic style", "body": "style"},
+            {"title": "Python documentation", "body": "reference"},
+        ]
+        assert _rerank(results, "python")[0]["title"] == "Python documentation"
+
 
 class TestWebRead:
     """Tests for the web_read tool."""
@@ -235,6 +279,8 @@ class TestWebRead:
 
         assert "Hello world extracted content" in result
         assert "https://example.com" in result
+        assert mock_extract.call_args.kwargs["output_format"] == "markdown"
+        assert mock_extract.call_args.kwargs["include_links"] is True
 
     def test_read_invalid_url(self) -> None:
         """Test rejection of non-HTTP URLs."""
@@ -244,6 +290,16 @@ class TestWebRead:
 
         result = web_read.invoke({"url": "not-a-url"})
         assert "Error" in result
+
+    def test_read_rejects_local_and_private_hosts(self) -> None:
+        from clanker.tools.web_tools import _valid_web_url
+
+        with patch("clanker.tools.web_tools._fetch_with_browser_headers") as mock_fetch:
+            for url in ("http://localhost:8080", "http://127.0.0.1/admin", "http://192.168.1.1"):
+                assert "Error" in web_read.invoke({"url": url})
+        mock_fetch.assert_not_called()
+        assert _valid_web_url("https://[2606:4700:4700::1111]/")
+        assert not _valid_web_url("http://[::1]/")
 
     def test_read_fetch_failure(self) -> None:
         """Test handling of fetch failures."""
@@ -303,6 +359,15 @@ class TestWebRead:
 
         assert "Error" in result
         assert "Connection refused" in result
+
+    def test_read_does_not_retry_oversized_download(self) -> None:
+        with patch("clanker.tools.web_tools._fetch_with_browser_headers") as mock_browser, \
+             patch("trafilatura.fetch_url") as mock_fallback:
+            mock_browser.side_effect = ValueError("Page download exceeds the 5 MB safety limit")
+            result = web_read.invoke({"url": "https://example.com"})
+
+        assert "5 MB safety limit" in result
+        mock_fallback.assert_not_called()
 
     def test_read_extract_exception(self) -> None:
         """Test handling of exceptions during content extraction."""
@@ -402,7 +467,7 @@ class TestSSLCertificates:
             def __exit__(self, *a):
                 return False
 
-            def read(self):
+            def read(self, size=None):
                 return b"<html>ok</html>"
 
         def fake_urlopen(req, timeout=None, context=None):
@@ -420,6 +485,39 @@ class TestSSLCertificates:
 
         assert isinstance(captured["context"], ssl.SSLContext)
         assert captured["context"].verify_mode == ssl.CERT_REQUIRED
+
+    def test_fetch_limits_compressed_and_uncompressed_pages(self) -> None:
+        import gzip
+
+        import pytest
+
+        from clanker.tools import web_tools
+
+        class FakeResp:
+            def __init__(self, data: bytes, encoding: str = "") -> None:
+                self.data = data
+                self.headers = MagicMock()
+                self.headers.get.side_effect = lambda key, default="": {
+                    "Content-Encoding": encoding, "Content-Type": "text/html",
+                }.get(key, default)
+                self.headers.get_content_charset.return_value = "utf-8"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, size: int) -> bytes:
+                return self.data[:size]
+
+        for data, encoding in (
+            (b"x" * (web_tools.MAX_DOWNLOAD_BYTES + 1), ""),
+            (gzip.compress(b"x" * (web_tools.MAX_DECOMPRESSED_BYTES + 1)), "gzip"),
+        ):
+            with patch("urllib.request.urlopen", return_value=FakeResp(data, encoding)), \
+                 pytest.raises(ValueError, match="safety limit"):
+                web_tools._fetch_with_browser_headers("https://example.com")
 
     def test_configure_certificates_sets_and_respects_overrides(self, monkeypatch) -> None:
         import certifi

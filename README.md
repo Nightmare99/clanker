@@ -7,6 +7,7 @@ An AI-powered coding assistant CLI built with LangChain and LangGraph.
 - Interactive REPL with streaming responses
 - File operations: read, write, edit, search
 - Shell command execution with sandboxing
+- [Web search and page reading](docs/tools.md#web_search) with domain and recency filters, plus Markdown extraction (no API key required)
 - Session persistence and conversation history
 - **Multi-provider support**: Anthropic, OpenAI, Azure OpenAI, Ollama, GitHub Copilot (bring your own key, or connect an existing Copilot subscription)
 - Easy model switching with `/model` command
