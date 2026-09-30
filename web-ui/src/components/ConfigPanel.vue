@@ -35,6 +35,7 @@ import {
   DocumentTextOutline,
   ExtensionPuzzleOutline,
   HardwareChipOutline,
+  KeyOutline,
   ColorPaletteOutline,
   SpeedometerOutline,
   AddOutline,
@@ -200,6 +201,7 @@ const testingServer = ref<string | null>(null)
 // Menu items
 const menuOptions: MenuOption[] = [
   { label: 'Models', key: 'model', icon: () => h(NIcon, null, { default: () => h(HardwareChipOutline) }) },
+  { label: 'Accounts', key: 'accounts', icon: () => h(NIcon, null, { default: () => h(KeyOutline) }) },
   { label: 'Agents', key: 'agents', icon: () => h(NIcon, null, { default: () => h(PeopleOutline) }) },
   { label: 'Context', key: 'context', icon: () => h(NIcon, null, { default: () => h(ColorPaletteOutline) }) },
   { label: 'Interface', key: 'interface', icon: () => h(NIcon, null, { default: () => h(SpeedometerOutline) }) },
@@ -215,9 +217,9 @@ const modelProviderOptions = [
   { label: 'Azure OpenAI', value: 'AzureOpenAI', description: 'OpenAI models on Azure' },
   { label: 'Anthropic', value: 'Anthropic', description: 'Claude models' },
   { label: 'Ollama', value: 'Ollama', description: 'Local models via Ollama' },
-  { label: 'GitHub Copilot', value: 'GitHubCopilot', description: 'Auto-configured via Connect below' },
-  { label: 'Google Antigravity', value: 'Antigravity', description: 'Auto-configured via Google login' },
-  { label: 'ChatGPT (OpenAI)', value: 'ChatGPT', description: 'Auto-configured via ChatGPT login' },
+  { label: 'GitHub Copilot', value: 'GitHubCopilot', description: 'Connect in Accounts to discover models' },
+  { label: 'Google Antigravity', value: 'Antigravity', description: 'Connect in Accounts to discover models' },
+  { label: 'ChatGPT (OpenAI)', value: 'ChatGPT', description: 'Connect in Accounts to discover models' },
 ]
 
 // Provider colors and icons for visual distinction (neo-brutalist palette)
@@ -704,7 +706,7 @@ onMounted(() => {
         <div v-if="config" class="content-wrapper">
           <!-- Header -->
           <div class="content-header">
-            <h1>{{ activeKey === 'model' || activeKey === 'agents' ? menuOptions.find(m => m.key === activeKey)?.label : menuOptions.find(m => m.key === activeKey)?.label + ' Settings' }}</h1>
+            <h1>{{ ['model', 'accounts', 'agents'].includes(activeKey) ? menuOptions.find(m => m.key === activeKey)?.label : menuOptions.find(m => m.key === activeKey)?.label + ' Settings' }}</h1>
             <NSpace align="center" :size="12">
               <NTooltip>
                 <template #trigger>
@@ -730,11 +732,29 @@ onMounted(() => {
               >
                 Save Changes
               </NButton>
-              <NButton v-if="activeKey !== 'model' && activeKey !== 'agents'" quaternary @click="resetConfig">Reset to Defaults</NButton>
+              <NButton v-if="!['model', 'accounts', 'agents'].includes(activeKey)" quaternary @click="resetConfig">Reset to Defaults</NButton>
             </NSpace>
           </div>
 
           <NDivider />
+
+          <!-- Keep account cards mounted so changing tabs preserves pending login. -->
+          <section v-show="activeKey === 'accounts'" aria-label="Connected accounts">
+            <div class="models-header">
+              <div class="models-header-text">
+                <p class="models-description">
+                  Connect your accounts to discover available models. Manage sign-in,
+                  refresh models, or disconnect here; choose and configure models in Models.
+                </p>
+              </div>
+              <NButton @click="activeKey = 'model'">View Models</NButton>
+            </div>
+            <div class="account-connections">
+              <AccountConnectionCard provider="copilot" @models-synced="fetchModels" />
+              <AccountConnectionCard provider="chatgpt" @models-synced="fetchModels" />
+              <AccountConnectionCard provider="antigravity" @models-synced="fetchModels" />
+            </div>
+          </section>
 
           <!-- Model Settings - New Card-based UI -->
           <div v-if="activeKey === 'model'" class="models-section">
@@ -742,15 +762,22 @@ onMounted(() => {
             <div class="models-header">
               <div class="models-header-text">
                 <p class="models-description">
-                  Configure your LLM providers. Models are stored in <code>~/.clanker/models.json</code>
+                  Configure your models. Connect GitHub Copilot, ChatGPT, or Google in Accounts.
+                  Models are stored in <code>~/.clanker/models.json</code>
                 </p>
               </div>
-              <NButton type="primary" @click="openAddModel">
-                <template #icon>
-                  <NIcon><AddOutline /></NIcon>
-                </template>
-                Add Model
-              </NButton>
+              <NSpace>
+                <NButton @click="activeKey = 'accounts'">
+                  <template #icon><NIcon><KeyOutline /></NIcon></template>
+                  Manage Accounts
+                </NButton>
+                <NButton type="primary" @click="openAddModel">
+                  <template #icon>
+                    <NIcon><AddOutline /></NIcon>
+                  </template>
+                  Add Model
+                </NButton>
+              </NSpace>
             </div>
 
             <!-- Search + Sort -->
@@ -770,13 +797,6 @@ onMounted(() => {
                 :options="modelSortOptions"
                 class="models-sort"
               />
-            </div>
-
-            <!-- Connected accounts -->
-            <div class="account-connections">
-              <AccountConnectionCard provider="copilot" @models-synced="fetchModels" />
-              <AccountConnectionCard provider="antigravity" @models-synced="fetchModels" />
-              <AccountConnectionCard provider="chatgpt" @models-synced="fetchModels" />
             </div>
 
             <!-- Models Grid -->
@@ -1681,7 +1701,7 @@ onMounted(() => {
           <!-- Agent tab removed (only had name field, not worth a whole tab) -->
 
           <!-- Footer -->
-          <div class="content-footer">
+          <div v-if="activeKey !== 'accounts'" class="content-footer">
             <code>{{ configPath }}</code>
           </div>
         </div>
@@ -1973,6 +1993,7 @@ onMounted(() => {
 
 .models-header {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 24px;
@@ -1981,6 +2002,11 @@ onMounted(() => {
 
 .models-header-text {
   flex: 1;
+}
+
+.models-header > .n-button,
+.models-header > .n-space {
+  flex-shrink: 0;
 }
 
 .models-description {
@@ -2021,6 +2047,10 @@ onMounted(() => {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
   gap: 20px;
+}
+
+.account-connections :deep(.account-card) {
+  margin-bottom: 0;
 }
 
 .models-grid {

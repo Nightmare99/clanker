@@ -76,7 +76,8 @@ Inside the interactive session:
 
 To connect an account first, use `clanker copilot-login`,
 `clanker antigravity-login`, or `clanker openai-login`, the equivalent slash command, or the connected
-account cards in `clanker config`. See [Google Antigravity setup and account-risk
+account cards in the **Accounts** tab of `clanker config`. Discovered models appear
+in **Models**. See [Google Antigravity setup and account-risk
 notes](configuration.md#google-antigravity). For remote Google login, use
 `clanker antigravity-login --no-browser --manual`.
 

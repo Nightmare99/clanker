@@ -12,7 +12,7 @@ An AI-powered coding assistant CLI built with LangChain and LangGraph.
 - **Multi-provider support**: Anthropic, OpenAI, Azure OpenAI, Ollama, GitHub Copilot, Google Antigravity, ChatGPT (bring your own key, or connect a supported account)
 - Easy model switching with `/model` command
 - Extended thinking support for Claude models
-- Web-based configuration UI (BYOK mode)
+- Web-based configuration UI with dedicated Models and Accounts sections
 - MCP server support for extensibility
 
 ## Quick Start

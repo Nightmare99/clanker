@@ -109,7 +109,7 @@ or from inside an interactive session:
 ❯ /copilot-login
 ```
 
-or open `clanker config`, go to the **Models** tab, and click **Connect
+or open `clanker config`, go to the **Accounts** tab, and click **Connect
 GitHub Copilot** — it shows the same code/URL and polls for you.
 
 On success, clanker calls Copilot's own model-list endpoint and auto-creates
@@ -149,7 +149,7 @@ cached credentials while retaining saved model settings.
 ## ChatGPT (OpenAI account)
 
 Connect with `clanker openai-login`, `/openai-login` in a session, or
-**Models → ChatGPT (OpenAI) → Sign in with ChatGPT** in `clanker config`.
+**Accounts → ChatGPT (OpenAI) → Sign in with ChatGPT** in `clanker config`.
 Complete authorization in your browser; login waits up to ten minutes and
 Ctrl+C cancels. The TUI remains responsive while waiting.
 
@@ -222,7 +222,7 @@ your browser; a link is also displayed. Login waits up to ten minutes. Use
 Ctrl+C to cancel. In the TUI, login runs in the background so the UI stays
 responsive.
 
-In `clanker config`, open **Models → Google Antigravity → Sign in with Google**.
+In `clanker config`, open **Accounts → Google Antigravity → Sign in with Google**.
 The account card shows the connected email and provides **Refresh Models**,
 **Reconnect**, **Disconnect**, and **Cancel** during login. The model editor
 does not ask for API keys or base URLs for connected account providers.
@@ -493,6 +493,7 @@ clanker config --no-browser
 
 The web UI provides:
 
+- **Accounts**: Connect GitHub Copilot, ChatGPT (OpenAI), or Google Antigravity; refresh models, reconnect, or disconnect
 - **Models Management**: Add, edit, delete, and test model configurations
 - **Extended Thinking**: Enable and configure thinking budget for Claude models
 - **Reasoning Effort**: Configure reasoning for Azure OpenAI o1/o3 models
@@ -503,6 +504,11 @@ The web UI provides:
 - **Safety Settings**: Configure confirmation prompts and command sandboxing
 - **Tools**: Enable or disable tool categories (web browsing, memory, skills, subagents, communication)
 - **Logging Configuration**: Set log levels, file rotation, and console output
+
+Account sign-in and connection controls live in **Accounts**. Discovered models
+appear in **Models**, where you can test them, edit their settings, and select a
+default. Use **Manage Accounts** in Models or **View Models** in Accounts to
+switch between the two. Changing tabs keeps an in-progress login active.
 
 Models are saved to `~/.clanker/models.json`, other settings to `~/.clanker/config.yaml`.
 

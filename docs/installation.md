@@ -153,7 +153,9 @@ After installation, run `clanker` to start the setup wizard, or:
    export AZURE_OPENAI_API_KEY=your-key
    ```
 
-2. Run `clanker config` to open the web-based configuration UI
+2. Run `clanker config` to open the web-based configuration UI. Use **Models**
+   for API-key model configuration or **Accounts** to connect GitHub Copilot,
+   ChatGPT (OpenAI), or Google Antigravity.
 
 Alternatively, connect an existing account with `clanker copilot-login` or
 `clanker antigravity-login`, or `clanker openai-login` for ChatGPT. These do not require a manually configured API key.
