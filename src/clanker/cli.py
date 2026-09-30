@@ -230,6 +230,25 @@ def handle_command(
                 if chat_log:
                     chat_log.add_message(msg, MessageType.WARNING)
 
+    elif cmd == "/antigravity-login":
+        from clanker.config.antigravity_auth import AntigravityAuthError
+
+        def emit_login(message: str) -> None:
+            console.print_info(message)
+            _mirror(message)
+
+        try:
+            synced = _run_antigravity_login(emit_login)
+            message = f"Connected! Synced {synced} Antigravity model(s). Use /model to switch to one."
+            console.print_success(message)
+            _mirror(message, MessageType.SUCCESS)
+        except KeyboardInterrupt:
+            console.print_warning("Google login cancelled.")
+            _mirror("Google login cancelled.", MessageType.WARNING)
+        except AntigravityAuthError as exc:
+            console.print_error(str(exc))
+            _mirror(str(exc), MessageType.ERROR)
+
     elif cmd == "/copilot-login":
         from clanker.config.copilot_auth import (
             CopilotAuthError,
@@ -601,7 +620,7 @@ class CommandCompleter:
     """Autocomplete for slash commands (used by legacy REPL and tests)."""
 
     COMMANDS = [
-        "/help", "/exit", "/quit", "/q", "/clear", "/model", "/copilot-login",
+        "/help", "/exit", "/quit", "/q", "/clear", "/model", "/copilot-login", "/antigravity-login",
         "/config", "/mcp", "/logs", "/history", "/restore", "/resume", "/import", "/compact",
         "/memories", "/remember", "/forget", "/workflow", "/skill",
     ]
@@ -1016,7 +1035,7 @@ def run_interactive_legacy(
     history_path.parent.mkdir(parents=True, exist_ok=True)
 
     class CommandCompleter(Completer):
-        COMMANDS = ["/help", "/exit", "/quit", "/q", "/clear", "/model", "/copilot-login",
+        COMMANDS = ["/help", "/exit", "/quit", "/q", "/clear", "/model", "/copilot-login", "/antigravity-login",
                     "/config", "/mcp", "/logs", "/history", "/restore", "/resume", "/import", "/compact",
                     "/memories", "/remember", "/forget", "/workflow", "/skill"]
 
@@ -1250,6 +1269,52 @@ def copilot_login() -> None:
         sys.exit(1)
     click.echo(f"Connected! Synced {synced} Copilot model(s).")
     click.echo("Use /model in a session to switch to one.")
+
+
+def _run_antigravity_login(emit, *, no_browser: bool = False, manual: bool = False) -> int:
+    import webbrowser
+
+    from clanker.config.antigravity_auth import (
+        LOGIN_NOTICE,
+        poll_login,
+        start_login,
+        submit_callback,
+    )
+
+    emit(LOGIN_NOTICE)
+    session = start_login()
+    try:
+        emit(f"Open this Google login link:\n{session.url}")
+        if not no_browser:
+            try:
+                webbrowser.open(session.url)
+            except webbrowser.Error:
+                emit("Could not open a browser automatically. Open the link above.")
+        if manual:
+            callback = click.prompt("Paste the full callback URL from your browser", hide_input=True)
+            submit_callback(session, callback)
+        emit("Waiting for Google authorization... (Ctrl+C to cancel)")
+        while (synced := poll_login(session)) is None:
+            time.sleep(0.25)
+        return synced
+    finally:
+        session.close()
+
+
+@main.command("antigravity-login")
+@click.option("--no-browser", is_flag=True, help="Print the Google login link without opening a browser.")
+@click.option("--manual", is_flag=True, help="Paste the callback URL for a remote/headless login.")
+def antigravity_login(no_browser: bool, manual: bool) -> None:
+    """Connect your Google account to the unofficial Antigravity model provider."""
+    from clanker.config.antigravity_auth import AntigravityAuthError
+
+    try:
+        synced = _run_antigravity_login(click.echo, no_browser=no_browser, manual=manual)
+    except KeyboardInterrupt:
+        raise click.ClickException("Google login cancelled.") from None
+    except AntigravityAuthError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Connected! Synced {synced} Antigravity model(s). Use /model to switch to one.")
 
 
 if __name__ == "__main__":

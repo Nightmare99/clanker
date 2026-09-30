@@ -7,6 +7,7 @@ import base64
 import itertools
 import json
 import re
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -62,7 +63,7 @@ _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇"
 
 _SLASH_COMMANDS = [
     "/changes", "/tasks",
-    "/clear", "/compact", "/config", "/copilot-login", "/exit", "/forget",
+    "/clear", "/compact", "/config", "/copilot-login", "/antigravity-login", "/exit", "/forget",
     "/help", "/history", "/list_memories", "/logs", "/memories", "/model",
     "/import", "/mcp", "/remember", "/restore", "/resume", "/skill", "/workflow",
 ]
@@ -899,6 +900,9 @@ class ClankerApp(App):
             stop_task(run.task_id)
         self.interrupt_requested = True
         self._interrupt_event.set()
+        login = getattr(self, "_antigravity_login_session", None)
+        if login:
+            login.cancel(close=False)
         _cancel_streaming_task()
 
     def action_quit(self) -> None:
@@ -906,6 +910,9 @@ class ClankerApp(App):
 
         for run in self._subagent_runs:
             stop_task(run.task_id)
+        login = getattr(self, "_antigravity_login_session", None)
+        if login:
+            login.cancel(close=False)
         self._save_history()
         self.exit()
 
@@ -1172,6 +1179,10 @@ class ClankerApp(App):
             self.action_show_memories()
             return "skip"
 
+        if text.strip().lower() == "/antigravity-login":
+            self.run_worker(self._antigravity_login_flow(), exclusive=True, group="antigravity-login")
+            return "skip"
+
         if text.strip().lower() == "/copilot-login":
             # Runs in a background worker instead of through handle_command's
             # blocking poll loop -- that loop runs on the same thread as the
@@ -1394,6 +1405,55 @@ class ClankerApp(App):
             active_journal.reset(journal_token)
             change_turn.reset(turn_token)
             self._set_processing(False)
+
+    async def _antigravity_login_flow(self) -> None:
+        import webbrowser
+
+        from clanker.config.antigravity_auth import (
+            LOGIN_NOTICE,
+            AntigravityAuthError,
+            poll_login,
+            start_login,
+        )
+
+        chat_log = self.get_chat_log()
+        self.reset_interrupt()
+        session = None
+        try:
+            chat_log.add_message(LOGIN_NOTICE, MessageType.WARNING)
+            session = start_login()  # Local bind only; no blocking network call.
+            self._antigravity_login_session = session
+            chat_log.add_message(
+                f"Open this Google login link:\n{session.url}\n"
+                "Waiting for authorization... (Ctrl+C to cancel). For SSH/headless login, "
+                "use clanker antigravity-login --no-browser --manual in another terminal.",
+                MessageType.INFO,
+            )
+            with suppress(webbrowser.Error):
+                await asyncio.to_thread(webbrowser.open, session.url)
+            while not self._interrupt_event.is_set():
+                synced = await asyncio.to_thread(poll_login, session)
+                if synced is not None:
+                    chat_log.add_message(
+                        f"Connected! Synced {synced} Antigravity model(s). Use /model to switch to one.",
+                        MessageType.SUCCESS,
+                    )
+                    return
+                await asyncio.sleep(0.25)
+            session.cancel()
+            chat_log.add_message("Google login cancelled.", MessageType.WARNING)
+        except AntigravityAuthError as exc:
+            chat_log.add_message(str(exc), MessageType.ERROR)
+        except asyncio.CancelledError:
+            if session:
+                session.cancel()
+            raise
+        finally:
+            if session:
+                await asyncio.to_thread(session.close)
+            if getattr(self, "_antigravity_login_session", None) is session:
+                self._antigravity_login_session = None
+            self.reset_interrupt()
 
     # --- Copilot device-code login ---
 

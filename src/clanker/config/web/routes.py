@@ -1,5 +1,6 @@
 """API routes for Clanker configuration."""
 
+import asyncio
 import os
 import secrets
 import time
@@ -9,7 +10,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from clanker.agents import list_personal_agents, set_agent_model
-from clanker.config import CONFIG_PATH, Settings, reload_settings
+from clanker.config import CONFIG_PATH, Settings, antigravity_auth, reload_settings
 from clanker.config.copilot_auth import (
     CopilotAuthError,
     complete_login,
@@ -18,6 +19,7 @@ from clanker.config.copilot_auth import (
     start_device_flow,
     sync_copilot_models,
 )
+from clanker.config.copilot_auth import disconnect as disconnect_copilot
 from clanker.config.copilot_auth import (
     is_connected as is_copilot_connected,
 )
@@ -510,6 +512,11 @@ async def test_model_config(name: str) -> MessageResponse:
             model_name = model_config.model or "llama3"
             llm = ChatOllama(base_url=base_url, model=model_name)
 
+        elif provider == "Antigravity":
+            from clanker.config.models import create_llm_from_config
+
+            llm = create_llm_from_config(model_config)
+
         elif provider == "GitHubCopilot":
             from langchain_openai import ChatOpenAI
 
@@ -531,7 +538,7 @@ async def test_model_config(name: str) -> MessageResponse:
             raise ValueError(f"Unsupported provider: {provider}")
 
         # Make a simple test invocation
-        llm.invoke("Say 'ok'")
+        await asyncio.to_thread(llm.invoke, "Say 'ok'")
 
         return MessageResponse(
             message="Connection successful! Model responded.",
@@ -620,6 +627,7 @@ class CopilotLoginStartResponse(BaseModel):
     user_code: str
     verification_uri: str
     expires_in: int
+    interval: int = 5
 
 
 class CopilotLoginPollRequest(BaseModel):
@@ -664,6 +672,7 @@ async def copilot_login_start() -> CopilotLoginStartResponse:
         user_code=session.user_code,
         verification_uri=session.verification_uri,
         expires_in=int(session.expires_at - time.time()),
+        interval=session.interval,
     )
 
 
@@ -712,3 +721,100 @@ async def copilot_refresh_models() -> CopilotSyncResponse:
     except CopilotAuthError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return CopilotSyncResponse(models_synced=synced)
+
+
+@router.post("/copilot/login/cancel", response_model=MessageResponse)
+def copilot_login_cancel(request: CopilotLoginPollRequest) -> MessageResponse:
+    _copilot_login_sessions.pop(request.session_id, None)
+    return MessageResponse(message="Copilot login cancelled.", success=True)
+
+
+@router.post("/copilot/disconnect", response_model=MessageResponse)
+def copilot_disconnect() -> MessageResponse:
+    _copilot_login_sessions.clear()
+    disconnect_copilot()
+    return MessageResponse(message="Copilot disconnected. Saved model settings are retained.", success=True)
+
+
+# ==================== Google Antigravity native provider ====================
+
+_antigravity_login_sessions: dict[str, antigravity_auth.LoginSession] = {}
+
+
+class AntigravityLoginStartResponse(BaseModel):
+    session_id: str
+    authorization_url: str
+    expires_in: int
+
+
+class AntigravityLoginPollRequest(BaseModel):
+    session_id: str
+    callback_url: str | None = None
+
+
+@router.get("/antigravity/status")
+def antigravity_status() -> dict[str, Any]:
+    return antigravity_auth.connection_status()
+
+
+@router.post("/antigravity/login/start", response_model=AntigravityLoginStartResponse)
+def antigravity_login_start() -> AntigravityLoginStartResponse:
+    # Expired sessions must not occupy callback ports or accumulate forever.
+    for key, previous in list(_antigravity_login_sessions.items()):
+        if time.time() >= previous.expires_at:
+            previous.cancel()
+            _antigravity_login_sessions.pop(key, None)
+    try:
+        session = antigravity_auth.start_login()
+    except antigravity_auth.AntigravityAuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    session_id = secrets.token_urlsafe(24)
+    _antigravity_login_sessions[session_id] = session
+    return AntigravityLoginStartResponse(
+        session_id=session_id, authorization_url=session.url,
+        expires_in=max(0, int(session.expires_at - time.time())),
+    )
+
+
+@router.post("/antigravity/login/poll", response_model=CopilotLoginPollResponse)
+def antigravity_login_poll(request: AntigravityLoginPollRequest) -> CopilotLoginPollResponse:
+    session = _antigravity_login_sessions.get(request.session_id)
+    if not session:
+        return CopilotLoginPollResponse(status="error", detail="Unknown or expired Google login session.")
+    try:
+        if request.callback_url:
+            antigravity_auth.submit_callback(session, request.callback_url)
+        synced = antigravity_auth.poll_login(session)
+        if synced is None:
+            return CopilotLoginPollResponse(status="pending")
+    except antigravity_auth.AntigravityAuthError as exc:
+        session.close()
+        _antigravity_login_sessions.pop(request.session_id, None)
+        return CopilotLoginPollResponse(status="error", detail=str(exc))
+    _antigravity_login_sessions.pop(request.session_id, None)
+    return CopilotLoginPollResponse(status="success", models_synced=synced)
+
+
+@router.post("/antigravity/login/cancel", response_model=MessageResponse)
+def antigravity_login_cancel(request: CopilotLoginPollRequest) -> MessageResponse:
+    session = _antigravity_login_sessions.pop(request.session_id, None)
+    if session:
+        session.cancel()
+    return MessageResponse(message="Google login cancelled.", success=True)
+
+
+@router.post("/antigravity/refresh-models", response_model=CopilotSyncResponse)
+def antigravity_refresh_models() -> CopilotSyncResponse:
+    try:
+        return CopilotSyncResponse(models_synced=antigravity_auth.sync_models())
+    except antigravity_auth.AntigravityAuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/antigravity/disconnect", response_model=MessageResponse)
+def antigravity_disconnect() -> MessageResponse:
+    for session in list(_antigravity_login_sessions.values()):
+        session.cancel()
+    _antigravity_login_sessions.clear()
+    antigravity_auth.disconnect()
+    return MessageResponse(message="Google account disconnected. Saved model settings are retained.", success=True)

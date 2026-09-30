@@ -36,10 +36,12 @@ never return an empty string or one of the stock "could not summarize" markers.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, NotRequired
 
 from langchain.agents.middleware import SummarizationMiddleware
+from langchain.agents.middleware.summarization import ContextSize
 from langchain.agents.middleware.types import AgentState
 from langchain_core.messages import AnyMessage, HumanMessage, RemoveMessage
 from langchain_core.messages.utils import get_buffer_string
@@ -110,6 +112,10 @@ Respond ONLY with the structured summary.
 # Token-accurate counting is reserved for chunk packing via ``self.token_counter``.
 _CHARS_PER_TOKEN = 4
 
+# Working budget for automatic compaction when the model's actual limit is unknown.
+# This is a local policy, never advertised as the model's context capacity.
+_FALLBACK_CONTEXT_TOKEN_BUDGET = 32_000
+
 # Fallback chunk budget (tokens) when the model exposes no profile/context window.
 _DEFAULT_CHUNK_TOKEN_TARGET = 12_000
 
@@ -133,6 +139,20 @@ _MAX_REDUCE_DEPTH = 5
 
 _IMAGE_PLACEHOLDER = "[image omitted from summary]"
 _TRUNCATION_MARKER = "\n... [content truncated for summarization] ...\n"
+
+
+def get_summarization_trigger(model: Any, threshold_percent: float) -> ContextSize:
+    """Use the model's context limit when available, otherwise an absolute budget."""
+    fraction = threshold_percent / 100.0
+    profile = getattr(model, "profile", None)
+    limit = profile.get("max_input_tokens") if isinstance(profile, Mapping) else None
+    if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0:
+        logger.info("Summarization trigger: %.0f%% of context window", threshold_percent)
+        return ("fraction", fraction)
+
+    tokens = max(1, int(_FALLBACK_CONTEXT_TOKEN_BUDGET * fraction))
+    logger.info("Model context limit unavailable; summarization trigger: %d tokens", tokens)
+    return ("tokens", tokens)
 
 
 class CompactionAgentState(AgentState[Any]):
@@ -731,11 +751,10 @@ def run_compaction(
     middleware identically (same trigger/keep settings) rather than each
     duplicating the construction.
     """
-    trigger_fraction = settings.context.summarization_threshold / 100.0
     keep_count = settings.context.keep_recent_turns * 2
     middleware = RobustSummarizationMiddleware(
         model=model,
-        trigger=("fraction", trigger_fraction),
+        trigger=get_summarization_trigger(model, settings.context.summarization_threshold),
         keep=("messages", keep_count),
     )
     return middleware.compact(messages, force=force)

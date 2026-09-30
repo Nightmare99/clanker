@@ -30,6 +30,31 @@
 - Set your API key: `export ANTHROPIC_API_KEY=your-key`
 - Or add it to your `.env` file
 
+## Google Antigravity Login
+
+- **Fractional token limits / missing model profile**: Update Clanker and restart
+  the session. Documented Antigravity models now receive context defaults even
+  from previously saved configuration. Models with unknown limits use an
+  absolute compaction budget; optionally set `max_input_tokens` to a known
+  limit in the model editor. See [Antigravity configuration](configuration.md#google-antigravity).
+
+- **Browser does not open:** Open the displayed Google authorization link
+  manually, or run `clanker antigravity-login --no-browser`.
+- **SSH/remote callback cannot load:** Run
+  `clanker antigravity-login --no-browser --manual`. Open the link locally,
+  grant access, and paste the full callback URL (including `code` and `state`)
+  into the hidden terminal prompt. The web UI offers **Use callback URL** too.
+- **Callback ports unavailable:** Close other Google login attempts and retry.
+  Clanker tries ports 51121–51126, including fallbacks for Windows port reservations.
+- **State mismatch or expired login:** Start a fresh login and use only that
+  attempt's link and callback URL. Login expires after ten minutes.
+- **Revoked login:** Reconnect through `clanker antigravity-login` or the web
+  account card. Temporary token-refresh failures retain your login for retry.
+- **HTTP 403, no project, or no supported models:** Check Google account
+  eligibility and Antigravity access. This unofficial API may be restricted;
+  see [the integration notes](configuration.md#google-antigravity).
+- **HTTP 429:** Check your account quota and retry later.
+
 ## MCP Server Issues
 
 ### Server not loading
@@ -88,4 +113,3 @@
 - The blacklist is only enforced while `safety.sandbox_commands` is `true`.
 - See [Configuration → Command Blacklist](configuration.md#command-blacklist)
   for details.
-

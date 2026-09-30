@@ -126,6 +126,41 @@ class TestInheritance:
         assert hasattr(mw, "_find_safe_cutoff_point")
 
 
+class TestUnknownContextLimit:
+    @pytest.mark.parametrize("profile", [None, {}, {"max_input_tokens": None}])
+    def test_automatic_compaction_works_without_a_profile(self, profile) -> None:
+        from clanker.agent.summarization import run_compaction
+        from clanker.config.settings import Settings
+
+        model = FakeModel()
+        model.profile = profile
+        settings = Settings()
+        settings.context.keep_recent_turns = 1
+        # Short conversations must still run without premature compaction.
+        assert run_compaction(_messages(("h", "hi")), model, settings) is None
+        messages = _messages(*[(kind, "word " * 5000) for kind in ["h", "a"] * 3])
+        result = run_compaction(messages, model, settings)
+        assert result is not None
+        assert len(result.preserved_messages) == 2
+        assert result.summarized_count == 4
+        assert "GOOD_SUMMARY" in result.new_messages[0].content
+
+    def test_known_profile_preserves_fractional_trigger(self) -> None:
+        from clanker.agent.summarization import get_summarization_trigger
+
+        assert get_summarization_trigger(FakeModel(), 80) == ("fraction", 0.8)
+
+    def test_manual_compaction_works_without_a_profile(self) -> None:
+        from clanker.agent.summarization import run_compaction
+        from clanker.config.settings import Settings
+
+        model = FakeModel()
+        model.profile = None
+        result = run_compaction(_messages(("h", "hello"), ("a", "hi")), model, Settings(), force=True)
+        assert result is not None
+        assert result.summarized_count == 1
+
+
 # ---------------------------------------------------------------------------
 # Sanitization
 # ---------------------------------------------------------------------------

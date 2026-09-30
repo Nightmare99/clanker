@@ -155,4 +155,9 @@ After installation, run `clanker` to start the setup wizard, or:
 
 2. Run `clanker config` to open the web-based configuration UI
 
+Alternatively, connect an existing account with `clanker copilot-login` or
+`clanker antigravity-login`. These do not require a manually configured API key.
+Antigravity login works in the bundled Python executable without Node.js or a
+separate proxy; see its [setup and account-risk notes](configuration.md#google-antigravity).
+
 See [Configuration](configuration.md) for detailed setup options.

@@ -73,9 +73,20 @@ npm install
 # Development server
 npm run dev
 
-# Build for production (outputs to src/clanker/config/web/static)
+# Type-check and build for production (outputs to web-ui/dist)
 npm run build
+
+# Build and copy into the Python package for clanker config / binary builds
+npm run deploy
 ```
+
+Google Antigravity authentication lives in `config/antigravity_auth.py`; its
+native LangChain streaming adapter is `agent/antigravity.py`. Copilot and Google
+share `AccountConnectionCard.vue` in the web UI. `tests/test_antigravity.py`
+exercises OAuth, cancellation, refresh, model discovery, and sync/async tool
+round trips with mocked API responses and a real local callback listener. Live
+account authorization needs a manual check; no Google credentials are required
+for the test suite.
 
 ## Safety Features
 

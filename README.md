@@ -9,7 +9,7 @@ An AI-powered coding assistant CLI built with LangChain and LangGraph.
 - Shell command execution with sandboxing
 - [Web search and page reading](docs/tools.md#web_search) with domain and recency filters, plus Markdown extraction (no API key required)
 - Session persistence and conversation history
-- **Multi-provider support**: Anthropic, OpenAI, Azure OpenAI, Ollama, GitHub Copilot (bring your own key, or connect an existing Copilot subscription)
+- **Multi-provider support**: Anthropic, OpenAI, Azure OpenAI, Ollama, GitHub Copilot, Google Antigravity (bring your own key, or connect a supported account)
 - Easy model switching with `/model` command
 - Extended thinking support for Claude models
 - Web-based configuration UI (BYOK mode)
@@ -54,6 +54,7 @@ clanker                        # Interactive mode
 clanker "explain main.py"      # Single prompt
 clanker config                 # Web configuration UI
 clanker copilot-login          # Connect a GitHub Copilot subscription
+clanker antigravity-login      # Connect Google Antigravity (unofficial integration)
 clanker -m claude              # Use a specific model
 clanker --resume <session-id>  # Resume conversation
 clanker --yolo                 # Auto-execute bash commands (skip approval)
@@ -64,6 +65,9 @@ Inside Clanker, `/restore` (or `/resume`) opens a paginated conversation
 picker. `/import` guides you through importing Codex, Claude Code, OpenCode,
 or GitHub Copilot CLI sessions from the current workspace. See the
 [usage guide](docs/usage.md#resuming-and-importing-conversations).
+
+Google Antigravity uses browser login and discovers Claude/Gemini models without
+a separate proxy. See [setup and account-risk notes](docs/configuration.md#google-antigravity).
 
 ## Documentation
 

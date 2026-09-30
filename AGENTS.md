@@ -108,6 +108,7 @@ Clanker supports multiple providers via a unified interface:
 - **Anthropic** - Claude models with extended thinking support
 - **Ollama** - Local models
 - **GitHubCopilot** - Models via a connected GitHub Copilot subscription (`/copilot-login`)
+- **Antigravity** - Claude/Gemini models via Google account OAuth (`/antigravity-login`), using an unofficial Cloud Code integration
 
 Provider choice should not affect agent behavior, only model quality.
 

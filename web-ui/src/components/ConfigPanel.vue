@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch, inject } from 'vue'
+import { ref, onMounted, computed, inject } from 'vue'
+import AccountConnectionCard from './AccountConnectionCard.vue'
 import type { Ref } from 'vue'
 import {
   NLayout,
@@ -156,11 +157,6 @@ const globalAgents = ref<GlobalAgent[]>([])
 const agentsLoading = ref(false)
 const savingAgentModel = ref<string | null>(null)
 
-// GitHub Copilot connect flow
-const copilotConnected = ref(false)
-const copilotConnecting = ref(false)
-const copilotSession = ref<{ sessionId: string; userCode: string; verificationUri: string } | null>(null)
-let copilotPollTimer: ReturnType<typeof setInterval> | null = null
 const modelsConfigPath = ref('')
 const showModelModal = ref(false)
 const editingModel = ref<string | null>(null)
@@ -220,6 +216,7 @@ const modelProviderOptions = [
   { label: 'Anthropic', value: 'Anthropic', description: 'Claude models' },
   { label: 'Ollama', value: 'Ollama', description: 'Local models via Ollama' },
   { label: 'GitHub Copilot', value: 'GitHubCopilot', description: 'Auto-configured via Connect below' },
+  { label: 'Google Antigravity', value: 'Antigravity', description: 'Auto-configured via Google login' },
 ]
 
 // Provider colors and icons for visual distinction (neo-brutalist palette)
@@ -228,6 +225,7 @@ const providerStyles: Record<string, { color: string; bgColor: string; borderCol
   'AzureOpenAI': { color: '#000000', bgColor: '#00F0FF', borderColor: 'var(--nb-border)' },
   'Anthropic': { color: '#000000', bgColor: '#FF2BD6', borderColor: 'var(--nb-border)' },
   'Ollama': { color: '#000000', bgColor: '#FFE500', borderColor: 'var(--nb-border)' },
+  'Antigravity': { color: '#000000', bgColor: '#B6FF1A', borderColor: 'var(--nb-border)' },
   'GitHubCopilot': { color: '#000000', bgColor: '#C4B5FD', borderColor: 'var(--nb-border)' },
 }
 
@@ -249,6 +247,8 @@ const logLevelOptions = [
 const isModelFormAzure = computed(() => modelForm.value.provider === 'AzureOpenAI')
 const isModelFormOpenAI = computed(() => modelForm.value.provider === 'OpenAI')
 const isModelFormAnthropic = computed(() => modelForm.value.provider === 'Anthropic')
+const isModelFormAccount = computed(() => ['GitHubCopilot', 'Antigravity'].includes(modelForm.value.provider))
+const isModelFormAntigravity = computed(() => modelForm.value.provider === 'Antigravity')
 const isModelFormOllama = computed(() => modelForm.value.provider === 'Ollama')
 
 // Get placeholder for model ID based on provider
@@ -330,109 +330,6 @@ async function updateAgentModel(agent: GlobalAgent, model: string | null) {
   } finally {
     savingAgentModel.value = null
   }
-}
-
-// GitHub Copilot connect flow
-async function fetchCopilotStatus() {
-  try {
-    const response = await fetch('/api/copilot/status')
-    const data = await response.json()
-    copilotConnected.value = data.connected
-  } catch (error) {
-    console.error('Failed to load Copilot status:', error)
-  }
-}
-
-function stopCopilotPolling() {
-  if (copilotPollTimer !== null) {
-    clearInterval(copilotPollTimer)
-    copilotPollTimer = null
-  }
-}
-
-async function startCopilotLogin() {
-  copilotConnecting.value = true
-  copilotSession.value = null
-  try {
-    const response = await fetch('/api/copilot/login/start', { method: 'POST' })
-    if (!response.ok) {
-      const err = await response.json()
-      message.error(err.detail || 'Failed to start GitHub Copilot login')
-      copilotConnecting.value = false
-      return
-    }
-    const data = await response.json()
-    copilotSession.value = {
-      sessionId: data.session_id,
-      userCode: data.user_code,
-      verificationUri: data.verification_uri,
-    }
-    // Poll every 3s -- generous relative to GitHub's device-flow interval
-    // (typically 5s), avoids hammering the endpoint while staying responsive.
-    copilotPollTimer = setInterval(pollCopilotLogin, 3000)
-  } catch (error) {
-    message.error('Failed to start GitHub Copilot login')
-    console.error(error)
-    copilotConnecting.value = false
-  }
-}
-
-async function pollCopilotLogin() {
-  if (!copilotSession.value) return
-  try {
-    const response = await fetch('/api/copilot/login/poll', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: copilotSession.value.sessionId }),
-    })
-    const data = await response.json()
-
-    if (data.status === 'pending') {
-      return
-    }
-
-    stopCopilotPolling()
-    copilotConnecting.value = false
-    copilotSession.value = null
-
-    if (data.status === 'success') {
-      copilotConnected.value = true
-      message.success(`Connected! Synced ${data.models_synced} Copilot model(s).`)
-      await fetchModels()
-    } else if (data.status === 'expired') {
-      message.warning('GitHub Copilot login code expired. Try again.')
-    } else {
-      message.error(data.detail || 'GitHub Copilot login failed.')
-    }
-  } catch (error) {
-    stopCopilotPolling()
-    copilotConnecting.value = false
-    message.error('Lost connection while waiting for GitHub Copilot login.')
-    console.error(error)
-  }
-}
-
-async function refreshCopilotModels() {
-  try {
-    const response = await fetch('/api/copilot/refresh-models', { method: 'POST' })
-    if (!response.ok) {
-      const err = await response.json()
-      message.error(err.detail || 'Failed to refresh Copilot models')
-      return
-    }
-    const data = await response.json()
-    message.success(`Synced ${data.models_synced} Copilot model(s).`)
-    await fetchModels()
-  } catch (error) {
-    message.error('Failed to refresh Copilot models')
-    console.error(error)
-  }
-}
-
-function cancelCopilotLogin() {
-  stopCopilotPolling()
-  copilotConnecting.value = false
-  copilotSession.value = null
 }
 
 function openAddModel() {
@@ -772,12 +669,8 @@ onMounted(() => {
   fetchConfig()
   fetchModels()
   fetchGlobalAgents()
-  fetchCopilotStatus()
 })
 
-onUnmounted(() => {
-  stopCopilotPolling()
-})
 </script>
 
 <template>
@@ -876,42 +769,11 @@ onUnmounted(() => {
               />
             </div>
 
-            <!-- GitHub Copilot Connect -->
-            <NCard class="copilot-card">
-              <div class="copilot-card-content">
-                <div class="copilot-card-info">
-                  <NTag
-                    size="small"
-                    :color="{ color: providerStyles['GitHubCopilot'].bgColor, textColor: providerStyles['GitHubCopilot'].color, borderColor: 'var(--nb-border)' }"
-                  >
-                    GitHub Copilot
-                  </NTag>
-                  <span v-if="copilotConnected" class="copilot-status-text">
-                    Connected — models sync automatically as <code>copilot:&lt;model&gt;</code>
-                  </span>
-                  <span v-else-if="copilotSession" class="copilot-status-text">
-                    Open <a :href="copilotSession.verificationUri" target="_blank" rel="noopener">{{ copilotSession.verificationUri }}</a>
-                    and enter code <strong class="copilot-user-code">{{ copilotSession.userCode }}</strong>
-                  </span>
-                  <span v-else class="copilot-status-text">
-                    Connect your existing GitHub Copilot subscription to use its models directly — no separate proxy required.
-                  </span>
-                </div>
-                <NSpace>
-                  <NButton v-if="copilotSession" quaternary @click="cancelCopilotLogin">Cancel</NButton>
-                  <NButton v-if="copilotConnected" size="small" @click="refreshCopilotModels">Refresh Models</NButton>
-                  <NButton
-                    v-else
-                    type="primary"
-                    :loading="copilotConnecting"
-                    :disabled="!!copilotSession"
-                    @click="startCopilotLogin"
-                  >
-                    Connect GitHub Copilot
-                  </NButton>
-                </NSpace>
-              </div>
-            </NCard>
+            <!-- Connected accounts -->
+            <div class="account-connections">
+              <AccountConnectionCard provider="copilot" @models-synced="fetchModels" />
+              <AccountConnectionCard provider="antigravity" @models-synced="fetchModels" />
+            </div>
 
             <!-- Models Grid -->
             <div v-if="visibleModels.length > 0" class="models-grid">
@@ -957,8 +819,8 @@ onUnmounted(() => {
                     <code class="detail-value detail-url">{{ model.base_url }}</code>
                   </div>
                   <div class="model-detail-row">
-                    <span class="detail-label">API Key:</span>
-                    <code class="detail-value">{{ model.api_key || '(from environment)' }}</code>
+                    <span class="detail-label">Authentication:</span>
+                    <code class="detail-value">{{ ['GitHubCopilot', 'Antigravity'].includes(model.provider) ? 'Connected account' : model.api_key || '(from environment)' }}</code>
                   </div>
                   <div v-if="model.max_tokens" class="model-detail-row">
                     <span class="detail-label">Max Tokens:</span>
@@ -1210,14 +1072,14 @@ onUnmounted(() => {
                 />
               </NFormItem>
 
-              <NFormItem label="Base URL">
+              <NFormItem v-if="!isModelFormAccount" label="Base URL">
                 <NInput
                   v-model:value="modelForm.base_url"
                   :placeholder="isModelFormAzure ? 'https://your-resource.openai.azure.com' : isModelFormOllama ? 'http://localhost:11434' : 'Leave empty for default'"
                 />
               </NFormItem>
 
-              <NFormItem label="API Key">
+              <NFormItem v-if="!isModelFormAccount" label="API Key">
                 <NInput
                   v-model:value="modelForm.api_key"
                   type="password"
@@ -1226,7 +1088,11 @@ onUnmounted(() => {
                 />
               </NFormItem>
 
-              <NAlert v-if="!isModelFormOllama" type="info" style="margin-top: 8px">
+              <NAlert v-if="isModelFormAccount" type="info" style="margin-top: 8px">
+                Authenticate through the connected account cards. API keys and custom endpoints are not needed.
+              </NAlert>
+
+              <NAlert v-if="!isModelFormOllama && !isModelFormAccount" type="info" style="margin-top: 8px">
                 <small>
                   <strong>Tip:</strong> You can leave API Key empty to use environment variables
                   ({{ modelForm.provider === 'OpenAI' ? 'OPENAI_API_KEY' : modelForm.provider === 'AzureOpenAI' ? 'AZURE_OPENAI_API_KEY' : 'ANTHROPIC_API_KEY' }}).
@@ -1240,16 +1106,15 @@ onUnmounted(() => {
                 <NFormItem label="Reasoning Effort">
                   <NSelect
                     v-model:value="modelForm.reasoning_effort"
+                    clearable
+                    placeholder="None (disabled)"
                     :options="[
-                      { label: 'None (disabled)', value: null },
                       { label: 'Minimal', value: 'minimal' },
                       { label: 'Low', value: 'low' },
                       { label: 'Medium', value: 'medium' },
                       { label: 'High', value: 'high' },
                       { label: 'Extra High (GPT-5.1+)', value: 'xhigh' },
                     ]"
-                    clearable
-                    placeholder="Select reasoning effort"
                   />
                 </NFormItem>
 
@@ -1303,7 +1168,7 @@ onUnmounted(() => {
               </template>
 
               <!-- Extended Thinking (Anthropic only) -->
-              <template v-if="isModelFormAnthropic">
+              <template v-if="isModelFormAnthropic || isModelFormAntigravity">
                 <NDivider style="margin: 16px 0">Extended Thinking</NDivider>
 
                 <NFormItem label="Enable Thinking">
@@ -1322,8 +1187,9 @@ onUnmounted(() => {
                 <NAlert v-if="modelForm.thinking_enabled" type="warning" style="margin-top: 8px">
                   <small>
                     Extended thinking allows the model to reason through complex problems.
-                    <strong>Max Tokens must be greater than Budget Tokens.</strong>
-                    If not set, it defaults to Budget + 16,000.
+                    <template v-if="isModelFormAntigravity">Claude thinking models use at least Budget + 8,192 output tokens.</template>
+                    <template v-else><strong>Max Tokens must be greater than Budget Tokens.</strong>
+                    If not set, it defaults to Budget + 16,000.</template>
                   </small>
                 </NAlert>
               </template>
@@ -2143,52 +2009,10 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.copilot-card {
-  margin-bottom: 24px;
-  background: var(--nb-surface) !important;
-  border: 2px solid var(--nb-border) !important;
-  box-shadow: var(--nb-shadow) !important;
-}
-
-.copilot-card-content {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.copilot-card-info {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.copilot-status-text {
-  color: var(--nb-ink);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.copilot-status-text code {
-  background: var(--nb-surface);
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-size: 12px;
-  border: 1px solid var(--nb-border);
-  box-shadow: 1px 1px 0px var(--nb-border);
-  font-weight: 600;
-}
-
-.copilot-user-code {
-  color: #000000;
-  background: var(--nb-lime);
-  padding: 2px 8px;
-  border: 1.5px solid var(--nb-border);
-  box-shadow: var(--nb-shadow-sm);
-  letter-spacing: 0.08em;
-  font-weight: 800;
+.account-connections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 20px;
 }
 
 .models-grid {

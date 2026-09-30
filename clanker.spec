@@ -48,6 +48,8 @@ a = Analysis(
         'langchain_core',
         'langchain_openai',
         'langchain_anthropic',
+        'clanker.agent.antigravity',
+        'httpx',
         'langgraph',
         'langgraph.graph',
         'langgraph.prebuilt',

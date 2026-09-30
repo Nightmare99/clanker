@@ -64,17 +64,18 @@ The recommended way to configure LLM providers is using the JSON-based models co
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | Yes | Display name for the model (used with `/model` command) |
-| `provider` | Yes | One of: `OpenAI`, `AzureOpenAI`, `Anthropic`, `Ollama`, `GitHubCopilot` |
+| `provider` | Yes | One of: `OpenAI`, `AzureOpenAI`, `Anthropic`, `Ollama`, `GitHubCopilot`, `Antigravity` |
 | `model` | No | Model identifier (e.g., `gpt-4o`, `claude-sonnet-4-20250514`) |
-| `api_key` | No | API key (leave null to use environment variable) |
-| `base_url` | No | Custom API endpoint |
+| `api_key` | No | API key (leave null to use environment variable); ignored by account providers `GitHubCopilot` and `Antigravity` |
+| `base_url` | No | Custom API endpoint; ignored by account providers `GitHubCopilot` and `Antigravity` |
 | `max_tokens` | No | Maximum tokens for response |
+| `max_input_tokens` | No | Model context limit; set manually when an endpoint does not report it |
 | `deployment_name` | No | Azure deployment name (AzureOpenAI only) |
 | `api_version` | No | Azure API version (AzureOpenAI only) |
-| `thinking_enabled` | No | Enable extended thinking (Anthropic only) |
+| `thinking_enabled` | No | Enable extended thinking (Anthropic or Antigravity) |
 | `thinking_budget_tokens` | No | Token budget for thinking (default: 10000) |
 | `reasoning_effort` | No | Reasoning effort: `low`, `medium`, `high` (AzureOpenAI o1/o3 only) |
-| `stream_chunk_timeout` | No | Seconds to wait for the next stream chunk before erroring (OpenAI/Azure). Default 600; `0` disables. Raise for high-reasoning models that pause silently. |
+| `stream_chunk_timeout` | No | Seconds to wait for the next stream chunk before erroring (OpenAI/Azure/Antigravity). Default 600; `0` disables. Raise for high-reasoning models that pause silently. |
 | `use_responses_api` | No | Route through OpenAI's `/responses` endpoint instead of `/chat/completions` (OpenAI only). Off by default — most OpenAI-compatible endpoints (OpenRouter, local proxies, etc.) only implement `/chat/completions`. GitHub Copilot models set this automatically per-model (only the GPT-5.x family supports it); no need to set it manually for `copilot:*` entries. |
 
 ### Switching Models
@@ -130,6 +131,9 @@ Re-run `clanker copilot-login` (or `/copilot-login` in a session, or click
 **Refresh Models** in the web UI) any time to pick up new Copilot models or
 refreshed limits.
 
+The web UI also offers **Reconnect** and **Disconnect**. Disconnect removes
+cached credentials while retaining saved model settings.
+
 **Notes:**
 - The Copilot bearer token is cached separately at `~/.clanker/copilot_auth.json`
   (not in `models.json`) and refreshes itself automatically when it expires —
@@ -141,6 +145,77 @@ refreshed limits.
 - `reasoning_effort` can still be set manually per `copilot:*` model entry if
   the underlying model supports it — clanker does not currently validate
   which reasoning efforts each Copilot model accepts.
+
+## Google Antigravity
+
+Clanker can connect a Google account to Antigravity's Cloud Code API and discover
+its available Claude and Gemini models. Authentication and requests run inside
+Clanker; no separate proxy, Node.js installation, Antigravity app installation,
+or manual API key is required.
+
+This is an **unofficial integration**, based on the protocol documented in
+[antigravity-claude-proxy](https://github.com/badrisnarayanan/antigravity-claude-proxy).
+That project reports Google account bans associated with this use. Google can
+change or restrict access to these internal endpoints.
+
+**Connect** using the CLI:
+
+```bash
+clanker antigravity-login
+```
+
+Or run `/antigravity-login` inside Clanker. A Google authorization page opens in
+your browser; a link is also displayed. Login waits up to ten minutes. Use
+Ctrl+C to cancel. In the TUI, login runs in the background so the UI stays
+responsive.
+
+In `clanker config`, open **Models → Google Antigravity → Sign in with Google**.
+The account card shows the connected email and provides **Refresh Models**,
+**Reconnect**, **Disconnect**, and **Cancel** during login. The model editor
+does not ask for API keys or base URLs for connected account providers.
+
+On success, Clanker creates `Antigravity` model entries named
+`antigravity:<model-id>`. Run `/model` to choose one of the discovered IDs.
+Existing default models are retained; if none is configured, the first discovered
+model becomes the default. Model refresh preserves custom settings. Token limits
+are populated when returned by Google. When input limits are absent, Clanker uses
+the [reference project's configured context limits](https://github.com/badrisnarayanan/antigravity-claude-proxy/blob/daa39d6c6239ac078a4e69de85094dde35558ef6/docs/openclaw.md)
+for its documented IDs: 1,048,576 for `gemini-3.8-flash-tiered` and
+`gemini-3.6-flash-high`, and 200,000 for `claude-sonnet-4-6`,
+`claude-sonnet-4-6-thinking`, and `claude-opus-4-6-thinking`. Existing entries
+receive these defaults when loaded; manually configured limits take precedence
+over defaults. Other IDs remain unknown unless Google reports a limit or you
+set `max_input_tokens` manually. Set `max_tokens` to customize the output budget.
+
+Streaming responses, tool calls, pasted images, reasoning, and token usage are
+supported. Thought signatures are retained across live tool rounds for the same
+model. Session resume uses Clanker's saved text transcript, as with other providers;
+pasted image data and intermediate tool/reasoning blocks are omitted from snapshots.
+Image-generation models are excluded from discovery.
+
+**Remote or headless login:**
+
+```bash
+clanker antigravity-login --no-browser --manual
+```
+
+Open the printed link on your local machine. After granting access, copy the
+**full callback URL** from the browser address bar into the terminal prompt,
+even if the callback page cannot load. It must include both `code` and `state`.
+The web account card offers the same fallback via **Use callback URL**. Treat
+the callback URL as temporary sensitive data; do not share it or put it in logs.
+
+**Credential storage:** Google tokens are kept separately in
+`~/.clanker/antigravity_auth.json`, with owner-only permissions on POSIX systems
+and atomic writes. Access tokens refresh automatically before requests, including
+in long turns and subagents. Tokens are never copied into `models.json` or
+returned by account-status endpoints. Disconnect forgets the local credentials;
+it does not revoke Google's upstream authorization or delete model settings.
+
+The callback listener binds only to `127.0.0.1`, trying ports 51121–51126 and using
+the actual selected port in both authorization and token exchange. OAuth uses
+PKCE and verifies the callback state. Listeners close on completion,
+cancellation, or timeout. See [troubleshooting](troubleshooting.md#google-antigravity-login).
 
 ## User Instructions
 
@@ -227,6 +302,13 @@ memory:
 tools:
   web_browsing: true
 ```
+
+When the model has no input/context limit, automatic summarization uses an
+absolute threshold based on a 32,000-token working budget: the default 80%
+setting triggers at approximately 25,600 conversation tokens. This fallback
+also applies to `/compact`; it does not claim a model context capacity, so
+the context gauge remains unknown. Set the model's `max_input_tokens` to use
+its actual capacity for summarization and the gauge.
 
 ### TUI Performance
 

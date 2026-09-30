@@ -54,6 +54,7 @@ Inside the interactive session:
 | `/model` | List available models and show current |
 | `/model <name>` | Switch to a different model |
 | `/copilot-login` | Connect a GitHub Copilot subscription as a model provider |
+| `/antigravity-login` | Connect a Google account for Antigravity models (unofficial integration) |
 | `/workflow` | List available workflows |
 | `/workflow <name>` | Execute a stored workflow |
 | `/skill` | List available skills |
@@ -71,6 +72,12 @@ Inside the interactive session:
 | `/exit` | Exit Clanker |
 
 ### Switching Models
+
+To connect an account first, use `clanker copilot-login` or
+`clanker antigravity-login`, the equivalent slash command, or the connected
+account cards in `clanker config`. See [Google Antigravity setup and account-risk
+notes](configuration.md#google-antigravity). For remote Google login, use
+`clanker antigravity-login --no-browser --manual`.
 
 You can switch between configured models during a session:
 

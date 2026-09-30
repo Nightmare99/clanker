@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from clanker.logging import get_logger
 
@@ -20,7 +20,18 @@ MODELS_CONFIG_PATH = Path.home() / ".clanker" / "models.json"
 # while still catching genuinely stalled TCP connections.
 DEFAULT_STREAM_CHUNK_TIMEOUT = 600
 
-ProviderType = Literal["AzureOpenAI", "OpenAI", "Anthropic", "Ollama", "GitHubCopilot"]
+# Context limits configured by the protocol reference for these exact model IDs:
+# https://github.com/badrisnarayanan/antigravity-claude-proxy/blob/daa39d6c6239ac078a4e69de85094dde35558ef6/docs/openclaw.md
+# Unknown IDs deliberately have no inferred family-wide context limit.
+_ANTIGRAVITY_INPUT_LIMITS = {
+    "gemini-3.8-flash-tiered": 1_048_576,
+    "gemini-3.6-flash-high": 1_048_576,
+    "claude-sonnet-4-6": 200_000,
+    "claude-sonnet-4-6-thinking": 200_000,
+    "claude-opus-4-6-thinking": 200_000,
+}
+
+ProviderType = Literal["AzureOpenAI", "OpenAI", "Anthropic", "Ollama", "GitHubCopilot", "Antigravity"]
 
 
 def _fresh_openai_http_clients() -> dict:
@@ -223,6 +234,13 @@ class ModelConfig(BaseModel):
         default=None,
         description="Cache-creation token cost in USD per million tokens (Anthropic prompt caching)",
     )
+
+    @model_validator(mode="after")
+    def populate_antigravity_context_limit(self) -> "ModelConfig":
+        """Fill missing limits, including entries saved before defaults existed."""
+        if self.provider == "Antigravity" and self.model and self.max_input_tokens is None:
+            self.max_input_tokens = _ANTIGRAVITY_INPUT_LIMITS.get(self.model)
+        return self
 
     def compute_cost(
         self,
@@ -529,6 +547,22 @@ def create_llm_from_config(model_config: ModelConfig):
         return ChatOllama(
             base_url=base_url,
             model=model_name,
+        )
+
+    elif provider == "Antigravity":
+        from clanker.agent.antigravity import ChatAntigravity
+        from clanker.config.antigravity_auth import get_credentials
+
+        get_credentials()  # Clear login error before the first agent request.
+        if not model_config.model:
+            raise ValueError("Antigravity requires a model ID. Run 'clanker antigravity-login' to discover models.")
+        return ChatAntigravity(
+            model=model_config.model,
+            max_tokens=model_config.max_tokens or 8192,
+            thinking_enabled=model_config.thinking_enabled,
+            thinking_budget_tokens=model_config.thinking_budget_tokens,
+            timeout=_resolve_stream_chunk_timeout(model_config),
+            profile={"max_input_tokens": model_config.max_input_tokens} if model_config.max_input_tokens else {},
         )
 
     elif provider == "GitHubCopilot":

@@ -13,7 +13,7 @@ from clanker.agent.middleware import (
     multimodal_tool_results,
 )
 from clanker.agent.prompts import get_system_prompt
-from clanker.agent.summarization import RobustSummarizationMiddleware
+from clanker.agent.summarization import RobustSummarizationMiddleware, get_summarization_trigger
 from clanker.config import (
     Settings,
     create_llm_from_config,
@@ -220,16 +220,11 @@ def create_agent_graph(
     # Create model
     model = create_model(settings, model_name=model_name)
 
-    # Convert percentage to fraction (e.g., 80.0 -> 0.8)
-    trigger_fraction = settings.context.summarization_threshold / 100.0
-    logger.info("Summarization trigger: %.0f%% of context window", settings.context.summarization_threshold)
-
     if middleware is None:
         # Create summarization middleware using the same model
-        # Uses fraction-based trigger which automatically uses model's context window
         summarization = RobustSummarizationMiddleware(
             model=model,
-            trigger=("fraction", trigger_fraction),
+            trigger=get_summarization_trigger(model, settings.context.summarization_threshold),
             keep=("messages", settings.context.keep_recent_turns * 2),
         )
 
@@ -329,16 +324,11 @@ async def create_agent_graph_async(
     # Create model
     model = create_model(settings, model_name=model_name)
 
-    # Convert percentage to fraction (e.g., 80.0 -> 0.8)
-    trigger_fraction = settings.context.summarization_threshold / 100.0
-    logger.info("Summarization trigger: %.0f%% of context window", settings.context.summarization_threshold)
-
     if middleware is None:
         # Create summarization middleware using the same model
-        # Uses fraction-based trigger which automatically uses model's context window
         summarization = RobustSummarizationMiddleware(
             model=model,
-            trigger=("fraction", trigger_fraction),
+            trigger=get_summarization_trigger(model, settings.context.summarization_threshold),
             keep=("messages", settings.context.keep_recent_turns * 2),
         )
 
