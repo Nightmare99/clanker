@@ -230,6 +230,25 @@ def handle_command(
                 if chat_log:
                     chat_log.add_message(msg, MessageType.WARNING)
 
+    elif cmd == "/openai-login":
+        from clanker.config.chatgpt_auth import ChatGPTAuthError
+
+        def emit_chatgpt_login(message: str) -> None:
+            console.print_info(message)
+            _mirror(message)
+
+        try:
+            synced = _run_openai_login(emit_chatgpt_login)
+            message = f"Connected! Synced {synced} ChatGPT model(s). Use /model to switch to one."
+            console.print_success(message)
+            _mirror(message, MessageType.SUCCESS)
+        except KeyboardInterrupt:
+            console.print_warning("ChatGPT login cancelled.")
+            _mirror("ChatGPT login cancelled.", MessageType.WARNING)
+        except ChatGPTAuthError as exc:
+            console.print_error(str(exc))
+            _mirror(str(exc), MessageType.ERROR)
+
     elif cmd == "/antigravity-login":
         from clanker.config.antigravity_auth import AntigravityAuthError
 
@@ -620,7 +639,7 @@ class CommandCompleter:
     """Autocomplete for slash commands (used by legacy REPL and tests)."""
 
     COMMANDS = [
-        "/help", "/exit", "/quit", "/q", "/clear", "/model", "/copilot-login", "/antigravity-login",
+        "/help", "/exit", "/quit", "/q", "/clear", "/model", "/copilot-login", "/antigravity-login", "/openai-login",
         "/config", "/mcp", "/logs", "/history", "/restore", "/resume", "/import", "/compact",
         "/memories", "/remember", "/forget", "/workflow", "/skill",
     ]
@@ -1035,7 +1054,7 @@ def run_interactive_legacy(
     history_path.parent.mkdir(parents=True, exist_ok=True)
 
     class CommandCompleter(Completer):
-        COMMANDS = ["/help", "/exit", "/quit", "/q", "/clear", "/model", "/copilot-login", "/antigravity-login",
+        COMMANDS = ["/help", "/exit", "/quit", "/q", "/clear", "/model", "/copilot-login", "/antigravity-login", "/openai-login",
                     "/config", "/mcp", "/logs", "/history", "/restore", "/resume", "/import", "/compact",
                     "/memories", "/remember", "/forget", "/workflow", "/skill"]
 
@@ -1269,6 +1288,44 @@ def copilot_login() -> None:
         sys.exit(1)
     click.echo(f"Connected! Synced {synced} Copilot model(s).")
     click.echo("Use /model in a session to switch to one.")
+
+
+def _run_openai_login(emit, *, no_browser: bool = False, manual: bool = False) -> int:
+    import webbrowser
+
+    from clanker.config.chatgpt_auth import poll_login, start_login, submit_callback
+
+    session = start_login(manual=manual)
+    try:
+        emit(f"Open this ChatGPT login link:\n{session.url}")
+        if not no_browser:
+            with contextlib.suppress(webbrowser.Error):
+                webbrowser.open(session.url)
+        if manual:
+            callback = click.prompt("Paste the full callback URL from your browser", hide_input=True)
+            submit_callback(session, callback)
+        emit("Waiting for ChatGPT authorization... (Ctrl+C to cancel)")
+        while (synced := poll_login(session)) is None:
+            time.sleep(0.25)
+        return synced
+    finally:
+        session.close()
+
+
+@main.command("openai-login")
+@click.option("--no-browser", is_flag=True, help="Print the ChatGPT login link without opening a browser.")
+@click.option("--manual", is_flag=True, help="Paste the callback URL for remote/headless login; no local callback listener.")
+def openai_login(no_browser: bool, manual: bool) -> None:
+    """Connect your ChatGPT account to use its available coding models."""
+    from clanker.config.chatgpt_auth import ChatGPTAuthError
+
+    try:
+        synced = _run_openai_login(click.echo, no_browser=no_browser, manual=manual)
+    except KeyboardInterrupt:
+        raise click.ClickException("ChatGPT login cancelled.") from None
+    except ChatGPTAuthError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Connected! Synced {synced} ChatGPT model(s). Use /model to switch to one.")
 
 
 def _run_antigravity_login(emit, *, no_browser: bool = False, manual: bool = False) -> int:

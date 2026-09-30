@@ -31,7 +31,7 @@ _ANTIGRAVITY_INPUT_LIMITS = {
     "claude-opus-4-6-thinking": 200_000,
 }
 
-ProviderType = Literal["AzureOpenAI", "OpenAI", "Anthropic", "Ollama", "GitHubCopilot", "Antigravity"]
+ProviderType = Literal["AzureOpenAI", "OpenAI", "Anthropic", "Ollama", "GitHubCopilot", "Antigravity", "ChatGPT"]
 
 
 def _fresh_openai_http_clients() -> dict:
@@ -548,6 +548,11 @@ def create_llm_from_config(model_config: ModelConfig):
             base_url=base_url,
             model=model_name,
         )
+
+    elif provider == "ChatGPT":
+        from clanker.agent.chatgpt import create_chatgpt_model
+
+        return create_chatgpt_model(model_config)
 
     elif provider == "Antigravity":
         from clanker.agent.antigravity import ChatAntigravity

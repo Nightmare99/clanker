@@ -64,18 +64,18 @@ The recommended way to configure LLM providers is using the JSON-based models co
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | Yes | Display name for the model (used with `/model` command) |
-| `provider` | Yes | One of: `OpenAI`, `AzureOpenAI`, `Anthropic`, `Ollama`, `GitHubCopilot`, `Antigravity` |
+| `provider` | Yes | One of: `OpenAI`, `AzureOpenAI`, `Anthropic`, `Ollama`, `GitHubCopilot`, `Antigravity`, `ChatGPT` |
 | `model` | No | Model identifier (e.g., `gpt-4o`, `claude-sonnet-4-20250514`) |
-| `api_key` | No | API key (leave null to use environment variable); ignored by account providers `GitHubCopilot` and `Antigravity` |
-| `base_url` | No | Custom API endpoint; ignored by account providers `GitHubCopilot` and `Antigravity` |
-| `max_tokens` | No | Maximum tokens for response |
+| `api_key` | No | API key (leave null to use environment variable); ignored by account providers `GitHubCopilot`, `Antigravity`, and `ChatGPT` |
+| `base_url` | No | Custom API endpoint; ignored by account providers `GitHubCopilot`, `Antigravity`, and `ChatGPT` |
+| `max_tokens` | No | Maximum tokens for response; ChatGPT account output limits are managed by the service |
 | `max_input_tokens` | No | Model context limit; set manually when an endpoint does not report it |
 | `deployment_name` | No | Azure deployment name (AzureOpenAI only) |
 | `api_version` | No | Azure API version (AzureOpenAI only) |
 | `thinking_enabled` | No | Enable extended thinking (Anthropic or Antigravity) |
 | `thinking_budget_tokens` | No | Token budget for thinking (default: 10000) |
-| `reasoning_effort` | No | Reasoning effort: `low`, `medium`, `high` (AzureOpenAI o1/o3 only) |
-| `stream_chunk_timeout` | No | Seconds to wait for the next stream chunk before erroring (OpenAI/Azure/Antigravity). Default 600; `0` disables. Raise for high-reasoning models that pause silently. |
+| `reasoning_effort` | No | Reasoning effort for supported OpenAI/Azure/ChatGPT models; available levels depend on the model |
+| `stream_chunk_timeout` | No | Seconds to wait for the next stream chunk before erroring (OpenAI/Azure/Antigravity/ChatGPT). Default 600; `0` disables. Raise for high-reasoning models that pause silently. |
 | `use_responses_api` | No | Route through OpenAI's `/responses` endpoint instead of `/chat/completions` (OpenAI only). Off by default — most OpenAI-compatible endpoints (OpenRouter, local proxies, etc.) only implement `/chat/completions`. GitHub Copilot models set this automatically per-model (only the GPT-5.x family supports it); no need to set it manually for `copilot:*` entries. |
 
 ### Switching Models
@@ -145,6 +145,59 @@ cached credentials while retaining saved model settings.
 - `reasoning_effort` can still be set manually per `copilot:*` model entry if
   the underlying model supports it — clanker does not currently validate
   which reasoning efforts each Copilot model accepts.
+
+## ChatGPT (OpenAI account)
+
+Connect with `clanker openai-login`, `/openai-login` in a session, or
+**Models → ChatGPT (OpenAI) → Sign in with ChatGPT** in `clanker config`.
+Complete authorization in your browser; login waits up to ten minutes and
+Ctrl+C cancels. The TUI remains responsive while waiting.
+
+On success, Clanker discovers the account's available coding models and creates
+`ChatGPT` entries named `chatgpt:<model-id>`. Select one with `/model` or
+`clanker -m "chatgpt:<model-id>"`. Existing defaults are retained; the first
+discovered model becomes default only if no model is configured.
+
+This is a native implementation of the [openai-oauth dev proxy's protocol](https://github.com/EvanZhouDev/openai-oauth),
+using ChatGPT's Codex backend, rather than OpenAI API-key billing. Availability
+and usage limits depend on your account. This does not provide every ChatGPT
+UI model or unrestricted access. It is a community integration; Clanker does
+not claim official Sign in with ChatGPT app registration.
+
+Credentials are securely stored in `~/.clanker/chatgpt_auth.json`, separately
+from `models.json`. Clanker never reads or modifies Codex's `auth.json`.
+Access tokens refresh automatically, including during long sessions and
+subagent requests. No OAuth client secret, API key, Node.js, proxy process,
+or browser extension is required.
+
+The account card provides **Refresh Models**, **Reconnect**, **Disconnect**,
+and **Cancel**. Refresh obtains the current account-specific catalogue, reads
+context limits when supplied, and preserves custom settings. Unknown context
+limits use the absolute summarization fallback described below. Model discovery
+uses the latest Codex client version from the npm registry, with a bundled
+version fallback when the registry is unavailable; nothing is installed.
+Disconnect removes the cached login and retains saved model settings.
+
+Streaming text, tool calls, pasted images, reasoning summaries, and token usage
+are supported. Encrypted reasoning is retained across live tool rounds. Requests
+send the full conversation and disable server storage. Saved session snapshots
+continue using Clanker's text transcript, without pasted image data or intermediate
+tool/reasoning blocks. Output token limits are controlled by the account backend;
+`max_tokens` is ignored for this provider. You can configure `reasoning_effort`
+and `stream_chunk_timeout` in the model editor.
+
+For remote/headless login or an occupied callback port:
+
+```bash
+clanker openai-login --no-browser --manual
+```
+
+Open the link on your local machine. After approving access, copy the full
+`http://localhost:1455/auth/callback?...` URL into Clanker's hidden prompt, even
+if the browser cannot load localhost. Manual mode does not bind a callback
+listener. The web account card offers **Remote / headless login** too. Normal
+browser login binds loopback only on port 1455, the registered redirect port;
+close another Codex/OpenAI login if it is using that port.
 
 ## Google Antigravity
 

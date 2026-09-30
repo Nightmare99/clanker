@@ -165,6 +165,7 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("/model", "Query current AI model status"),
         ("/copilot-login", "Connect a GitHub Copilot subscription as a model provider"),
         ("/antigravity-login", "Connect a Google account for Antigravity models"),
+        ("/openai-login", "Connect a ChatGPT account for coding models"),
         ("/config", "Display configuration parameters"),
         ("/mcp", "Show MCP server connections"),
         ("/logs", "Access diagnostic log files"),

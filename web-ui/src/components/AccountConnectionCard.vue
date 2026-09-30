@@ -2,12 +2,15 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { NAlert, NButton, NCard, NInput, NPopconfirm, NSpace, NTag, useMessage } from 'naive-ui'
 
-const props = defineProps<{ provider: 'copilot' | 'antigravity' }>()
+const props = defineProps<{ provider: 'copilot' | 'antigravity' | 'chatgpt' }>()
 const emit = defineEmits<{ (event: 'models-synced'): void }>()
 const message = useMessage()
 const google = computed(() => props.provider === 'antigravity')
-const label = computed(() => google.value ? 'Google Antigravity' : 'GitHub Copilot')
-const prefix = computed(() => google.value ? 'antigravity' : 'copilot')
+const chatgpt = computed(() => props.provider === 'chatgpt')
+const browserLogin = computed(() => google.value || chatgpt.value)
+const label = computed(() => google.value ? 'Google Antigravity' : chatgpt.value ? 'ChatGPT (OpenAI)' : 'GitHub Copilot')
+const prefix = computed(() => props.provider)
+const accountLabel = computed(() => google.value ? 'Google account' : chatgpt.value ? 'ChatGPT account' : 'Copilot subscription')
 const connected = ref(false)
 const email = ref<string | null>(null)
 const busy = ref(false)
@@ -51,16 +54,16 @@ function cancelRemote(id: string) {
   }).catch(() => {})
 }
 
-async function startLogin() {
+async function startLogin(manualMode = false) {
   const current = ++generation
   inlineError.value = ''
   busy.value = true
   // Open synchronously from the click, before awaiting the server, so browser
   // popup blockers don't prevent Google login. The link remains available too.
-  const popup = google.value ? window.open('about:blank', '_blank') : null
+  const popup = browserLogin.value ? window.open('about:blank', '_blank') : null
   if (popup) popup.opener = null
   try {
-    const data = await api('login/start', {})
+    const data = await api('login/start', chatgpt.value ? { manual: manualMode } : {})
     if (unmounted || current !== generation) {
       popup?.close()
       await cancelRemote(data.session_id)
@@ -68,8 +71,9 @@ async function startLogin() {
     }
     session.value = {
       id: data.session_id, url: data.authorization_url || data.verification_uri,
-      code: data.user_code, interval: Math.max(1, data.interval || (google.value ? 1 : 5)) * 1000,
+      code: data.user_code, interval: Math.max(1, data.interval || (browserLogin.value ? 1 : 5)) * 1000,
     }
+    manual.value = manualMode
     if (popup) popup.location.href = session.value.url
     schedulePoll()
   } catch (error) {
@@ -180,14 +184,14 @@ onUnmounted(() => {
       <div>
         <strong>{{ label }}</strong>
         <p v-if="session">
-          <a :href="session.url" target="_blank" rel="noopener noreferrer">{{ google ? 'Open Google login' : 'Open GitHub login' }}</a>
+          <a :href="session.url" target="_blank" rel="noopener noreferrer">{{ google ? 'Open Google login' : chatgpt ? 'Open ChatGPT login' : 'Open GitHub login' }}</a>
           <template v-if="session.code"> and enter <code class="login-code">{{ session.code }}</code></template>
           <span v-else> to authorize your account.</span>
         </p>
         <p v-else-if="connected">
           {{ email || 'Account connected' }} · Models available as <code>{{ prefix }}:&lt;model&gt;</code>
         </p>
-        <p v-else>Connect your {{ google ? 'Google account' : 'Copilot subscription' }} to discover available models. No separate proxy required.</p>
+        <p v-else>Connect your {{ accountLabel }} to discover available models. No separate proxy required.</p>
       </div>
       <NTag :type="session ? 'warning' : connected ? 'success' : 'default'" size="small">
         {{ session ? 'Waiting for authorization' : connected ? 'Connected' : 'Disconnected' }}
@@ -201,23 +205,26 @@ onUnmounted(() => {
     <NSpace class="account-actions">
       <template v-if="session">
         <NButton @click="cancelLogin">Cancel</NButton>
-        <NButton v-if="google" quaternary @click="manual = !manual">Use callback URL</NButton>
+        <NButton v-if="browserLogin" quaternary @click="manual = !manual">Use callback URL</NButton>
       </template>
       <template v-else-if="connected">
         <NButton :loading="busy" :disabled="busy" @click="refreshModels">Refresh Models</NButton>
-        <NButton :disabled="busy" @click="startLogin">Reconnect</NButton>
+        <NButton :disabled="busy" @click="startLogin()">Reconnect</NButton>
         <NPopconfirm @positive-click="disconnectAccount">
           <template #trigger><NButton :disabled="busy" quaternary>Disconnect</NButton></template>
           Remove cached login credentials? Saved model settings will remain.
         </NPopconfirm>
       </template>
-      <NButton v-else type="primary" :loading="busy" :disabled="busy" @click="startLogin">
-        {{ google ? 'Sign in with Google' : 'Connect GitHub Copilot' }}
-      </NButton>
+      <template v-else>
+        <NButton type="primary" :loading="busy" :disabled="busy" @click="startLogin()">
+          {{ google ? 'Sign in with Google' : chatgpt ? 'Sign in with ChatGPT' : 'Connect GitHub Copilot' }}
+        </NButton>
+      </template>
+      <NButton v-if="chatgpt && !session" quaternary :disabled="busy" @click="startLogin(true)">Remote / headless login</NButton>
     </NSpace>
     <div v-if="manual && session" class="manual-login">
-      <p>On a remote machine, copy the full callback URL from the browser after approving Google access.</p>
-      <NInput v-model:value="callbackUrl" type="password" placeholder="http://localhost:…/oauth-callback?code=…&state=…" autocomplete="off" />
+      <p>After approving access, paste the full callback URL from your browser, even if localhost cannot load.</p>
+      <NInput v-model:value="callbackUrl" type="password" :placeholder="chatgpt ? 'http://localhost:1455/auth/callback?code=…&state=…' : 'http://localhost:…/oauth-callback?code=…&state=…'" autocomplete="off" />
       <NButton :disabled="!callbackUrl.trim() || polling" @click="pollLogin(callbackUrl.trim())">Complete Login</NButton>
     </div>
   </NCard>

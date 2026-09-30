@@ -55,6 +55,7 @@ Inside the interactive session:
 | `/model <name>` | Switch to a different model |
 | `/copilot-login` | Connect a GitHub Copilot subscription as a model provider |
 | `/antigravity-login` | Connect a Google account for Antigravity models (unofficial integration) |
+| `/openai-login` | Connect a ChatGPT account and discover available coding models |
 | `/workflow` | List available workflows |
 | `/workflow <name>` | Execute a stored workflow |
 | `/skill` | List available skills |
@@ -73,11 +74,14 @@ Inside the interactive session:
 
 ### Switching Models
 
-To connect an account first, use `clanker copilot-login` or
-`clanker antigravity-login`, the equivalent slash command, or the connected
+To connect an account first, use `clanker copilot-login`,
+`clanker antigravity-login`, or `clanker openai-login`, the equivalent slash command, or the connected
 account cards in `clanker config`. See [Google Antigravity setup and account-risk
 notes](configuration.md#google-antigravity). For remote Google login, use
 `clanker antigravity-login --no-browser --manual`.
+
+For ChatGPT, use `clanker openai-login --no-browser --manual` on a remote machine,
+then select a discovered `chatgpt:<model-id>` entry. See [ChatGPT account setup](configuration.md#chatgpt-openai-account).
 
 You can switch between configured models during a session:
 

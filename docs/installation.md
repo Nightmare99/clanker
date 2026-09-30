@@ -156,8 +156,10 @@ After installation, run `clanker` to start the setup wizard, or:
 2. Run `clanker config` to open the web-based configuration UI
 
 Alternatively, connect an existing account with `clanker copilot-login` or
-`clanker antigravity-login`. These do not require a manually configured API key.
+`clanker antigravity-login`, or `clanker openai-login` for ChatGPT. These do not require a manually configured API key.
 Antigravity login works in the bundled Python executable without Node.js or a
 separate proxy; see its [setup and account-risk notes](configuration.md#google-antigravity).
+ChatGPT login also works in the bundled executable without Node.js or a proxy;
+see [ChatGPT account setup](configuration.md#chatgpt-openai-account).
 
 See [Configuration](configuration.md) for detailed setup options.

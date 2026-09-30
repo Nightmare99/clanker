@@ -88,6 +88,16 @@ round trips with mocked API responses and a real local callback listener. Live
 account authorization needs a manual check; no Google credentials are required
 for the test suite.
 
+ChatGPT authentication is in `config/chatgpt_auth.py`; `agent/chatgpt.py` uses
+LangChain's Responses request conversion and streaming event decoder, with
+account authentication on each request and encrypted reasoning capture at
+`response.output_item.done`. Its wire protocol follows the `openai-oauth` dev
+proxy/core, including Responses Lite capability metadata. The shared account
+card also handles ChatGPT browser and manual callback login. `tests/test_chatgpt.py`
+checks OAuth/refresh/cancellation, secure storage, model discovery, CLI/web/TUI
+flows, and real sync/async Clanker graphs with tools and encrypted reasoning.
+These tests require no real account; live authorization/inference is a manual check.
+
 ## Safety Features
 
 Clanker includes several safety features:

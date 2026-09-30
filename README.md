@@ -9,7 +9,7 @@ An AI-powered coding assistant CLI built with LangChain and LangGraph.
 - Shell command execution with sandboxing
 - [Web search and page reading](docs/tools.md#web_search) with domain and recency filters, plus Markdown extraction (no API key required)
 - Session persistence and conversation history
-- **Multi-provider support**: Anthropic, OpenAI, Azure OpenAI, Ollama, GitHub Copilot, Google Antigravity (bring your own key, or connect a supported account)
+- **Multi-provider support**: Anthropic, OpenAI, Azure OpenAI, Ollama, GitHub Copilot, Google Antigravity, ChatGPT (bring your own key, or connect a supported account)
 - Easy model switching with `/model` command
 - Extended thinking support for Claude models
 - Web-based configuration UI (BYOK mode)
@@ -55,6 +55,7 @@ clanker "explain main.py"      # Single prompt
 clanker config                 # Web configuration UI
 clanker copilot-login          # Connect a GitHub Copilot subscription
 clanker antigravity-login      # Connect Google Antigravity (unofficial integration)
+clanker openai-login           # Connect ChatGPT and discover available coding models
 clanker -m claude              # Use a specific model
 clanker --resume <session-id>  # Resume conversation
 clanker --yolo                 # Auto-execute bash commands (skip approval)
@@ -68,6 +69,10 @@ or GitHub Copilot CLI sessions from the current workspace. See the
 
 Google Antigravity uses browser login and discovers Claude/Gemini models without
 a separate proxy. See [setup and account-risk notes](docs/configuration.md#google-antigravity).
+
+ChatGPT login uses your account's available Codex models without an API key,
+Node.js, or a separate proxy. Run `/openai-login` in a session or use the
+**Sign in with ChatGPT** card in `clanker config`. See [ChatGPT setup](docs/configuration.md#chatgpt-openai-account).
 
 ## Documentation
 

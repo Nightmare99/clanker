@@ -49,6 +49,8 @@ a = Analysis(
         'langchain_openai',
         'langchain_anthropic',
         'clanker.agent.antigravity',
+        'clanker.agent.chatgpt',
+        'clanker.config.chatgpt_auth',
         'httpx',
         'langgraph',
         'langgraph.graph',

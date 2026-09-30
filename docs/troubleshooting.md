@@ -30,6 +30,26 @@
 - Set your API key: `export ANTHROPIC_API_KEY=your-key`
 - Or add it to your `.env` file
 
+## ChatGPT (OpenAI) Login
+
+- **Not connected / expired login:** Run `clanker openai-login` or reconnect
+  through the ChatGPT account card. Temporary refresh failures keep the login
+  for retry; revoked/invalid refresh tokens require signing in again.
+- **Port 1455 occupied:** Close other Codex/OpenAI login attempts, or use
+  `clanker openai-login --no-browser --manual`. This registered redirect cannot
+  move to an arbitrary port. The web UI offers **Remote / headless login**.
+- **Remote browser cannot load localhost:** After authorizing, copy the full
+  callback URL into the hidden CLI prompt or web callback field.
+- **State mismatch / expired callback:** Use the current attempt's login link
+  and full callback URL. Login expires after ten minutes; start a fresh attempt.
+- **No models / HTTP 401 or 403:** Reconnect and check the account's Codex access.
+  Refresh Models uses your account's current catalogue, not the public API list.
+- **HTTP 429:** Account usage limits still apply; wait and retry.
+- **Stream ends before completion:** Retry after checking the network. Increase
+  `stream_chunk_timeout` for long reasoning pauses, or set it to `0` to disable.
+
+See [ChatGPT configuration](configuration.md#chatgpt-openai-account) for details.
+
 ## Google Antigravity Login
 
 - **Fractional token limits / missing model profile**: Update Clanker and restart

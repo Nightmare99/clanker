@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from clanker.agents import list_personal_agents, set_agent_model
-from clanker.config import CONFIG_PATH, Settings, antigravity_auth, reload_settings
+from clanker.config import CONFIG_PATH, Settings, antigravity_auth, chatgpt_auth, reload_settings
 from clanker.config.copilot_auth import (
     CopilotAuthError,
     complete_login,
@@ -92,10 +92,10 @@ def get_mode_info() -> ModeInfo:
     """Get information about the operational mode."""
     return ModeInfo(
         mode="byok",
-        mode_label="BYOK Mode (Bring Your Own Key)",
+        mode_label="Model Providers",
         notice=(
-            "This configuration UI manages your model providers and settings. "
-            "Add API keys via environment variables or per-model in the models list."
+            "Configure API-key providers or connect an existing ChatGPT, "
+            "GitHub Copilot, or Google account below."
         ),
     )
 
@@ -512,7 +512,7 @@ async def test_model_config(name: str) -> MessageResponse:
             model_name = model_config.model or "llama3"
             llm = ChatOllama(base_url=base_url, model=model_name)
 
-        elif provider == "Antigravity":
+        elif provider in {"Antigravity", "ChatGPT"}:
             from clanker.config.models import create_llm_from_config
 
             llm = create_llm_from_config(model_config)
@@ -818,3 +818,90 @@ def antigravity_disconnect() -> MessageResponse:
     _antigravity_login_sessions.clear()
     antigravity_auth.disconnect()
     return MessageResponse(message="Google account disconnected. Saved model settings are retained.", success=True)
+
+
+# ==================== ChatGPT account provider ====================
+
+_chatgpt_login_sessions: dict[str, chatgpt_auth.LoginSession] = {}
+
+
+class ChatGPTLoginStartRequest(BaseModel):
+    manual: bool = False
+
+
+class ChatGPTLoginStartResponse(BaseModel):
+    session_id: str
+    authorization_url: str
+    expires_in: int
+
+
+class ChatGPTLoginPollRequest(BaseModel):
+    session_id: str
+    callback_url: str | None = None
+
+
+@router.get("/chatgpt/status")
+def chatgpt_status() -> dict[str, Any]:
+    return chatgpt_auth.connection_status()
+
+
+@router.post("/chatgpt/login/start", response_model=ChatGPTLoginStartResponse)
+def chatgpt_login_start(request: ChatGPTLoginStartRequest) -> ChatGPTLoginStartResponse:
+    # The registered redirect uses a fixed port, so close older attempts first.
+    for previous in list(_chatgpt_login_sessions.values()):
+        previous.cancel()
+    _chatgpt_login_sessions.clear()
+    try:
+        session = chatgpt_auth.start_login(manual=request.manual)
+    except chatgpt_auth.ChatGPTAuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    session_id = secrets.token_urlsafe(24)
+    _chatgpt_login_sessions[session_id] = session
+    return ChatGPTLoginStartResponse(
+        session_id=session_id, authorization_url=session.url,
+        expires_in=max(0, int(session.expires_at - time.time())),
+    )
+
+
+@router.post("/chatgpt/login/poll", response_model=CopilotLoginPollResponse)
+def chatgpt_login_poll(request: ChatGPTLoginPollRequest) -> CopilotLoginPollResponse:
+    session = _chatgpt_login_sessions.get(request.session_id)
+    if not session:
+        return CopilotLoginPollResponse(status="error", detail="Unknown or expired ChatGPT login session.")
+    try:
+        if request.callback_url:
+            chatgpt_auth.submit_callback(session, request.callback_url)
+        synced = chatgpt_auth.poll_login(session)
+        if synced is None:
+            return CopilotLoginPollResponse(status="pending")
+    except chatgpt_auth.ChatGPTAuthError as exc:
+        session.close()
+        _chatgpt_login_sessions.pop(request.session_id, None)
+        return CopilotLoginPollResponse(status="error", detail=str(exc))
+    _chatgpt_login_sessions.pop(request.session_id, None)
+    return CopilotLoginPollResponse(status="success", models_synced=synced)
+
+
+@router.post("/chatgpt/login/cancel", response_model=MessageResponse)
+def chatgpt_login_cancel(request: ChatGPTLoginPollRequest) -> MessageResponse:
+    session = _chatgpt_login_sessions.pop(request.session_id, None)
+    if session:
+        session.cancel()
+    return MessageResponse(message="ChatGPT login cancelled.", success=True)
+
+
+@router.post("/chatgpt/refresh-models", response_model=CopilotSyncResponse)
+def chatgpt_refresh_models() -> CopilotSyncResponse:
+    try:
+        return CopilotSyncResponse(models_synced=chatgpt_auth.sync_models())
+    except chatgpt_auth.ChatGPTAuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/chatgpt/disconnect", response_model=MessageResponse)
+def chatgpt_disconnect() -> MessageResponse:
+    for session in list(_chatgpt_login_sessions.values()):
+        session.cancel()
+    _chatgpt_login_sessions.clear()
+    chatgpt_auth.disconnect()
+    return MessageResponse(message="ChatGPT account disconnected. Saved model settings are retained.", success=True)

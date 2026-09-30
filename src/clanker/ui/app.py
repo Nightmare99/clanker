@@ -63,7 +63,7 @@ _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇"
 
 _SLASH_COMMANDS = [
     "/changes", "/tasks",
-    "/clear", "/compact", "/config", "/copilot-login", "/antigravity-login", "/exit", "/forget",
+    "/clear", "/compact", "/config", "/copilot-login", "/antigravity-login", "/openai-login", "/exit", "/forget",
     "/help", "/history", "/list_memories", "/logs", "/memories", "/model",
     "/import", "/mcp", "/remember", "/restore", "/resume", "/skill", "/workflow",
 ]
@@ -903,6 +903,9 @@ class ClankerApp(App):
         login = getattr(self, "_antigravity_login_session", None)
         if login:
             login.cancel(close=False)
+        chatgpt_login = getattr(self, "_chatgpt_login_session", None)
+        if chatgpt_login:
+            chatgpt_login.cancel(close=False)
         _cancel_streaming_task()
 
     def action_quit(self) -> None:
@@ -913,6 +916,9 @@ class ClankerApp(App):
         login = getattr(self, "_antigravity_login_session", None)
         if login:
             login.cancel(close=False)
+        chatgpt_login = getattr(self, "_chatgpt_login_session", None)
+        if chatgpt_login:
+            chatgpt_login.cancel(close=False)
         self._save_history()
         self.exit()
 
@@ -1179,6 +1185,10 @@ class ClankerApp(App):
             self.action_show_memories()
             return "skip"
 
+        if command == "/openai-login":
+            self.run_worker(self._chatgpt_login_flow(), exclusive=True, group="chatgpt-login")
+            return "skip"
+
         if text.strip().lower() == "/antigravity-login":
             self.run_worker(self._antigravity_login_flow(), exclusive=True, group="antigravity-login")
             return "skip"
@@ -1405,6 +1415,49 @@ class ClankerApp(App):
             active_journal.reset(journal_token)
             change_turn.reset(turn_token)
             self._set_processing(False)
+
+    async def _chatgpt_login_flow(self) -> None:
+        import webbrowser
+
+        from clanker.config.chatgpt_auth import ChatGPTAuthError, poll_login, start_login
+
+        chat_log = self.get_chat_log()
+        self.reset_interrupt()
+        session = None
+        try:
+            session = start_login()
+            self._chatgpt_login_session = session
+            chat_log.add_message(
+                f"Open this ChatGPT login link:\n{session.url}\n"
+                "Waiting for authorization... (Ctrl+C to cancel). For SSH/headless login, "
+                "use clanker openai-login --no-browser --manual in another terminal.",
+                MessageType.INFO,
+            )
+            with suppress(webbrowser.Error):
+                await asyncio.to_thread(webbrowser.open, session.url)
+            while not self._interrupt_event.is_set():
+                synced = await asyncio.to_thread(poll_login, session)
+                if synced is not None:
+                    chat_log.add_message(
+                        f"Connected! Synced {synced} ChatGPT model(s). Use /model to switch to one.",
+                        MessageType.SUCCESS,
+                    )
+                    return
+                await asyncio.sleep(0.25)
+            session.cancel(close=False)
+            chat_log.add_message("ChatGPT login cancelled.", MessageType.WARNING)
+        except ChatGPTAuthError as exc:
+            chat_log.add_message(str(exc), MessageType.ERROR)
+        except asyncio.CancelledError:
+            if session:
+                session.cancel(close=False)
+            raise
+        finally:
+            if session:
+                await asyncio.to_thread(session.close)
+            if getattr(self, "_chatgpt_login_session", None) is session:
+                self._chatgpt_login_session = None
+            self.reset_interrupt()
 
     async def _antigravity_login_flow(self) -> None:
         import webbrowser

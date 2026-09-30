@@ -217,6 +217,7 @@ const modelProviderOptions = [
   { label: 'Ollama', value: 'Ollama', description: 'Local models via Ollama' },
   { label: 'GitHub Copilot', value: 'GitHubCopilot', description: 'Auto-configured via Connect below' },
   { label: 'Google Antigravity', value: 'Antigravity', description: 'Auto-configured via Google login' },
+  { label: 'ChatGPT (OpenAI)', value: 'ChatGPT', description: 'Auto-configured via ChatGPT login' },
 ]
 
 // Provider colors and icons for visual distinction (neo-brutalist palette)
@@ -226,6 +227,7 @@ const providerStyles: Record<string, { color: string; bgColor: string; borderCol
   'Anthropic': { color: '#000000', bgColor: '#FF2BD6', borderColor: 'var(--nb-border)' },
   'Ollama': { color: '#000000', bgColor: '#FFE500', borderColor: 'var(--nb-border)' },
   'Antigravity': { color: '#000000', bgColor: '#B6FF1A', borderColor: 'var(--nb-border)' },
+  'ChatGPT': { color: '#000000', bgColor: '#B6FF1A', borderColor: 'var(--nb-border)' },
   'GitHubCopilot': { color: '#000000', bgColor: '#C4B5FD', borderColor: 'var(--nb-border)' },
 }
 
@@ -247,7 +249,8 @@ const logLevelOptions = [
 const isModelFormAzure = computed(() => modelForm.value.provider === 'AzureOpenAI')
 const isModelFormOpenAI = computed(() => modelForm.value.provider === 'OpenAI')
 const isModelFormAnthropic = computed(() => modelForm.value.provider === 'Anthropic')
-const isModelFormAccount = computed(() => ['GitHubCopilot', 'Antigravity'].includes(modelForm.value.provider))
+const isModelFormAccount = computed(() => ['GitHubCopilot', 'Antigravity', 'ChatGPT'].includes(modelForm.value.provider))
+const isModelFormChatGPT = computed(() => modelForm.value.provider === 'ChatGPT')
 const isModelFormAntigravity = computed(() => modelForm.value.provider === 'Antigravity')
 const isModelFormOllama = computed(() => modelForm.value.provider === 'Ollama')
 
@@ -773,6 +776,7 @@ onMounted(() => {
             <div class="account-connections">
               <AccountConnectionCard provider="copilot" @models-synced="fetchModels" />
               <AccountConnectionCard provider="antigravity" @models-synced="fetchModels" />
+              <AccountConnectionCard provider="chatgpt" @models-synced="fetchModels" />
             </div>
 
             <!-- Models Grid -->
@@ -820,7 +824,7 @@ onMounted(() => {
                   </div>
                   <div class="model-detail-row">
                     <span class="detail-label">Authentication:</span>
-                    <code class="detail-value">{{ ['GitHubCopilot', 'Antigravity'].includes(model.provider) ? 'Connected account' : model.api_key || '(from environment)' }}</code>
+                    <code class="detail-value">{{ ['GitHubCopilot', 'Antigravity', 'ChatGPT'].includes(model.provider) ? 'Connected account' : model.api_key || '(from environment)' }}</code>
                   </div>
                   <div v-if="model.max_tokens" class="model-detail-row">
                     <span class="detail-label">Max Tokens:</span>
@@ -1052,7 +1056,7 @@ onMounted(() => {
                 </NFormItem>
               </template>
 
-              <NFormItem label="Max Tokens">
+              <NFormItem v-if="!isModelFormChatGPT" label="Max Tokens">
                 <NInputNumber
                   v-model:value="modelForm.max_tokens"
                   :min="1"
@@ -1061,6 +1065,10 @@ onMounted(() => {
                   style="width: 100%"
                 />
               </NFormItem>
+
+              <NAlert v-if="isModelFormChatGPT" type="info" style="margin-bottom: 16px">
+                Output limits are managed by ChatGPT. You can adjust reasoning effort below.
+              </NAlert>
 
               <NFormItem label="Max Input Tokens">
                 <NInputNumber
@@ -1100,7 +1108,7 @@ onMounted(() => {
               </NAlert>
 
               <!-- Reasoning Effort (OpenAI o1/o3/GPT-5+ models) -->
-              <template v-if="isModelFormAzure || isModelFormOpenAI">
+              <template v-if="isModelFormAzure || isModelFormOpenAI || isModelFormChatGPT">
                 <NDivider style="margin: 16px 0">Reasoning (o1/o3/GPT-5+ models)</NDivider>
 
                 <NFormItem label="Reasoning Effort">

@@ -109,6 +109,7 @@ Clanker supports multiple providers via a unified interface:
 - **Ollama** - Local models
 - **GitHubCopilot** - Models via a connected GitHub Copilot subscription (`/copilot-login`)
 - **Antigravity** - Claude/Gemini models via Google account OAuth (`/antigravity-login`), using an unofficial Cloud Code integration
+- **ChatGPT** - Account-specific Codex models via ChatGPT OAuth (`/openai-login`), separate from the API-key OpenAI provider
 
 Provider choice should not affect agent behavior, only model quality.
 
