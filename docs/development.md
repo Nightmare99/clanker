@@ -98,6 +98,16 @@ checks OAuth/refresh/cancellation, secure storage, model discovery, CLI/web/TUI
 flows, and real sync/async Clanker graphs with tools and encrypted reasoning.
 These tests require no real account; live authorization/inference is a manual check.
 
+Compaction is implemented by `agent/summarization.py`. The TUI's `/compact`
+worker uses `run_compaction_async`, reports chunk progress, and cancels native
+async model calls on Ctrl+C. After automatic compaction, both interactive modes
+read retained messages through `SessionManager.get_checkpoint_messages()` and
+project them onto the user/assistant transcript; they do not summarize again.
+Tool protocol and encrypted reasoning remain in the live graph checkpoint.
+`tests/test_tui_compaction.py` covers responsiveness, cancellation, checkpoint
+failure, import replay, and syncing a large imported transcript without another
+model call.
+
 ## Safety Features
 
 Clanker includes several safety features:

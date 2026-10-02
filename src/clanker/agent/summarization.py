@@ -36,7 +36,7 @@ never return an empty string or one of the stock "could not summarize" markers.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, NotRequired
 
@@ -221,6 +221,7 @@ class RobustSummarizationMiddleware(SummarizationMiddleware):
         chunk_token_target: int | None = None,
         per_message_token_cap: int = _DEFAULT_PER_MESSAGE_TOKEN_CAP,
         max_transient_retries: int = 2,
+        progress_callback: Callable[[str], None] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the middleware.
@@ -240,6 +241,7 @@ class RobustSummarizationMiddleware(SummarizationMiddleware):
         self._chunk_token_target = chunk_token_target
         self._per_message_token_cap = per_message_token_cap
         self._max_transient_retries = max_transient_retries
+        self._progress_callback = progress_callback
 
     # ------------------------------------------------------------------
     # Shared compaction entry point -- the single implementation behind both
@@ -392,13 +394,15 @@ class RobustSummarizationMiddleware(SummarizationMiddleware):
         logger.info("Summarizing %d messages in %d chunk(s)", len(sanitized), len(chunks))
 
         if len(chunks) == 1:
+            self._report_progress("Summarizing chunk 1/1...")
             summary = await self._asummarize_segment(chunks[0], self.summary_prompt)
             result = summary or self._extractive_summary(sanitized)
             self._log_summary_outcome(sanitized, chunks, result)
             return result
 
         notes: list[str] = []
-        for chunk in chunks:
+        for index, chunk in enumerate(chunks, start=1):
+            self._report_progress(f"Summarizing chunk {index}/{len(chunks)}...")
             note = await self._asummarize_segment(chunk, MAP_PROMPT)
             if note.strip():
                 notes.append(note)
@@ -407,10 +411,16 @@ class RobustSummarizationMiddleware(SummarizationMiddleware):
             self._log_summary_outcome(sanitized, chunks, result)
             return result
 
+        self._report_progress("Combining chunk summaries...")
         reduced = await self._areduce_notes(notes)
         result = reduced or self._extractive_summary(sanitized)
         self._log_summary_outcome(sanitized, chunks, result)
         return result
+
+    def _report_progress(self, message: str) -> None:
+        logger.info("Compaction progress: %s", message)
+        if self._progress_callback:
+            self._progress_callback(message)
 
     def _log_summary_outcome(
         self,
@@ -745,11 +755,8 @@ def run_compaction(
 ) -> CompactionResult | None:
     """Build a middleware instance from settings and run one compaction pass.
 
-    Convenience wrapper around ``RobustSummarizationMiddleware(...).compact(...)``
-    for callers outside the graph -- the `/compact` command and the post-turn
-    auto-compaction sync in the streaming layer -- so both configure the
-    middleware identically (same trigger/keep settings) rather than each
-    duplicating the construction.
+    Convenience wrapper for manual compaction outside the graph. Automatic
+    compaction's display transcript reuses the graph checkpoint's summary.
     """
     keep_count = settings.context.keep_recent_turns * 2
     middleware = RobustSummarizationMiddleware(
@@ -758,3 +765,21 @@ def run_compaction(
         keep=("messages", keep_count),
     )
     return middleware.compact(messages, force=force)
+
+
+async def run_compaction_async(
+    messages: list[AnyMessage],
+    model: Any,
+    settings: Any,
+    *,
+    force: bool = False,
+    progress_callback: Callable[[str], None] | None = None,
+) -> CompactionResult | None:
+    """Run the same compaction pipeline without blocking the TUI event loop."""
+    middleware = RobustSummarizationMiddleware(
+        model=model,
+        trigger=get_summarization_trigger(model, settings.context.summarization_threshold),
+        keep=("messages", settings.context.keep_recent_turns * 2),
+        progress_callback=progress_callback,
+    )
+    return await middleware.acompact(messages, force=force)

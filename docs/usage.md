@@ -51,6 +51,7 @@ Inside the interactive session:
 |---------|-------------|
 | `/help` | Show available commands |
 | `/clear` | Clear conversation history |
+| `/compact` | Summarize older context with the current session model; Ctrl+C cancels in the TUI |
 | `/model` | List available models and show current |
 | `/model <name>` | Switch to a different model |
 | `/copilot-login` | Connect a GitHub Copilot subscription as a model provider |
@@ -102,6 +103,21 @@ Switched to model: GPT-4o (AzureOpenAI)
 ```
 
 Models are configured in `~/.clanker/models.json` or via `clanker config`.
+
+### Compacting conversation context
+
+Use `/compact` to summarize older messages while preserving the recent tail
+and current TODO state. In the TUI, compaction runs in the background and shows
+chunk progress. Press Ctrl+C to cancel; the current history is retained if the
+summary has not been applied. Wait for completion or cancel before sending a
+new prompt, clearing the session, or switching models.
+
+Large imported conversations may trigger automatic compaction when you first
+continue them. This can require several model calls. The session transcript
+and saved snapshot reuse the graph's completed summary, so Clanker does not
+generate a second summary of the original import. Manual compaction also uses
+the current checkpoint when available. After compacting a restored/imported
+session, its original transcript is not replayed on the next prompt.
 
 ### Resuming and importing conversations
 

@@ -722,6 +722,8 @@ class ClankerApp(App):
         self._model_info = model_info
         self._update_info = update_info
         self._processing = False
+        self._compacting = False
+        self._compaction_task: asyncio.Task | None = None
         self._input_history: list[PromptDraft] = self._load_history()
         self._input_queue: asyncio.Queue[str] = asyncio.Queue()
         # Retain task history for the session, including tasks still running
@@ -900,6 +902,9 @@ class ClankerApp(App):
             stop_task(run.task_id)
         self.interrupt_requested = True
         self._interrupt_event.set()
+        compaction = getattr(self, "_compaction_task", None)
+        if compaction:
+            compaction.cancel()
         login = getattr(self, "_antigravity_login_session", None)
         if login:
             login.cancel(close=False)
@@ -913,6 +918,9 @@ class ClankerApp(App):
 
         for run in self._subagent_runs:
             stop_task(run.task_id)
+        compaction = getattr(self, "_compaction_task", None)
+        if compaction:
+            compaction.cancel()
         login = getattr(self, "_antigravity_login_session", None)
         if login:
             login.cancel(close=False)
@@ -1085,6 +1093,12 @@ class ClankerApp(App):
         raw = prompt_input.value.strip()
         if not raw:
             return
+        if getattr(self, "_compacting", False) and not raw.startswith("/"):
+            self.get_chat_log().add_message(
+                "Compaction is running. Press Ctrl+C to cancel before sending a message.",
+                MessageType.WARNING,
+            )
+            return
         prompt_input.add_to_history(raw)
         text, images = prompt_input.pop_expanded_value()
         text = text.strip()
@@ -1166,6 +1180,17 @@ class ClankerApp(App):
 
         command = text.strip().lower()
         head = command.split(maxsplit=1)[0]
+        if head in ("/compact", "/clear") and getattr(self, "_processing", False):
+            self.get_chat_log().add_message(
+                "Wait for the current operation, or press Ctrl+C to cancel it first.",
+                MessageType.WARNING,
+            )
+            return "skip"
+        if head == "/model" and getattr(self, "_compacting", False):
+            self.get_chat_log().add_message(
+                "Wait for compaction before switching models.", MessageType.WARNING
+            )
+            return "skip"
         if head in ("/restore", "/resume", "/import") and getattr(self, "_processing", False):
             self.get_chat_log().add_message(
                 "Wait for the current turn before switching conversations.", MessageType.WARNING
@@ -1183,6 +1208,13 @@ class ClankerApp(App):
             return "skip"
         if command == "/memories":
             self.action_show_memories()
+            return "skip"
+
+        if command == "/compact":
+            self.reset_interrupt()
+            self._compacting = True
+            self._set_processing(True)
+            self.run_worker(self._compact_conversation(), exclusive=True, group="compaction")
             return "skip"
 
         if command == "/openai-login":
@@ -1297,6 +1329,66 @@ class ClankerApp(App):
         )
 
     # --- Agent execution ---
+
+    async def _compact_conversation(self) -> None:
+        from clanker.agent import create_model
+        from clanker.agent.graph import create_agent_graph
+        from clanker.agent.summarization import run_compaction_async
+        from clanker.logging import get_logger
+        from clanker.memory.checkpointer import conversation_transcript
+        from clanker.tools import get_tools
+
+        chat_log = self.get_chat_log()
+        manager = self._session_manager
+        self._compaction_task = asyncio.current_task()
+        try:
+            if self._interrupt_event.is_set():
+                raise asyncio.CancelledError
+            messages = await asyncio.to_thread(manager.get_checkpoint_messages)
+            messages = messages or list(self._conversation_messages)
+            if not messages:
+                chat_log.add_message("No conversation history to compact.", MessageType.INFO)
+                return
+            chat_log.add_message(
+                f"Compacting {len(messages)} messages... (Ctrl+C to cancel)", MessageType.INFO
+            )
+            model = await asyncio.to_thread(
+                create_model, self._settings, model_name=manager.model_name
+            )
+            result = await run_compaction_async(
+                messages, model, self._settings, force=True,
+                progress_callback=lambda text: chat_log.add_message(text, MessageType.INFO),
+            )
+            if result is None:
+                chat_log.add_message("Nothing to compact.", MessageType.INFO)
+                return
+            # Only checkpoint operations are needed; do not reconnect MCP servers
+            # or rebuild the workspace prompt just to save the summary.
+            graph = await asyncio.to_thread(
+                create_agent_graph, self._settings, checkpointer=manager.checkpointer,
+                model_name=manager.model_name, tools=get_tools(), system_prompt="",
+            )
+            await graph.aupdate_state(
+                manager.get_config(), result.graph_state_update, as_node="model"
+            )
+            self._conversation_messages.clear()
+            self._conversation_messages.extend(conversation_transcript(result.compacted_messages))
+            self._pending_restore_messages = []
+            manager.save_conversation_snapshot(self._conversation_messages)
+            chat_log.add_message(
+                f"Compacted {result.summarized_count} messages into a summary; "
+                f"{len(self._conversation_messages)} transcript messages retained.", MessageType.SUCCESS
+            )
+        except asyncio.CancelledError:
+            chat_log.add_message("Compaction cancelled.", MessageType.WARNING)
+            raise
+        except Exception as exc:
+            get_logger("tui").exception("Failed to compact conversation: %s", exc)
+            chat_log.add_message(f"Failed to compact conversation: {exc}", MessageType.ERROR)
+        finally:
+            self._compaction_task = None
+            self._compacting = False
+            self._set_processing(False)
 
     async def _run_agent(
         self, user_input: str, images: list[ClipboardImage] | None = None

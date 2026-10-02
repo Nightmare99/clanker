@@ -83,6 +83,23 @@ def message_content_to_text(content) -> str:
     return str(content)
 
 
+def conversation_transcript(messages: list) -> list:
+    """Project live graph messages onto the user/assistant session transcript.
+
+    Tool protocol and encrypted reasoning stay in the live checkpoint. Saved
+    transcripts cannot replay those blocks safely and should not expose them.
+    """
+    transcript = []
+    for message in messages:
+        if isinstance(message, HumanMessage):
+            transcript.append(message)
+        elif isinstance(message, AIMessage):
+            text = message_content_to_text(message.content)
+            if text.strip():
+                transcript.append(AIMessage(content=text, id=message.id))
+    return transcript
+
+
 def _message_to_dict(msg) -> dict:
     """Convert a LangChain message to a serializable dict."""
     msg_type = "unknown"
@@ -191,6 +208,18 @@ class SessionManager:
         self._session_created = datetime.now().isoformat()
         self._session_title = None
         return self._current_session
+
+    def get_checkpoint_messages(self) -> list | None:
+        """Read the active graph's retained history, including its existing summary.
+
+        A restored/imported conversation may not have a live checkpoint yet;
+        callers should use their pending transcript in that case.
+        """
+        saved = self.checkpointer.get_tuple(self.get_config())
+        if saved is None:
+            return None
+        messages = saved.checkpoint.get("channel_values", {}).get("messages")
+        return list(messages) if messages is not None else None
 
     def resume_session(self, session_id: str) -> None:
         """Resume an existing session."""

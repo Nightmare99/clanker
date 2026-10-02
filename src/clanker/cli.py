@@ -89,26 +89,29 @@ def sync_conversation_after_auto_compaction(
     `/restore`) would keep growing forever, silently diverging from what the
     model actually retains after a turn that triggered auto-compaction.
 
-    Mirrors the manual `/compact` command exactly: same `run_compaction` call,
-    same summary pipeline, same UI feedback -- called from both the TUI
-    (`app.py`, after `stream_agent_response_async`) and the legacy `--no-tui`
-    REPL below, so the two entry points behave identically.
+    Reuses the graph's completed summary. Running another compaction here
+    would resend the stale transcript, block the TUI, and potentially produce
+    a different summary from the one the model actually retained.
     """
-    from clanker.agent.summarization import run_compaction
+    from clanker.memory.checkpointer import conversation_transcript
 
     try:
-        model = create_model(settings)
-        result = run_compaction(conversation_messages, model, settings, force=True)
-        if result is None:
+        retained = session_manager.get_checkpoint_messages()
+        if not retained:
+            logger.warning("No checkpoint history available after auto-compaction")
+            return
+
+        transcript = conversation_transcript(retained)
+        if not transcript:
             return
 
         conversation_messages.clear()
-        conversation_messages.extend(result.compacted_messages)
+        conversation_messages.extend(transcript)
         session_manager.save_conversation_snapshot(conversation_messages)
 
         msg = (
-            f"Auto-compacted conversation history ({result.summarized_count} "
-            "messages summarized) to stay within the model's context window."
+            f"Synced conversation history to the compacted checkpoint "
+            f"({len(transcript)} messages retained)."
         )
         console.print_info(msg)
         if chat_log:
@@ -425,10 +428,11 @@ def handle_command(
             _mirror(msg)
             return None
         from clanker.agent.summarization import run_compaction
+        from clanker.memory.checkpointer import conversation_transcript
 
         settings = get_settings()
         try:
-            model = create_model()
+            model = create_model(settings, model_name=session_manager.model_name)
         except ValueError as e:
             msg = f"Cannot compact: {e}"
             console.print_error(msg)
@@ -442,26 +446,31 @@ def handle_command(
         try:
             from clanker.agent.graph import create_agent_graph
 
-            result = run_compaction(conversation_messages, model, settings, force=True)
+            messages = session_manager.get_checkpoint_messages() or conversation_messages
+            result = run_compaction(messages, model, settings, force=True)
             if result is None:
                 msg = "Nothing to compact."
                 console.print_info(msg)
                 _mirror(msg)
                 return None
 
-            graph = create_agent_graph(settings, checkpointer=session_manager.checkpointer)
+            graph = create_agent_graph(
+                settings, checkpointer=session_manager.checkpointer,
+                model_name=session_manager.model_name,
+            )
             config = session_manager.get_config()
-            graph.update_state(config, result.graph_state_update)
+            graph.update_state(config, result.graph_state_update, as_node="model")
 
             conversation_messages.clear()
-            conversation_messages.extend(result.compacted_messages)
+            conversation_messages.extend(conversation_transcript(result.compacted_messages))
             session_manager.save_conversation_snapshot(conversation_messages)
             success_msg = (
                 f"Successfully compacted conversation! Condensed {result.summarized_count} messages "
-                f"into a summary. History now contains {len(result.compacted_messages)} message(s)."
+                f"into a summary. History now contains {len(conversation_messages)} message(s)."
             )
             console.print_success(success_msg)
             _mirror(success_msg, MessageType.SUCCESS)
+            return "compacted"
         except Exception as e:
             logger.exception("Failed to compact conversation: %s", e)
             error_msg = f"Failed to compact conversation: {e}"
@@ -1105,6 +1114,8 @@ def run_interactive_legacy(
 
             if user_input.startswith("/"):
                 result = handle_command(user_input, console, session_manager, conversation_messages)
+                if result == "compacted":
+                    pending_restore_messages = []
                 if user_input.lower() == "/clear":
                     pending_restore_messages = []
                     console.print_info(f"Session ID: {session_manager.session_id}")

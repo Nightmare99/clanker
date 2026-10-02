@@ -87,16 +87,16 @@ def test_compact_too_short(console, session_manager, monkeypatch):
     from langgraph.graph import END, START, StateGraph
 
     workflow = StateGraph(State)
-    workflow.add_node("node", lambda state: {"messages": []})
-    workflow.add_edge(START, "node")
-    workflow.add_edge("node", END)
+    workflow.add_node("model", lambda state: {"messages": []})
+    workflow.add_edge(START, "model")
+    workflow.add_edge("model", END)
     graph = workflow.compile(checkpointer=session_manager.checkpointer)
 
     monkeypatch.setattr("clanker.agent.graph.create_agent_graph", lambda *args, **kwargs: graph)
 
     messages = [HumanMessage(content="hello"), AIMessage(content="hi")]
     res = handle_command("/compact", console, session_manager, conversation_messages=messages)
-    assert res is None
+    assert res == "compacted"
     console.print_success.assert_called()
 
     # With len=2, cutoff_index will be 1. So the 1st message is summarized, 2nd preserved.
@@ -120,16 +120,16 @@ def test_compact_single_message(console, session_manager, monkeypatch):
     from langgraph.graph import END, START, StateGraph
 
     workflow = StateGraph(State)
-    workflow.add_node("node", lambda state: {"messages": []})
-    workflow.add_edge(START, "node")
-    workflow.add_edge("node", END)
+    workflow.add_node("model", lambda state: {"messages": []})
+    workflow.add_edge(START, "model")
+    workflow.add_edge("model", END)
     graph = workflow.compile(checkpointer=session_manager.checkpointer)
 
     monkeypatch.setattr("clanker.agent.graph.create_agent_graph", lambda *args, **kwargs: graph)
 
     messages = [HumanMessage(content="just one message")]
     res = handle_command("/compact", console, session_manager, conversation_messages=messages)
-    assert res is None
+    assert res == "compacted"
     console.print_success.assert_called()
 
     # With len=1, cutoff_index will be 1. So the only message is summarized.
@@ -160,15 +160,15 @@ def test_compact_success(console, session_manager, monkeypatch):
     from langgraph.graph import END, START, StateGraph
 
     workflow = StateGraph(State)
-    workflow.add_node("node", lambda state: {"messages": []})
-    workflow.add_edge(START, "node")
-    workflow.add_edge("node", END)
+    workflow.add_node("model", lambda state: {"messages": []})
+    workflow.add_edge(START, "model")
+    workflow.add_edge("model", END)
     graph = workflow.compile(checkpointer=session_manager.checkpointer)
 
     monkeypatch.setattr("clanker.agent.graph.create_agent_graph", lambda *args, **kwargs: graph)
 
     res = handle_command("/compact", console, session_manager, conversation_messages=messages)
-    assert res is None
+    assert res == "compacted"
     console.print_success.assert_called()
 
     # The messages should be compacted: one summary message + preserved tail.

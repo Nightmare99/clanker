@@ -30,6 +30,19 @@
 - Set your API key: `export ANTHROPIC_API_KEY=your-key`
 - Or add it to your `.env` file
 
+## Slow Conversation Compaction
+
+A large imported conversation can take multiple summary calls when first
+continued. Check `~/.clanker/logs/clanker.log` for `Summarizing ... chunk(s)`
+and `Compaction progress` entries to see how much work remains. `/compact`
+runs asynchronously in the TUI and displays chunk progress; Ctrl+C cancels it.
+
+If the TUI completely freezes or the same full imported history is summarized
+again after a completed compaction, update Clanker. Older versions invoked
+manual compaction on the UI thread and generated a second summary to sync
+the display transcript. Current versions reuse the completed checkpoint
+summary and clear pending import/restore replay after manual compaction.
+
 ## ChatGPT (OpenAI) Login
 
 - **Not connected / expired login:** Run `clanker openai-login` or reconnect

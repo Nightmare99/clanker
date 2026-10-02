@@ -330,7 +330,7 @@ class TestCompactionOccurredDetection:
 
 class TestSyncConversationAfterAutoCompaction:
     """The app-layer sync both the TUI and the legacy REPL call after
-    auto-compaction, mirroring exactly what `/compact` does."""
+    auto-compaction, reusing the graph's existing summary."""
 
     def test_replaces_conversation_messages_and_saves_snapshot(self) -> None:
         from clanker.cli import sync_conversation_after_auto_compaction
@@ -342,14 +342,19 @@ class TestSyncConversationAfterAutoCompaction:
             ("h", "msg1"), ("a", "msg2"), ("h", "msg3"), ("a", "msg4")
         )
         session_manager = MagicMock()
+        summary = "Here is a summary of the conversation to date: existing checkpoint summary"
+        session_manager.get_checkpoint_messages.return_value = _messages(
+            ("h", summary), ("a", "latest answer")
+        )
         console = MagicMock()
 
-        with patch("clanker.cli.create_model", return_value=FakeModel()):
+        with patch("clanker.cli.create_model", side_effect=AssertionError("Do not summarize twice")):
             sync_conversation_after_auto_compaction(
                 conversation_messages, session_manager, settings, console
             )
 
-        assert "Here is a summary of the conversation to date" in conversation_messages[0].content
+        assert conversation_messages[0].content == summary
+        assert len(conversation_messages) == 2
         session_manager.save_conversation_snapshot.assert_called_once_with(conversation_messages)
         console.print_info.assert_called_once()
 
@@ -363,10 +368,11 @@ class TestSyncConversationAfterAutoCompaction:
             ("h", "msg1"), ("a", "msg2"), ("h", "msg3"), ("a", "msg4")
         )
         session_manager = MagicMock()
+        session_manager.get_checkpoint_messages.return_value = _messages(("h", "saved summary"))
         console = MagicMock()
         chat_log = MagicMock()
 
-        with patch("clanker.cli.create_model", return_value=FakeModel()):
+        with patch("clanker.cli.create_model", side_effect=AssertionError("Do not summarize twice")):
             sync_conversation_after_auto_compaction(
                 conversation_messages, session_manager, settings, console, chat_log
             )
@@ -379,10 +385,11 @@ class TestSyncConversationAfterAutoCompaction:
 
         settings = Settings()
         session_manager = MagicMock()
+        session_manager.get_checkpoint_messages.return_value = None
         console = MagicMock()
 
-        # An empty conversation has nothing to summarize even with force=True.
-        with patch("clanker.cli.create_model", return_value=FakeModel()):
+        # Missing checkpoints never trigger another model call.
+        with patch("clanker.cli.create_model", side_effect=AssertionError("Do not summarize twice")):
             sync_conversation_after_auto_compaction([], session_manager, settings, console)
 
         session_manager.save_conversation_snapshot.assert_not_called()
