@@ -30,6 +30,18 @@
 - Set your API key: `export ANTHROPIC_API_KEY=your-key`
 - Or add it to your `.env` file
 
+## Copilot Endpoint Errors
+
+If Copilot reports `unsupported_api_for_model` or that a model is not accessible
+through `/chat/completions`, use **Models → Edit → API Endpoint → /responses**,
+or set `"copilot_api_endpoint": "responses"` in that model's configuration.
+`"use_responses_api": true` is also supported when endpoint selection is `auto`.
+
+Automatic routing uses Copilot's advertised endpoints. Update Clanker and use
+**Accounts → GitHub Copilot → Refresh Models** to populate this metadata.
+Models advertised as chat-only remain on `/chat/completions`. If you explicitly
+forced an endpoint that the model does not support, switch back to Automatic.
+
 ## Slow Conversation Compaction
 
 A large imported conversation can take multiple summary calls when first

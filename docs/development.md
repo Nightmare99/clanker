@@ -88,6 +88,14 @@ round trips with mocked API responses and a real local callback listener. Live
 account authorization needs a manual check; no Google credentials are required
 for the test suite.
 
+Copilot discovery persists `supported_endpoints` in each model configuration.
+Its factory resolves `copilot_api_endpoint`, the legacy `use_responses_api`
+preference, then discovery metadata; old configs use a numbered GPT-generation
+fallback until refreshed. The web Test action uses the same factory as the
+agent. Copilot refresh preserves endpoint overrides and other custom settings.
+`tests/test_copilot_responses.py` covers routing, web edits, refresh, and real
+sync/async Clanker tool rounds with mocked HTTP responses.
+
 ChatGPT authentication is in `config/chatgpt_auth.py`; `agent/chatgpt.py` uses
 LangChain's Responses request conversion and streaming event decoder, with
 account authentication on each request and encrypted reasoning capture at
@@ -97,6 +105,8 @@ card also handles ChatGPT browser and manual callback login. `tests/test_chatgpt
 checks OAuth/refresh/cancellation, secure storage, model discovery, CLI/web/TUI
 flows, and real sync/async Clanker graphs with tools and encrypted reasoning.
 These tests require no real account; live authorization/inference is a manual check.
+`agent/responses.py` shares the streaming decoder between ChatGPT and Copilot
+Responses models, including encrypted reasoning delivered at `output_item.done`.
 
 Compaction is implemented by `agent/summarization.py`. The TUI's `/compact`
 worker uses `run_compaction_async`, reports chunk progress, and cancels native

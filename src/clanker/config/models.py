@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -32,6 +33,7 @@ _ANTIGRAVITY_INPUT_LIMITS = {
 }
 
 ProviderType = Literal["AzureOpenAI", "OpenAI", "Anthropic", "Ollama", "GitHubCopilot", "Antigravity", "ChatGPT"]
+CopilotAPIEndpoint = Literal["auto", "responses", "chat-completions"]
 
 
 def _fresh_openai_http_clients() -> dict:
@@ -162,17 +164,19 @@ def _apply_stream_chunk_timeout(chat_cls, kwargs: dict, model_config: "ModelConf
     os.environ["LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S"] = str(timeout if timeout else 0)
 
 
-def copilot_uses_responses_api(model_id: str | None) -> bool:
-    """Whether this Copilot-backed model exposes the ``/responses`` endpoint.
+def copilot_uses_responses_api(
+    model_id: str | None, supported_endpoints: list[str] | None = None
+) -> bool:
+    """Prefer Responses when Copilot advertises it, regardless of model name.
 
-    Only the GPT-5.x reasoning family does. Claude, Gemini, and legacy
-    GPT-4.x models served through GitHub Copilot only implement
-    ``/chat/completions`` and error with "responses endpoint is not
-    supported for this model" if sent there. Mirrors the model-capability
-    registry in betaHi/copilot-bridge (models without a
-    ``fallback: "chat-completions"`` entry are exactly the gpt-5.x family).
+    Old configs lack discovery metadata. Until refreshed, retain GPT-5 routing
+    and extend it to newer GPT generations. Explicit metadata takes priority
+    over this compatibility fallback, including chat-only GPT models.
     """
-    return bool(model_id) and model_id.startswith("gpt-5")
+    if supported_endpoints:
+        return "/responses" in supported_endpoints
+    generation = re.match(r"^gpt-(\d+)(?:[.-]|$)", model_id or "")
+    return bool(generation and int(generation.group(1)) >= 5)
 
 
 class ModelConfig(BaseModel):
@@ -203,8 +207,22 @@ class ModelConfig(BaseModel):
     # per-model toggle -- most OpenAI-compatible endpoints (OpenRouter, local
     # proxies, etc.) only implement /chat/completions and error on /responses.
     use_responses_api: bool = Field(
-        default=False, description="Use the /responses endpoint instead of /chat/completions (OpenAI only)"
+        default=False, description="Use the /responses endpoint (OpenAI or GitHub Copilot)"
     )
+    copilot_api_endpoint: CopilotAPIEndpoint = Field(
+        default="auto", description="Copilot endpoint: auto, responses, or chat-completions"
+    )
+    copilot_supported_endpoints: list[str] | None = Field(
+        default=None, description="Supported endpoints reported by Copilot model discovery"
+    )
+
+    @property
+    def uses_copilot_responses_api(self) -> bool:
+        if self.copilot_api_endpoint != "auto":
+            return self.copilot_api_endpoint == "responses"
+        return self.use_responses_api or copilot_uses_responses_api(
+            self.model, self.copilot_supported_endpoints
+        )
 
     # Streaming reliability: max seconds to wait for the next streamed chunk
     # before erroring. langchain_openai defaults to 120s, which is too low for
@@ -602,6 +620,19 @@ def create_llm_from_config(model_config: ModelConfig):
         # (version-safe: kwarg on newer langchain-openai, env var on older).
         _apply_stream_chunk_timeout(ChatOpenAI, kwargs, model_config)
 
+        if model_config.reasoning_effort:
+            kwargs["reasoning_effort"] = model_config.reasoning_effort
+        if model_config.uses_copilot_responses_api:
+            from clanker.agent.responses import StreamingResponsesModel
+
+            chat_cls = StreamingResponsesModel
+            kwargs.update(
+                store=False, use_previous_response_id=False,
+                include=["reasoning.encrypted_content"], output_version="responses/v1",
+            )
+        else:
+            chat_cls = ChatOpenAI
+
         # Pass the FUNCTION itself as api_key, not a resolved token string.
         # ChatOpenAI's underlying openai.OpenAI/AsyncOpenAI clients call this
         # provider fresh before every request (openai's own
@@ -610,10 +641,10 @@ def create_llm_from_config(model_config: ModelConfig):
         # hence many model calls) is refreshed on the very next call instead
         # of every subsequent call in that turn reusing a now-stale token
         # that would otherwise be frozen in at construction time.
-        return ChatOpenAI(
+        return chat_cls(
             api_key=get_valid_copilot_token,
             stream_usage=True,
-            use_responses_api=copilot_uses_responses_api(model_config.model),
+            use_responses_api=model_config.uses_copilot_responses_api,
             **_fresh_openai_http_clients(),
             **kwargs,
         )

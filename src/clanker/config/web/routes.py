@@ -14,7 +14,6 @@ from clanker.config import CONFIG_PATH, Settings, antigravity_auth, chatgpt_auth
 from clanker.config.copilot_auth import (
     CopilotAuthError,
     complete_login,
-    copilot_request_headers,
     poll_for_github_token,
     start_device_flow,
     sync_copilot_models,
@@ -25,9 +24,9 @@ from clanker.config.copilot_auth import (
 )
 from clanker.config.models import (
     MODELS_CONFIG_PATH,
+    CopilotAPIEndpoint,
     ModelConfig,
     add_model,
-    copilot_uses_responses_api,
     get_model_by_name,
     get_models_config,
     remove_model,
@@ -326,6 +325,8 @@ class ModelRequest(BaseModel):
     reasoning_effort: str | None = None
     # Use OpenAI's /responses endpoint instead of /chat/completions (OpenAI only)
     use_responses_api: bool = False
+    copilot_api_endpoint: CopilotAPIEndpoint = "auto"
+    copilot_supported_endpoints: list[str] | None = None
     # Streaming reliability (OpenAI/Azure only)
     stream_chunk_timeout: int | None = None
     # Cost tracking (USD per million tokens)
@@ -379,6 +380,8 @@ async def create_model_config(request: ModelRequest) -> MessageResponse:
             thinking_budget_tokens=request.thinking_budget_tokens,
             reasoning_effort=request.reasoning_effort,
             use_responses_api=request.use_responses_api,
+            copilot_api_endpoint=request.copilot_api_endpoint,
+            copilot_supported_endpoints=request.copilot_supported_endpoints,
             stream_chunk_timeout=request.stream_chunk_timeout,
             cost_input=request.cost_input,
             cost_output=request.cost_output,
@@ -419,6 +422,17 @@ async def update_model_config(name: str, request: ModelRequest) -> MessageRespon
             thinking_budget_tokens=request.thinking_budget_tokens,
             reasoning_effort=request.reasoning_effort,
             use_responses_api=request.use_responses_api,
+            copilot_api_endpoint=(
+                request.copilot_api_endpoint
+                if "copilot_api_endpoint" in request.model_fields_set
+                else existing.copilot_api_endpoint
+            ),
+            copilot_supported_endpoints=(
+                None if request.model != existing.model or request.provider != existing.provider
+                else request.copilot_supported_endpoints
+                if "copilot_supported_endpoints" in request.model_fields_set
+                else existing.copilot_supported_endpoints
+            ),
             stream_chunk_timeout=request.stream_chunk_timeout,
             cost_input=request.cost_input,
             cost_output=request.cost_output,
@@ -512,27 +526,10 @@ async def test_model_config(name: str) -> MessageResponse:
             model_name = model_config.model or "llama3"
             llm = ChatOllama(base_url=base_url, model=model_name)
 
-        elif provider in {"Antigravity", "ChatGPT"}:
+        elif provider in {"Antigravity", "ChatGPT", "GitHubCopilot"}:
             from clanker.config.models import create_llm_from_config
 
             llm = create_llm_from_config(model_config)
-
-        elif provider == "GitHubCopilot":
-            from langchain_openai import ChatOpenAI
-
-            from clanker.config.copilot_auth import COPILOT_BASE_URL, get_valid_copilot_token
-            get_valid_copilot_token()  # eager check: clear error if never logged in
-            kwargs = {
-                "api_key": get_valid_copilot_token,  # callable -> refreshed per-request
-                "base_url": COPILOT_BASE_URL,
-                "default_headers": copilot_request_headers(),
-            }
-            if model_config.model:
-                kwargs["model"] = model_config.model
-            llm = ChatOpenAI(
-                use_responses_api=copilot_uses_responses_api(model_config.model),
-                **kwargs,
-            )
 
         else:
             raise ValueError(f"Unsupported provider: {provider}")

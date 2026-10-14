@@ -125,6 +125,8 @@ interface ModelConfig {
   reasoning_effort: string | null
   // Use OpenAI's /responses endpoint instead of /chat/completions (OpenAI only)
   use_responses_api: boolean
+  copilot_api_endpoint: 'auto' | 'responses' | 'chat-completions'
+  copilot_supported_endpoints: string[] | null
   // Streaming reliability (OpenAI/Azure): seconds to wait for next chunk
   stream_chunk_timeout: number | null
   // Cost tracking (USD per million tokens — optional, omit to skip cost display)
@@ -177,6 +179,8 @@ const modelForm = ref<ModelConfig>({
   thinking_budget_tokens: 10000,
   reasoning_effort: null,
   use_responses_api: false,
+  copilot_api_endpoint: 'auto',
+  copilot_supported_endpoints: null,
   stream_chunk_timeout: null,
   cost_input: null,
   cost_output: null,
@@ -250,6 +254,16 @@ const logLevelOptions = [
 // Model form computed
 const isModelFormAzure = computed(() => modelForm.value.provider === 'AzureOpenAI')
 const isModelFormOpenAI = computed(() => modelForm.value.provider === 'OpenAI')
+const isModelFormCopilot = computed(() => modelForm.value.provider === 'GitHubCopilot')
+const copilotEndpointOptions = [
+  { label: 'Automatic (Copilot capabilities)', value: 'auto' },
+  { label: '/responses', value: 'responses' },
+  { label: '/chat/completions', value: 'chat-completions' },
+]
+function modelEndpointLabel(model: ModelConfig) {
+  if (model.provider !== 'GitHubCopilot' || model.use_responses_api && model.copilot_api_endpoint === 'auto') return '/responses'
+  return { auto: 'Automatic', responses: '/responses', 'chat-completions': '/chat/completions' }[model.copilot_api_endpoint]
+}
 const isModelFormAnthropic = computed(() => modelForm.value.provider === 'Anthropic')
 const isModelFormAccount = computed(() => ['GitHubCopilot', 'Antigravity', 'ChatGPT'].includes(modelForm.value.provider))
 const isModelFormChatGPT = computed(() => modelForm.value.provider === 'ChatGPT')
@@ -353,6 +367,8 @@ function openAddModel() {
     thinking_budget_tokens: 10000,
     reasoning_effort: null,
     use_responses_api: false,
+    copilot_api_endpoint: 'auto',
+    copilot_supported_endpoints: null,
     stream_chunk_timeout: null,
     cost_input: null,
     cost_output: null,
@@ -365,6 +381,10 @@ function openAddModel() {
 function openEditModel(model: ModelConfig) {
   editingModel.value = model.name
   modelForm.value = { ...model }
+  // Display legacy explicit Responses settings as the equivalent endpoint choice.
+  if (model.provider === 'GitHubCopilot' && model.use_responses_api && model.copilot_api_endpoint === 'auto') {
+    modelForm.value.copilot_api_endpoint = 'responses'
+  }
   showModelModal.value = true
 }
 
@@ -862,9 +882,9 @@ onMounted(() => {
                     <span class="detail-label">Reasoning:</span>
                     <NTag size="small" type="warning">{{ model.reasoning_effort }}</NTag>
                   </div>
-                  <div v-if="model.use_responses_api" class="model-detail-row">
+                  <div v-if="model.use_responses_api || model.provider === 'GitHubCopilot'" class="model-detail-row">
                     <span class="detail-label">Endpoint:</span>
-                    <NTag size="small" type="warning">/responses</NTag>
+                    <NTag size="small" type="warning">{{ modelEndpointLabel(model) }}</NTag>
                   </div>
                   <div v-if="model.cost_input != null || model.cost_output != null" class="model-detail-row">
                     <span class="detail-label">Pricing:</span>
@@ -1191,6 +1211,27 @@ onMounted(() => {
                     <code>/chat/completions</code>. Only enable this if you know your endpoint
                     supports it -- most OpenAI-compatible proxies and gateways don't, and will
                     reject the request.
+                  </small>
+                </NAlert>
+              </template>
+
+              <template v-if="isModelFormCopilot">
+                <NDivider style="margin: 16px 0">API Endpoint</NDivider>
+                <NFormItem label="Endpoint">
+                  <NSelect
+                    v-model:value="modelForm.copilot_api_endpoint"
+                    :options="copilotEndpointOptions"
+                    @update:value="modelForm.use_responses_api = false"
+                  />
+                </NFormItem>
+                <NAlert type="info" style="margin-top: 8px">
+                  <small>
+                    Automatic uses the endpoints advertised by Copilot and prefers
+                    <code>/responses</code> when supported. Refresh Models in Accounts
+                    to update capabilities. Choose an explicit endpoint to override automatic routing.
+                    <template v-if="modelForm.copilot_supported_endpoints?.length">
+                      Advertised endpoints: {{ modelForm.copilot_supported_endpoints.join(', ') }}.
+                    </template>
                   </small>
                 </NAlert>
               </template>

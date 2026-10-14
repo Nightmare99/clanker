@@ -74,9 +74,11 @@ The recommended way to configure LLM providers is using the JSON-based models co
 | `api_version` | No | Azure API version (AzureOpenAI only) |
 | `thinking_enabled` | No | Enable extended thinking (Anthropic or Antigravity) |
 | `thinking_budget_tokens` | No | Token budget for thinking (default: 10000) |
-| `reasoning_effort` | No | Reasoning effort for supported OpenAI/Azure/ChatGPT models; available levels depend on the model |
-| `stream_chunk_timeout` | No | Seconds to wait for the next stream chunk before erroring (OpenAI/Azure/Antigravity/ChatGPT). Default 600; `0` disables. Raise for high-reasoning models that pause silently. |
-| `use_responses_api` | No | Route through OpenAI's `/responses` endpoint instead of `/chat/completions` (OpenAI only). Off by default — most OpenAI-compatible endpoints (OpenRouter, local proxies, etc.) only implement `/chat/completions`. GitHub Copilot models set this automatically per-model (only the GPT-5.x family supports it); no need to set it manually for `copilot:*` entries. |
+| `reasoning_effort` | No | Reasoning effort for supported OpenAI/Azure/ChatGPT/Copilot models; available levels depend on the model |
+| `stream_chunk_timeout` | No | Seconds to wait for the next stream chunk before erroring (OpenAI/Azure/Antigravity/ChatGPT/Copilot). Default 600; `0` disables. Raise for high-reasoning models that pause silently. |
+| `use_responses_api` | No | Use `/responses` for OpenAI-compatible endpoints. Off by default for OpenAI. Also honored as an explicit Responses preference for Copilot when `copilot_api_endpoint` is `auto`. |
+| `copilot_api_endpoint` | No | Copilot endpoint selection: `auto` (default), `responses`, or `chat-completions`. Explicit choices take priority over discovery and `use_responses_api`. |
+| `copilot_supported_endpoints` | No | Endpoint metadata populated by Copilot discovery; refreshed from the catalogue and used for automatic routing. |
 
 ### Switching Models
 
@@ -133,6 +135,39 @@ refreshed limits.
 
 The web UI also offers **Reconnect** and **Disconnect**. Disconnect removes
 cached credentials while retaining saved model settings.
+
+### Copilot API endpoint
+
+Automatic routing follows the model's `supported_endpoints` from Copilot's
+catalogue and prefers `/responses` when advertised, including models that only
+support that endpoint. This is the same metadata used by the
+[VS Code Copilot integration](https://github.com/microsoft/vscode/blob/main/extensions/copilot/src/platform/endpoint/common/endpointProvider.ts).
+For older configurations without endpoint metadata, GPT-5 and later numbered
+GPT generations use Responses as a compatibility fallback. Other models keep
+Chat Completions until refreshed metadata indicates Responses support.
+
+In **Models → Edit → API Endpoint**, choose **Automatic (Copilot capabilities)**,
+**/responses**, or **/chat/completions**. Refresh the catalogue through
+**Accounts → GitHub Copilot → Refresh Models**; refreshing preserves your
+endpoint override and other custom settings. The model card's **Test** action
+uses the same endpoint selection as the coding agent.
+
+To explicitly choose Responses in `~/.clanker/models.json`:
+
+```json
+{
+  "name": "copilot:gpt-6.1-sol",
+  "provider": "GitHubCopilot",
+  "model": "gpt-6.1-sol",
+  "copilot_api_endpoint": "responses"
+}
+```
+
+Setting `"use_responses_api": true` also works for Copilot with the default
+`auto` selection. Explicitly choosing an unsupported endpoint can still fail;
+use Automatic or check the advertised endpoints shown in the editor.
+Responses requests disable server storage, replay full history, and retain
+encrypted reasoning across tool rounds. Bearer tokens still refresh per request.
 
 **Notes:**
 - The Copilot bearer token is cached separately at `~/.clanker/copilot_auth.json`

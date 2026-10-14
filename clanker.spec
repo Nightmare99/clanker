@@ -50,6 +50,7 @@ a = Analysis(
         'langchain_anthropic',
         'clanker.agent.antigravity',
         'clanker.agent.chatgpt',
+        'clanker.agent.responses',
         'clanker.config.chatgpt_auth',
         'httpx',
         'langgraph',

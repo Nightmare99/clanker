@@ -10,7 +10,7 @@ login flow used by the official VS Code Copilot Chat extension:
    via GitHub's (undocumented) internal token endpoint.
 3. The Copilot token, plus a handful of editor-identity headers that Copilot's
    backend uses to gate access, authorize calls to Copilot's own
-   OpenAI-compatible chat-completions API -- consumed directly by
+   OpenAI-compatible Chat Completions and Responses APIs -- consumed directly by
    ``langchain_openai.ChatOpenAI`` (base_url + default_headers), no separate
    proxy process required.
 4. Copilot's own ``/models`` endpoint reports each model's real context
@@ -149,7 +149,7 @@ def _github_headers() -> dict[str, str]:
 
 
 def copilot_request_headers() -> dict[str, str]:
-    """Editor-identity headers required on every Copilot chat-completions call.
+    """Editor-identity headers required on every Copilot model request.
 
     Does NOT include ``Authorization`` -- callers (``create_llm_from_config``)
     supply the bearer token separately via ``ChatOpenAI(api_key=...)``.
@@ -392,7 +392,7 @@ def sync_copilot_models() -> int:
     # Imported lazily to avoid a hypothetical import-order issue between
     # config.models and this module (models.py imports copilot_auth, not the
     # reverse, but this keeps the dependency direction explicit).
-    from clanker.config.models import ModelConfig, add_model
+    from clanker.config.models import ModelConfig, add_model, get_model_by_name
 
     models = list_copilot_models()
     synced = 0
@@ -414,13 +414,22 @@ def sync_copilot_models() -> int:
         max_input_tokens = limits.get("max_context_window_tokens")
         max_output_tokens = limits.get("max_output_tokens")
 
-        add_model(ModelConfig(
-            name=f"{COPILOT_MODEL_NAME_PREFIX}{model_id}",
+        name = f"{COPILOT_MODEL_NAME_PREFIX}{model_id}"
+        previous = get_model_by_name(name)
+        entry = previous or ModelConfig(
+            name=name,
             provider="GitHubCopilot",
             model=model_id,
-            max_input_tokens=max_input_tokens,
-            max_tokens=max_output_tokens,
-        ))
+        )
+        endpoints = model.get("supported_endpoints")
+        updates: dict[str, Any] = {
+            "provider": "GitHubCopilot", "model": model_id,
+            "max_input_tokens": max_input_tokens, "max_tokens": max_output_tokens,
+        }
+        if isinstance(endpoints, list) and all(isinstance(endpoint, str) for endpoint in endpoints):
+            updates["copilot_supported_endpoints"] = endpoints
+        # Preserve endpoint overrides, reasoning settings, and pricing on refresh.
+        add_model(ModelConfig.model_validate({**entry.model_dump(), **updates}))
         synced += 1
 
     logger.info("Synced %d Copilot model(s).", synced)
