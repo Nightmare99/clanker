@@ -15,7 +15,17 @@ from typing import Any
 from langchain.tools import tool
 
 from clanker.config import get_effective_blacklist, get_settings
-from clanker.execution import check_cancelled, task_interaction, task_stop, working_directory
+from clanker.execution import (
+    cancellation_event,
+    check_cancelled,
+    kill_process_tree,
+    process_lifetime,
+    stop_process,
+    task_interaction,
+    task_stop,
+    watch_process,
+    working_directory,
+)
 from clanker.logging import get_logger
 from clanker.runtime import is_yolo_mode
 from clanker.utils.sandbox import is_command_safe
@@ -249,6 +259,8 @@ def execute_shell(command: str, timeout: int | None = None) -> str:
 
     # If promotion is disabled, keep the simple blocking path.
     if promote_after <= 0:
+        if cancellation_event() is not None:
+            return _run_managed_command(command, timeout_seconds)
         return _run_foreground_blocking(command, timeout_seconds)
 
     # Run the subprocess on the JobManager's dedicated loop so that, if
@@ -271,14 +283,14 @@ def execute_shell(command: str, timeout: int | None = None) -> str:
 
 
 def _run_managed_command(command: str, timeout_seconds: int) -> str:
-    """Keep subagent shell processes cancellable and owned by their task."""
+    """Keep shell processes cancellable and owned by their turn or subagent."""
     import tempfile
 
     check_cancelled()
-    stop = task_stop.get()
+    stop = cancellation_event()
     deadline = time.monotonic() + timeout_seconds
     # Spool output to disk so a noisy command cannot exhaust process memory.
-    with tempfile.TemporaryFile() as output:
+    with process_lifetime(), tempfile.TemporaryFile() as output:
         process = subprocess.Popen(
             command, shell=True, stdout=output, stderr=subprocess.STDOUT,
             cwd=working_directory(), env=_get_clean_env(), start_new_session=True,
@@ -296,11 +308,7 @@ def _run_managed_command(command: str, timeout_seconds: int) -> str:
         finally:
             # A shell can exit while leaving descendants behind. Managed tasks
             # do not support detached jobs; clean up the process group too.
-            with contextlib.suppress(ProcessLookupError):
-                if os.name == "posix":
-                    os.killpg(process.pid, signal.SIGKILL)
-                elif process.poll() is None:
-                    process.kill()
+            kill_process_tree(process.pid)
             process.wait()
         output.seek(0)
         captured = output.read(MAX_OUTPUT_SIZE + 1)
@@ -380,6 +388,7 @@ async def _run_foreground_with_promotion(
     # Imported here to avoid a circular import at module load time.
     from clanker.tools.background import get_job_manager
 
+    check_cancelled()
     started = time.time()
     process = await asyncio.create_subprocess_shell(
         command,
@@ -388,6 +397,7 @@ async def _run_foreground_with_promotion(
         env=_get_clean_env(),
         start_new_session=True,
     )
+    watch_process(process)
 
     buffer = bytearray()
 
@@ -405,6 +415,12 @@ async def _run_foreground_with_promotion(
     soft_deadline = min(promote_after, timeout_seconds)
     try:
         await asyncio.wait_for(process.wait(), timeout=soft_deadline)
+    except asyncio.CancelledError:
+        await stop_process(process)
+        drain_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await drain_task
+        raise
     except TimeoutError:
         # Hit promotion threshold but process is still alive.
         if promote_after < timeout_seconds:
@@ -448,6 +464,9 @@ async def _run_foreground_with_promotion(
     output = output.strip()
 
     rc = process.returncode
+    stop = cancellation_event()
+    if stop is not None and stop.is_set():
+        return f"Error: Task cancelled\n{output}"
     if rc != 0:
         logger.warning("Command exited with code %s: %s", rc, command[:50])
         return f"Command exited with code {rc}\n{output}"
@@ -473,13 +492,16 @@ async def bash_async(command: str, timeout: int | None = None) -> str:
 
     timeout_seconds = timeout or (settings.safety.command_timeout // 1000)
 
+    process = None
     try:
         process = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=_get_clean_env(),
+            start_new_session=True,
         )
+        watch_process(process)
 
         stdout, stderr = await asyncio.wait_for(
             process.communicate(),
@@ -511,6 +533,12 @@ async def bash_async(command: str, timeout: int | None = None) -> str:
         return output if output else "(no output)"
 
     except TimeoutError:
+        if process is not None:
+            await stop_process(process)
         return f"Error: Command timed out after {timeout_seconds} seconds"
+    except asyncio.CancelledError:
+        if process is not None:
+            await stop_process(process)
+        raise
     except OSError as e:
         return f"Error executing command: {e}"

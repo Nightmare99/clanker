@@ -121,15 +121,21 @@ async def test_control_copy_respects_platform_with_selected_input(app, monkeypat
         editor.action_select_all()
         await pilot.pause()  # Finish copy-on-selection before testing Ctrl+C.
         app.copy_to_clipboard("original clipboard")
+        # Copy-on-selection may still be queued on a busy CI runner. Assert
+        # the key's action directly instead of racing that independent copy.
+        copy_action = MagicMock(wraps=app._copy_selection)
+        monkeypatch.setattr(app, "_copy_selection", copy_action)
         await pilot.press("ctrl+c")
         assert editor.selected_text == "Selected text"
         if macos:
             app.action_interrupt.assert_called_once()
-            assert app.clipboard == "original clipboard"
+            copy_action.assert_not_called()
             await pilot.press("super+c")
+            copy_action.assert_called_once()
             assert app.clipboard == "Selected text"
         else:
             app.action_interrupt.assert_not_called()
+            copy_action.assert_called_once()
             assert app.clipboard == "Selected text"
         if composer:
             await pilot.press("escape")

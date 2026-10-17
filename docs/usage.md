@@ -201,6 +201,14 @@ session. The task panel supports follow-up messages and stopping an individual
 task; Ctrl+C stops the parent and its managed tasks (on other platforms,
 clear any selection first).
 
+Interrupts cancel a pending model or async tool request immediately and stop
+the current turn's owned shell process trees, including promoted/background
+commands. Unfinished tool calls receive interrupted results in the checkpoint,
+so your next message can continue in the same session without rerunning them.
+Background jobs from earlier completed turns are retained. Blocking Python
+tools stop cooperatively: their awaits are cancelled, and Clanker's file tools
+reject further writes from the stopped turn.
+
 Screen text selection is temporarily disabled while response text is being
 revealed. The typewriter animation continues normally; selection becomes
 available automatically after all active reveals finish. Then drag to select

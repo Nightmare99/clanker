@@ -158,6 +158,16 @@ clipboard text in command arguments or logs. Tests mock subprocesses rather
 than changing the developer's clipboard. iTerm2 can intercept Command keys;
 copy-on-selection needs no terminal key mapping.
 
+Agent turns have a `TurnCancellation` scope in `execution.py`. Ctrl+C sets its
+stop event and cancels the active stream task on its owning loop, so cancellation
+does not depend on another model/tool event arriving. Built-in file writes check
+the scope, owned shell process groups are killed, and process monitors remain
+with promoted/background commands. Each new turn gets a fresh scope. Subagents
+retain their own stop flags. Cancellation repairs orphaned tool calls, clears
+tool/loading indicators, and restores callbacks before returning to the prompt.
+`tests/test_active_turn_cancellation.py` exercises real tool nodes and checkpoints,
+including shell descendants, repeated interruption, and the following user turn.
+
 ## Safety Features
 
 Clanker includes several safety features:

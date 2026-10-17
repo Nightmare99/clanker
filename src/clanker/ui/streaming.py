@@ -12,17 +12,18 @@ import os
 import signal
 import sys
 import threading
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager, nullcontext, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, cast
+from functools import wraps
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from clanker.ui.console import Console
 
 from clanker.config import Settings
-from clanker.execution import task_stop
+from clanker.execution import TurnCancellation, cancellation_event, task_stop, turn_cancellation
 from clanker.logging import get_logger
 from clanker.runtime import is_yolo_mode
 from clanker.tools.ask_tools import get_ask_callback, set_ask_callback
@@ -55,6 +56,7 @@ _persistent_loop: asyncio.AbstractEventLoop | None = None
 
 # Track the currently running streaming task for signal-based cancellation
 _current_streaming_task: asyncio.Task[StreamResult] | None = None
+_current_turn: TurnCancellation | None = None
 _interrupted: bool = False
 
 # Backward-compatible stub: Textual TUI no longer uses Rich Live spinner.
@@ -63,9 +65,24 @@ _current_loading_live = None
 
 
 def _cancel_streaming_task() -> None:
-    """Signal that the current streaming task should stop."""
+    """Stop owned tools/processes and wake a stream blocked awaiting an event."""
     global _interrupted
     _interrupted = True
+    if _current_turn is not None:
+        _current_turn.stop.set()
+    task = _current_streaming_task
+    if task is not None and not task.done() and not task.cancelling():
+        # SIGINT can arrive from another thread/loop. Repeated interrupts must
+        # not cancel checkpoint repair while the first cancellation unwinds.
+        loop = task.get_loop()
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+        if current_loop is loop:
+            task.cancel()
+        else:
+            loop.call_soon_threadsafe(task.cancel)
     from clanker.tools.subagent import _stop_all
 
     _stop_all()
@@ -202,6 +219,44 @@ class StreamResult:
         return self.input_tokens + self.output_tokens
 
 
+def _cancellable_turn(
+    func: Callable[..., Awaitable[StreamResult]],
+) -> Callable[..., Awaitable[StreamResult]]:
+    @wraps(func)
+    async def run(*args: Any, **kwargs: Any) -> StreamResult:
+        global _current_streaming_task, _current_turn
+        if task_stop.get() is not None:
+            return await func(*args, **kwargs)
+        reset_interrupted()
+        previous_console = getattr(_local_state, "active_console", None)
+        turn = TurnCancellation()
+        token = turn_cancellation.set(turn)
+        task = asyncio.create_task(func(*args, **kwargs))
+        _current_turn = turn
+        _current_streaming_task = task
+        try:
+            result = await task
+            if result.status == "cancelled":
+                turn.stop.set()
+            return result
+        except asyncio.CancelledError:
+            # Cancellation during graph/MCP setup also leaves the REPL usable.
+            turn.stop.set()
+            return StreamResult(response="", status="cancelled")
+        finally:
+            if _interrupted or task.cancelled():
+                turn.stop.set()
+            if turn.stop.is_set():
+                await turn.settle()
+            if _current_streaming_task is task:
+                _current_streaming_task = None
+                _current_turn = None
+            _local_state.active_console = previous_console
+            turn_cancellation.reset(token)
+
+    return run
+
+
 @contextmanager
 def _suppress_subprocess_stderr() -> Iterator[None]:
     """Suppress stderr from subprocesses at fd level."""
@@ -294,6 +349,7 @@ def _extract_user_query(messages: list[Any]) -> str | None:
     return None
 
 
+@_cancellable_turn
 async def stream_agent_response_async(
     settings: Settings,
     checkpointer: Any,
@@ -315,7 +371,6 @@ async def stream_agent_response_async(
     from clanker.ui.chat_log import MessageType
 
     # Track active console and callbacks
-    reset_interrupted()
     old_console = getattr(_local_state, "active_console", None)
     _local_state.active_console = console
     _active_console_var.set(console)
@@ -526,8 +581,14 @@ async def stream_agent_response_async(
 
     # Register notify callback
     _pending_notifies: list[tuple[str, str, str | None]] = []
+    tool_stop = cancellation_event()
+
+    def _interaction_cancelled() -> bool:
+        return bool(tool_stop is not None and tool_stop.is_set()) or _interrupted
 
     def _notify_callback(message: str, level: str, title: str | None = None) -> None:
+        if tool_stop is not None and tool_stop.is_set():
+            return
         console.print_notify(message, level, title)
         # Buffer notify messages — flush on next event loop iteration
         _pending_notifies.append((message, level, title))
@@ -561,7 +622,7 @@ async def stream_agent_response_async(
                     multi_select=multi_select,
                     allow_other=allow_other,
                     allow_cancel=allow_cancel,
-                    check_cancelled=lambda: _interrupted,
+                    check_cancelled=_interaction_cancelled,
                 )
 
             from clanker.ui.prompts import select_options
@@ -600,7 +661,7 @@ async def stream_agent_response_async(
                     allow_other=False,
                     allow_cancel=False,
                     preface=preface,
-                    check_cancelled=lambda: _interrupted,
+                    check_cancelled=_interaction_cancelled,
                 )
 
             from clanker.ui.prompts import select_options
@@ -1156,7 +1217,13 @@ async def stream_agent_response_async(
         )
 
     except (KeyboardInterrupt, asyncio.CancelledError):
+        stop = cancellation_event()
+        if stop is not None:
+            stop.set()
         _stop_loading()
+        # ToolNode cancellation can leave an AI tool request committed without
+        # results. Close those requests before accepting the next user turn.
+        await _heal_orphaned_tool_calls(graph, config)
         if textual_app:
             with suppress(Exception):
                 textual_app.get_chat_log().add_message(
@@ -1208,6 +1275,18 @@ async def stream_agent_response_async(
         )
 
     finally:
+        for pending in _tui_debounce_tasks.values():
+            pending.cancel()
+        if _tui_debounce_tasks:
+            await asyncio.gather(*_tui_debounce_tasks.values(), return_exceptions=True)
+        if textual_app:
+            for entry in _tui_tool_entries.values():
+                with suppress(Exception):
+                    textual_app.get_chat_log().update_tool_end(
+                        entry, "Interrupted before completion.", success=False,
+                    )
+        _stop_loading()
+        tool_handler.finalize_live()
         set_notify_callback(old_notify)
         set_ask_callback(old_ask)
         set_approval_callback(old_approval)

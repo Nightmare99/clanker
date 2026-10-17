@@ -70,8 +70,11 @@ def get_todo_store() -> TodoStore:
     store = _todo_store_var.get()
     if store is None:
         store = getattr(_thread_locals, "todo_store", None)
-    if store is None:
-        store = TodoStore()
+        if store is None:
+            store = TodoStore()
+        # A store created in a child asyncio task may exist only in the
+        # thread-local fallback. Bind it here before copying this context to
+        # a tool worker, or that worker can create a different checklist.
         _todo_store_var.set(store)
         _thread_locals.todo_store = store
     return store

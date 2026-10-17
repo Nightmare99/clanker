@@ -12,7 +12,7 @@ import pytest
 def _deps_available() -> bool:
     """Check if required dependencies are available."""
     try:
-        import pydantic
+        import pydantic  # noqa: F401
         return True
     except ImportError:
         return False
@@ -58,18 +58,14 @@ class TestInterruptFlag:
 
         assert module._interrupted is True
 
-    def test_cancel_streaming_task_does_not_cancel_task(self) -> None:
-        """_cancel_streaming_task sets flag but does NOT cancel task.
-
-        We intentionally don't cancel the task because that would interrupt
-        graceful shutdown. Instead, the streaming code checks the _interrupted
-        flag and aborts gracefully.
-        """
+    def test_cancel_streaming_task_schedules_cancellation_on_owning_loop(self) -> None:
+        """An interrupt wakes the stream even while no tool events arrive."""
         module = _load_streaming_module()
 
         # Create a mock task
         mock_task = mock.MagicMock()
         mock_task.done.return_value = False
+        mock_task.cancelling.return_value = 0
 
         module._current_streaming_task = mock_task
         module._interrupted = False
@@ -77,8 +73,7 @@ class TestInterruptFlag:
         module._cancel_streaming_task()
 
         assert module._interrupted is True
-        # Task should NOT be cancelled - graceful abort happens in streaming code
-        mock_task.cancel.assert_not_called()
+        mock_task.get_loop().call_soon_threadsafe.assert_called_once_with(mock_task.cancel)
 
     def test_cancel_streaming_task_skips_done_task(self) -> None:
         """_cancel_streaming_task doesn't cancel already-done tasks."""
@@ -99,10 +94,8 @@ class TestInterruptFlag:
 class TestByokLoopHonorsInterrupt:
     """Regression: the BYOK stream loop must stop when _interrupted is set.
 
-    The SIGINT handler sets _interrupted but deliberately does NOT cancel the
-    task (cancelling could corrupt a session). Previously the BYOK event loop
-    never read the flag, so Ctrl+C was ignored and the agent ran to completion.
-    The loop now checks `if _interrupted: break` at the top of each event.
+    Active turns are cancelled directly, with checkpoint repair on shutdown.
+    The flag check remains a fallback when consuming an already available event.
     """
 
     def test_source_has_interrupt_check_in_byok_loop(self) -> None:

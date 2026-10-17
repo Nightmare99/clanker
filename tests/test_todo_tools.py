@@ -166,3 +166,21 @@ class TestTodoStoreThreadIsolation:
         assert other_thread_result["after_write"][0]["content"] == "worker item"
         main_thread_todos = todo_read.invoke({})["todos"]
         assert main_thread_todos[0]["content"] == "main thread item"
+
+
+async def test_thread_fallback_store_binds_to_context_before_copying(monkeypatch):
+    import asyncio
+
+    from clanker.tools import todo_tools
+
+    store = todo_tools.TodoStore()
+    monkeypatch.setattr(todo_tools._thread_locals, "todo_store", store)
+    token = todo_tools._todo_store_var.set(None)
+    try:
+        assert get_todo_store() is store
+        await asyncio.to_thread(
+            todo_write.invoke, {"todos": [{"content": "Shared plan", "status": "pending"}]},
+        )
+        assert [item.content for item in store.read()] == ["Shared plan"]
+    finally:
+        todo_tools._todo_store_var.reset(token)

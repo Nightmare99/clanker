@@ -33,6 +33,7 @@ from typing import Any, TypeVar
 
 from langchain.tools import tool
 
+from clanker.execution import cancellation_event, check_cancelled, watch_process
 from clanker.logging import get_logger
 from clanker.tools.bash_tools import _get_clean_env, run_safety_checks
 
@@ -68,6 +69,7 @@ class Job:
     _reader_task: asyncio.Task[None] | None = None
     _timeout_handle: asyncio.TimerHandle | None = None
     _done: asyncio.Event | None = None  # set when state leaves "running"
+    _owner_stop: threading.Event | None = None
 
     def append_chunk(self, data: bytes) -> None:
         self.bytes_written += len(data)
@@ -163,6 +165,7 @@ class JobManager:
     async def _launch_coro(
         self, command: str, timeout: int | None, name: str | None
     ) -> Job:
+        check_cancelled()
         job_id = self._new_id()
         while job_id in self._jobs:
             job_id = self._new_id()
@@ -185,8 +188,10 @@ class JobManager:
             process=process,
             started_at=time.time(),
             name=self._sanitize_name(name, command),
+            _owner_stop=cancellation_event(),
         )
         job._done = asyncio.Event()
+        watch_process(process, lambda: setattr(job, "state", "killed"))
 
         loop = asyncio.get_running_loop()
         job._reader_task = loop.create_task(self._drain(job))
@@ -227,6 +232,7 @@ class JobManager:
             process=process,
             started_at=started_at,
             name=self._sanitize_name(name, command),
+            _owner_stop=cancellation_event(),
         )
         job._done = asyncio.Event()
         if captured:
@@ -263,7 +269,10 @@ class JobManager:
         job.returncode = rc
         job.ended_at = time.time()
         if job.state == "running":
-            job.state = "exited" if rc == 0 else "failed"
+            job.state = (
+                "killed" if job._owner_stop is not None and job._owner_stop.is_set()
+                else "exited" if rc == 0 else "failed"
+            )
 
         if job._timeout_handle is not None:
             job._timeout_handle.cancel()
