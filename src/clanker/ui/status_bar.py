@@ -32,13 +32,6 @@ class StatusBar(Horizontal):
         visibility: visible;
     }
 
-    #status-session {
-        color: rgb(180,255,60);
-        text-style: bold;
-        width: auto;
-        margin-right: 1;
-    }
-
     #status-model {
         color: rgb(0,240,240);
         text-style: bold;
@@ -80,14 +73,13 @@ class StatusBar(Horizontal):
         self._render_subagent_info()
 
     def compose(self) -> ComposeResult:
-        yield Label("", id="status-session", markup=False)
         yield Label("", id="status-subagents")
         yield Label("", id="status-tokens")
         yield Label("", id="status-model", markup=False)
 
     def _update_visibility(self) -> None:
         has_content = bool(
-            self.session_id or self.model_name or self.token_info or self.subagent_info
+            self.model_name or self.token_info or self.subagent_info
         )
         if has_content:
             self.add_class("visible")
@@ -100,9 +92,7 @@ class StatusBar(Horizontal):
         self._update_visibility()
 
     def watch_session_id(self, value: str) -> None:
-        with suppress(Exception):
-            self.query_one("#status-session", Label).update(f"Session ID: {value}" if value else "")
-        self._update_visibility()
+        pass
 
     def watch_token_info(self, value: str) -> None:
         with suppress(Exception):
@@ -183,13 +173,19 @@ class StatusBar(Horizontal):
 
 
 class WorkspaceStatus(Horizontal):
-    """One bottom line for help/loading on the left and context on the right."""
+    """One bottom line for session/help/loading on the left and context on the right."""
 
     DEFAULT_CSS = """
     WorkspaceStatus {
         height: 1;
         padding: 0 1;
         color: rgb(140,140,140);
+    }
+    WorkspaceStatus #status-session {
+        color: rgb(180,255,60);
+        text-style: bold;
+        width: auto;
+        margin-right: 2;
     }
     WorkspaceStatus #workspace-hint {
         width: 1fr;
@@ -206,11 +202,24 @@ class WorkspaceStatus(Horizontal):
     """
 
     def compose(self) -> ComposeResult:
+        yield Label("", id="status-session", markup=False)
         yield Label("F1 Help", id="workspace-hint", markup=False)
         yield Label("", id="status-context")
 
+    def set_session_id(self, session_id: str) -> None:
+        with suppress(Exception):
+            label = self.query_one("#status-session", Label)
+            if session_id:
+                label.update(f"Session ID: {session_id}")
+                label.display = True
+            else:
+                label.update("")
+                label.display = False
+
     def set_loading(self, message: str) -> None:
-        self.query_one("#workspace-hint", Label).update(message or "F1 Help")
+        with suppress(Exception):
+            self.query_one("#workspace-hint", Label).update(message or "F1 Help")
 
     def set_context(self, context: str) -> None:
-        self.query_one("#status-context", Label).update(context)
+        with suppress(Exception):
+            self.query_one("#status-context", Label).update(context)

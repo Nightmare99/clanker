@@ -496,7 +496,6 @@ class PromptInput(Input):
     def _accept_completion(self, completion: str) -> None:
         """Replace the pre-cursor text with the completion, restore cursor offset."""
         cursor = self._tab_cursor_offset
-        before = self.value[:cursor]
         after = self.value[cursor:]
         self.value = completion + after
         self.cursor_position = len(completion) + len(after)
@@ -873,12 +872,12 @@ class ClankerApp(App):
             status_bar.model_name = model.name if model else ""
 
     def _refresh_session_id(self) -> None:
-        try:
-            status_bar = self.get_status_bar()
-        except Exception:
-            return
         manager = self._session_manager
-        status_bar.session_id = manager.session_id if manager else ""
+        sid = manager.session_id if manager else ""
+        with suppress(Exception):
+            self.get_status_bar().session_id = sid
+        with suppress(Exception):
+            self.query_one(WorkspaceStatus).set_session_id(sid)
 
     def get_todo_panel(self) -> TodoPanel:
         return self.query_one("#todo-panel", TodoPanel)
