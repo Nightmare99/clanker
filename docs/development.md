@@ -127,6 +127,37 @@ The suspension also ends on cancellation or removal of the message.
 `tests/test_text_selection.py` reproduces the stale-hit crash and exercises
 selection blocking during reveals, drag/copy after completion, and removal.
 
+The TUI accepts Command shortcuts as Textual `super` bindings when the terminal
+forwards them. `ui/keyboard.py` shares platform detection and editing shortcut
+labels. On macOS Command+C only copies and Ctrl+C always interrupts, including
+when text is selected. Priority bindings consume inherited Ctrl editing aliases
+on macOS before Input/TextArea or modal bindings can handle them; other platforms
+skip that guard and retain their Ctrl behavior.
+App-level edit bindings delegate to the focused Input/TextArea so prompt and
+composer paste handling stays intact. The composer also accepts Command+Enter
+and Command+Shift+Z. Terminal-owned clipboard shortcuts and bracketed paste
+continue through the normal terminal path. Unix navigation/deletion shortcuts
+and Ctrl+D remain unchanged. `tests/test_keyboard_shortcuts.py` exercises both
+platform policies, selection copying, disabled aliases, image paste, and help.
+
+On every platform, completed text selections copy automatically without a
+copy shortcut. Screen `TextSelected` events and focused editor
+selection changes schedule a copy after refresh; active drags, reveals, empty
+selections, and password inputs are excluded. This keeps mouse controls active
+and works when iTerm2 intercepts Command+C. Tests exercise the selection event
+path under both platform shortcut policies without injecting a copy key or
+writing the developer's clipboard, and verify terminal OSC 52 clipboard writes.
+Copies show a 1.5-second character-count toast. Informational toasts use the
+theme's dark surface, foreground text, and lime success border with compact
+padding. Native macOS copies confirm only after the clipboard worker succeeds.
+
+`ui/native_clipboard.py` writes local macOS copies through `pbcopy` in a
+cancellable worker with a timeout, alongside Textual's internal clipboard
+and OSC 52 write. It skips headless apps and SSH sessions; it never places
+clipboard text in command arguments or logs. Tests mock subprocesses rather
+than changing the developer's clipboard. iTerm2 can intercept Command keys;
+copy-on-selection needs no terminal key mapping.
+
 ## Safety Features
 
 Clanker includes several safety features:

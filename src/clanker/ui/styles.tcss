@@ -5,6 +5,16 @@ Screen {
     color: rgb(200, 200, 200);
 }
 
+/* Compact feedback for copies and other informational notifications. */
+Toast.-information {
+    width: auto;
+    max-width: 50%;
+    padding: 0 1;
+    background: $surface;
+    color: $foreground;
+    border-left: outer $success;
+}
+
 #workspace-shortcuts {
     height: 1;
     color: rgb(140,140,140);

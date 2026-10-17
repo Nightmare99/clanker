@@ -10,9 +10,11 @@ import re
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from weakref import WeakSet, ref
 
 from rich.text import Text
 from textual import events
+from textual.actions import SkipAction
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -20,6 +22,7 @@ from textual.theme import Theme
 from textual.widgets import Input, Label, Static, TextArea
 
 from clanker.changes import ChangeJournal, active_journal, change_turn
+from clanker.ui import keyboard, native_clipboard
 from clanker.ui.changes_panel import ChangesScreen
 from clanker.ui.chat_log import ChatLog, MessageType
 from clanker.ui.clipboard_image import (
@@ -693,7 +696,19 @@ class ClankerApp(App):
         # Priority so this always wins over Input's own "ctrl+c: copy selection
         # within the field" binding and Screen's silent built-in copy binding —
         # both would otherwise pre-empt this action with no user feedback.
-        Binding("ctrl+c", "copy_or_interrupt", "Copy/Interrupt", show=True, priority=True),
+        Binding("ctrl+c", "copy_or_interrupt", "Interrupt" if keyboard.is_macos() else "Copy/Interrupt", show=True, priority=True),
+        # Consume inherited editing bindings on macOS before Input/TextArea or
+        # modal screens can handle them. Unix navigation/deletion keys stay put.
+        Binding(
+            "ctrl+x,ctrl+v,ctrl+z,ctrl+y,ctrl+shift+z,ctrl+shift+a,ctrl+enter",
+            "ignore_control_edit", show=False, priority=True,
+        ),
+        # Command is reported as "super" by terminals with extended keyboard
+        # support. Copy must never inherit Ctrl+C's interrupt fallback.
+        Binding("super+c", "copy_selection", "Copy", show=False, priority=True),
+        Binding("super+x", "edit_focused('cut')", "Cut", show=False, priority=True),
+        Binding("super+v", "edit_focused('paste')", "Paste", show=False, priority=True),
+        Binding("super+a", "edit_focused('select_all')", "Select all", show=False, priority=True),
         Binding("ctrl+d", "quit", "Quit", show=True),
         Binding("f1", "show_shortcut_help", "Help", show=True),
         Binding("ctrl+up,f5", "compose_message", "Multiline message", show=True),
@@ -723,6 +738,8 @@ class ClankerApp(App):
         self._model_info = model_info
         self._update_info = update_info
         self._processing = False
+        self._selection_copy_pending = False
+        self._selection_copy_inputs: WeakSet[Input] = WeakSet()
         self._compacting = False
         self._compaction_task: asyncio.Task | None = None
         self._input_history: list[PromptDraft] = self._load_history()
@@ -881,22 +898,110 @@ class ClankerApp(App):
         prompt_input.set_history(self._input_history)
 
     def action_copy_or_interrupt(self) -> None:
-        """Copy selected text if any, otherwise interrupt the agent.
+        """Interrupt on macOS; elsewhere copy selected text before interrupting.
 
         Checks the focused Input's own in-field selection first (its own
         cursor-based selection system), then the screen-wide mouse-drag
         selection, before falling back to interrupting the agent.
         """
+        if keyboard.is_macos() or not self._copy_selection():
+            self.action_interrupt()
+
+    def action_ignore_control_edit(self) -> None:
+        """On macOS conventional editing uses Command, not Control aliases."""
+        if not keyboard.is_macos():
+            raise SkipAction()
+
+    def action_copy_selection(self) -> None:
+        """Command+C copies a selection and never interrupts an operation."""
+        self._copy_selection()
+
+    def on_text_selected(self, event: events.TextSelected) -> None:
+        # Textual sends this after mouse release. Keep the completed selection
+        # on the clipboard without depending on a terminal's copy shortcut.
+        self._schedule_selection_copy()
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        widget = event.widget
+        if isinstance(widget, Input) and widget not in self._selection_copy_inputs:
+            self._selection_copy_inputs.add(widget)
+            widget_ref = ref(widget)
+
+            def selection_changed() -> None:
+                if self.focused is widget_ref():
+                    self._schedule_selection_copy()
+
+            self.watch(widget, "selection", selection_changed, init=False)
+
+    def on_text_area_selection_changed(self, event: TextArea.SelectionChanged) -> None:
+        if event.text_area is self.focused:
+            self._schedule_selection_copy()
+
+    def _schedule_selection_copy(self) -> None:
+        if not self._selection_copy_pending:
+            self._selection_copy_pending = True
+            # Let Input/TextArea finish handling mouse release or selection
+            # changes before reading the final range. Coalesce related events.
+            self.call_after_refresh(self._copy_completed_selection)
+
+    def _copy_completed_selection(self) -> None:
+        self._selection_copy_pending = False
+        if (
+            self.mouse_captured is not None
+            or self.screen._selecting
+            or not self.screen.allow_select
+            or (isinstance(self.focused, Input) and self.focused.password)
+        ):
+            return
+        selected_text = self.screen.get_selected_text() or self._selected_text()
+        if selected_text:
+            self.copy_to_clipboard(selected_text)
+
+    def copy_to_clipboard(self, text: str) -> None:
+        """Keep Textual/OSC 52 support and also reach the local Mac pasteboard."""
+        super().copy_to_clipboard(text)
+        if self._driver is not None and not self.is_headless and native_clipboard.is_local_macos():
+            self.run_worker(
+                self._copy_native_clipboard(text), group="clipboard-copy", exclusive=True,
+            )
+        elif text:
+            self._notify_copied(text)
+
+    async def _copy_native_clipboard(self, text: str) -> None:
+        if await native_clipboard.write_text(text):
+            if text and text == self.clipboard:
+                self._notify_copied(text)
+        else:
+            self.notify(
+                "Native clipboard copy failed; terminal clipboard copy was also requested.",
+                severity="warning",
+            )
+
+    def _notify_copied(self, text: str) -> None:
+        count = len(text)
+        unit = "character" if count == 1 else "characters"
+        self.notify(
+            f"Copied {count} {unit}", severity="information", timeout=1.5, markup=False,
+        )
+
+    def _selected_text(self) -> str | None:
         focused = self.focused
         input_selection = (
             focused.selected_text if isinstance(focused, (Input, TextArea)) else None
         )
-        selected_text = input_selection or self.screen.get_selected_text()
+        return input_selection or self.screen.get_selected_text()
+
+    def _copy_selection(self) -> bool:
+        selected_text = self._selected_text()
         if selected_text:
             self.copy_to_clipboard(selected_text)
-            self.notify(f"Copied {len(selected_text)} characters", severity="information")
-        else:
-            self.action_interrupt()
+            return True
+        return False
+
+    async def action_edit_focused(self, action: str) -> None:
+        """Use the focused editor's actions, including its image-paste handling."""
+        if isinstance(self.focused, (Input, TextArea)):
+            await self.focused.run_action(action)
 
     def action_interrupt(self) -> None:
         from clanker.tools.subagent import stop_task

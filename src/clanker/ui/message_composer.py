@@ -10,12 +10,17 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Markdown, Static, TabbedContent, TabPane, TextArea
 
+from clanker.ui import keyboard
 from clanker.ui.clipboard_image import ClipboardImage, read_clipboard_image
 from clanker.ui.prompt_history import PromptDraft
 
 
 class ComposerEditor(TextArea):
     """Paste text normally; use the OS clipboard for image paste gestures."""
+
+    BINDINGS = [
+        Binding("shift+super+z", "redo", "Redo", show=False),
+    ]
 
     async def _on_paste(self, event: events.Paste) -> None:
         event.prevent_default()
@@ -51,7 +56,7 @@ class ComposerEditor(TextArea):
 class MessageComposer(ModalScreen[PromptDraft | None]):
     BINDINGS = [
         Binding("escape", "discard", "Discard", priority=True),
-        Binding("ctrl+enter", "send", "Send", priority=True),
+        Binding("ctrl+enter,super+enter", "send", "Send", priority=True),
     ]
 
     DEFAULT_CSS = """
@@ -84,7 +89,10 @@ class MessageComposer(ModalScreen[PromptDraft | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="composer"):
-            yield Static("Markdown message · Ctrl+Enter send · Esc discard", id="composer-title")
+            yield Static(
+                f"Markdown message · {keyboard.edit_label('Enter')} send · Esc discard",
+                id="composer-title",
+            )
             with TabbedContent():
                 with TabPane("Write", id="composer-write"):
                     yield ComposerEditor(

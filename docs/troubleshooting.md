@@ -1,5 +1,26 @@
 # Troubleshooting
 
+## Cmd+C Does Not Copy in iTerm2
+
+On every platform, Clanker copies text automatically when a selection finishes.
+Drag to select, release the mouse, then paste in another app. No custom key mapping,
+modifier, or separate mode is required. Keyboard selections in inputs and the
+composer also copy automatically. Selection remains disabled during a reveal.
+
+iTerm2 normally handles Cmd+C itself; Clanker does not need to receive it.
+A small **Copied N characters** toast confirms the copy after selection.
+On macOS, Ctrl+C remains interrupt-only even with a selection. If you added a custom
+Cmd+C mapping for an older Clanker version, it is no longer needed. Keep
+Cmd+V assigned to iTerm2's normal **Paste** action.
+
+If the selected text still cannot be pasted, check for a native clipboard
+failure warning. Local macOS sessions also write through `/usr/bin/pbcopy`,
+since some terminals cannot write the system clipboard through OSC 52.
+SSH sessions retain terminal
+clipboard copying to reach the client instead of the remote Mac's pasteboard.
+On Linux and Windows, copying uses terminal clipboard support (OSC 52), which
+must be supported and allowed by the terminal or multiplexer.
+
 ## Azure OpenAI Issues
 
 ### "AZURE_OPENAI_API_KEY not set"

@@ -110,7 +110,7 @@ async def test_selection_is_enabled_only_after_reveal(app, monkeypatch, remove_m
             assert selected and "Copy this" in selected
             clipboard = MagicMock()
             monkeypatch.setattr(app, "copy_to_clipboard", clipboard)
-            app.action_copy_or_interrupt()
+            app.action_copy_selection()
             clipboard.assert_called_once_with(selected)
 
 

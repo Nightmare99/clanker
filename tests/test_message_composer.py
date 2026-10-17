@@ -7,6 +7,7 @@ import pytest
 from textual import events
 from textual.widgets import Button, Markdown, TabbedContent, TextArea
 
+from clanker.ui import keyboard
 from clanker.ui.app import ClankerApp
 from clanker.ui.clipboard_image import ClipboardImage
 from clanker.ui.console import Console
@@ -38,7 +39,7 @@ async def test_discard_preserves_original_draft_and_paste(discard):
         assert app._input_queue.empty()
 
 
-@pytest.mark.parametrize("send", ["ctrl+enter", "button"])
+@pytest.mark.parametrize("send", ["keyboard", "button"])
 async def test_markdown_preview_and_send_queue_exact_multiline_text(send):
     app = ClankerApp(Console())
     app._play_hero = AsyncMock()
@@ -50,7 +51,7 @@ async def test_markdown_preview_and_send_queue_exact_multiline_text(send):
         composer = app.screen
         assert isinstance(composer, MessageComposer)
         assert composer.query_one("#composer-send", Button).disabled
-        await pilot.press("ctrl+enter")
+        await pilot.press(keyboard.edit_key("enter"))
         assert app.screen is composer
         editor = composer.query_one(TextArea)
         markdown = "# Request\n\n- **Keep formatting**\n\n```python\nprint('hello')\n```"
@@ -62,7 +63,7 @@ async def test_markdown_preview_and_send_queue_exact_multiline_text(send):
         if send == "button":
             await pilot.click("#composer-send")
         else:
-            await pilot.press("ctrl+enter")
+            await pilot.press(keyboard.edit_key("enter"))
         assert not isinstance(app.screen, MessageComposer)
         assert app._input_queue.get_nowait() == markdown
         assert app.get_prompt_input().value == ""
@@ -94,12 +95,12 @@ async def test_composer_image_paste_send_recall_and_restart(monkeypatch, tmp_pat
         await pilot.pause()
         # A stale in-app clipboard must not hide a newly copied OS image.
         app.copy_to_clipboard("stale text")
-        await pilot.press("ctrl+v")
+        await pilot.press(keyboard.edit_key("v"))
         await app.screen.workers.wait_for_complete()
         await pilot.pause()
         expected = "# Request\n\nLook at this:\n[Image #1]"
         assert editor.text == expected
-        await pilot.press("ctrl+enter")
+        await pilot.press(keyboard.edit_key("enter"))
         await pilot.pause()
         app._run_agent.assert_awaited_once_with(expected, [image])
         await pilot.press("up")
@@ -142,11 +143,11 @@ async def test_new_images_discarded_and_deleted_markers_not_sent(monkeypatch):
         editor = app.screen.query_one(TextArea)
         editor.load_text("Replacement: ")
         editor.move_cursor((0, len(editor.text)))
-        await pilot.press("ctrl+v")
+        await pilot.press(keyboard.edit_key("v"))
         await app.screen.workers.wait_for_complete()
         await pilot.pause()
         assert editor.text == "Replacement: [Image #2]"
-        await pilot.press("ctrl+enter")
+        await pilot.press(keyboard.edit_key("enter"))
         await pilot.pause()
         app._run_agent.assert_awaited_once_with("Replacement: [Image #2]", [image])
 

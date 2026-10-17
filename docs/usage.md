@@ -157,9 +157,9 @@ uses different storage. The same flow is available with numbered pages in
 | `↑` / `↓` | Navigate input history, or — once the completion menu has keyboard control (after pressing `Tab`) — move the highlight up/down within it. |
 | `Alt+↑` / `Alt+↓` | Navigate input history even while the completion menu has keyboard control. |
 | `Enter` | Submit the input, or — with the completion menu engaged — accept the highlighted match. |
-| `Ctrl+C` | Copy the current text selection, if any (in-field or screen-wide). If nothing is selected, interrupts the agent instead. |
+| `Ctrl+C` | On macOS, always interrupt the agent. On other platforms, copy selected text if any; otherwise interrupt. |
 | `Ctrl+D` | Quit Clanker. |
-| `Ctrl+V` / paste | Paste text or an image — see [Pasting](#pasting) below. |
+| `Cmd+V` (macOS) / `Ctrl+V` (other platforms) / terminal paste | Paste text or an image — see [Pasting](#pasting) below. |
 | `F1` | Open the keyboard shortcut help popup. |
 | `F2` | Open the **Subagents** panel — view past and in-flight subagent runs, their prompts, status, and tool call history for the session (see [Agents → Progress and history](agents.md#progress-and-history)). |
 | `F3` | Open the **History** panel — the full conversation so far, independent of how much the chat log has trimmed from view (see [TUI Performance](configuration.md#tui-performance)) and populated even after `/restore`, when the restored turns aren't replayed into the chat log. |
@@ -168,14 +168,43 @@ uses different storage. The same flow is available with numbered pages in
 | `F6` | Open **Memories** to search, inspect, and manage stored memories. Also available as `/memories`. |
 | `Esc` | Cancel an open menu or approval prompt. |
 
+On every platform, completing a text selection automatically copies it to the
+clipboard. Drag to select, release, then paste—no copy shortcut or extra mode
+is required. A brief, themed toast confirms **Copied N characters**.
+Input and composer selections also copy automatically, including
+keyboard selections; password inputs are excluded. Mouse controls remain available.
+
+On macOS, standard editing actions use Command instead of Ctrl when the
+terminal forwards the shortcuts. Copy-on-selection works with iTerm2's default
+settings even when it intercepts Cmd+C, and Ctrl+C always interrupts.
+
+| Key | Action |
+|-----|--------|
+| `Cmd+C` | Explicitly copy selected text if the terminal forwards the key. Selections also copy automatically, so iTerm2 can retain its default shortcut. Never interrupts the agent. |
+| `Cmd+X` / `Cmd+V` | Cut / paste in the focused input or composer, using the existing text and image paste handling. |
+| `Cmd+A` | Select all text in the focused input or composer. |
+| `Cmd+Z` / `Cmd+Shift+Z` | Undo / redo in the multiline composer. |
+| `Cmd+Enter` | Send from the multiline composer (`Ctrl+Enter` on other platforms). |
+
+Terminals may handle `Cmd+C` and `Cmd+V` themselves rather than forwarding
+the keys to Clanker. Terminal paste still delivers text through the normal
+paste path. Other Command shortcuts require a terminal that forwards them
+with extended keyboard support, or a terminal key mapping. On macOS, Ctrl
+aliases for copy, cut, paste, select-all, undo, redo, and composer send are
+disabled. `Ctrl+C` always interrupts, even with a selection. `Ctrl+D` still
+quits, and Unix cursor movement/deletion shortcuts (such as `Ctrl+A` to move
+to the start of the line), `Ctrl+↑`, and function keys keep their existing
+behavior. Other platforms retain their Ctrl shortcuts.
+
 Use `/tasks` as an alternative to F2. Task history stays available for the entire
 session. The task panel supports follow-up messages and stopping an individual
-task; Ctrl+C without a selection stops the parent and its managed tasks.
+task; Ctrl+C stops the parent and its managed tasks (on other platforms,
+clear any selection first).
 
 Screen text selection is temporarily disabled while response text is being
 revealed. The typewriter animation continues normally; selection becomes
 available automatically after all active reveals finish. Then drag to select
-text and press Ctrl+C to copy it.
+text: it copies automatically when you release the mouse on every platform.
 
 ### Reviewing changes
 
