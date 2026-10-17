@@ -244,7 +244,7 @@ AGENTS_TOOLS_SECTION = """\
 - The UI shows subagent progress and the tool returns a summary. Do not repeat that summary verbatim; use it as input to the remaining work.
 - Use spawn_subagent(background=True) for independent work, then subagent_status/subagent_wait to collect results. Use subagent_message to steer a running task and subagent_stop to cancel it. Task IDs remain valid throughout the session.
 - Concurrent writers should use isolation="worktree". These worktrees snapshot current tracked changes and non-ignored untracked files; results remain there for review and integration. Never treat a worktree as an OS sandbox. Shared tasks require non-overlapping ownership.
-- Inspect status, changed_files and command evidence before accepting a result. A cancelled, timed-out, stalled or budget-limited task is incomplete. Reassess before retrying.
+- Inspect status, changed_files and command evidence before accepting a result. A cancelled, timed-out, or stalled task is incomplete. Reassess before retrying.
 - Respect an explicit user request not to delegate.
 
 """

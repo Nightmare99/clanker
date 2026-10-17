@@ -56,7 +56,7 @@ class SubagentRun:
     started_at: float = field(default_factory=time.monotonic)
     ended_at: float | None = None
     timeout_seconds: int = 900
-    max_tokens: int = 200_000
+    max_tokens: int | None = None
     model: str | None = None
     working_directory: str = ""
     changed_files: list[str] = field(default_factory=list)
@@ -254,7 +254,10 @@ class SubagentHistoryScreen(ModalScreen[None]):
         text.append(f"{run.status}\n\n", style=_STATUS_STYLE.get(run.status, "white"))
         text.append(f"Task {run.task_id} · {run.elapsed_seconds:.0f}s / {run.timeout_seconds}s\n", style="dim")
         text.append(f"Model: {run.model or 'session default'}\n", style="dim")
-        text.append(f"Tokens: {run.input_tokens + run.output_tokens:,} / {run.max_tokens:,}\n", style="dim")
+        if run.max_tokens:
+            text.append(f"Tokens: {run.input_tokens + run.output_tokens:,} / {run.max_tokens:,}\n", style="dim")
+        else:
+            text.append(f"Tokens: {run.input_tokens + run.output_tokens:,}\n", style="dim")
         if run.working_directory:
             text.append(f"Workspace: {run.working_directory}\n", style="dim")
         text.append("\n")

@@ -128,7 +128,7 @@ class SubagentSettings(BaseModel):
 
     max_concurrent: int = Field(default=3, ge=1, le=16)
     timeout_seconds: int = Field(default=900, ge=1, le=86400)
-    max_tokens: int = Field(default=200_000, ge=1)
+    max_tokens: int | None = Field(default=None)
     repeated_failure_limit: int = Field(default=3, ge=2, le=20)
 
 
@@ -242,7 +242,6 @@ agent:
 subagents:
   max_concurrent: 3
   timeout_seconds: 900
-  max_tokens: 200000
   repeated_failure_limit: 3
 
 # Tool feature flags — disable categories you don't want the agent to use.

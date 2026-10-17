@@ -110,7 +110,7 @@ async def test_timeout(managed):
 
 
 @pytest.mark.asyncio
-async def test_token_budget_and_cancelled_status(managed):
+async def test_token_usage_tracking_without_budget_cancellation(managed):
     async def stream(**kwargs):
         kwargs["event_callback"](
             {
@@ -123,14 +123,15 @@ async def test_token_budget_and_cancelled_status(managed):
                 },
             }
         )
-        return StreamResult(response="Should not finish")
+        return StreamResult(response="Finished")
 
     with patch("clanker.ui.streaming.stream_agent_response_async", side_effect=stream):
         result = await start(max_tokens=10)
         result = await wait(result["task_id"])
-        assert result["status"] == "budget_exceeded"
+        assert result["status"] == "success"
         assert result["input_tokens"] == 5
-        assert not result["success"]
+        assert result["output_tokens"] == 5
+        assert result["success"]
 
 
 @pytest.mark.asyncio

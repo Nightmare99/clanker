@@ -1,4 +1,4 @@
-"""Managed subagent tasks with live status, follow-ups, budgets and cancellation."""
+"""Managed subagent tasks with live status, follow-ups, and cancellation."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from typing import Any, Literal
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import BaseTool, tool
 from langgraph.checkpoint.memory import MemorySaver
+from pydantic import BaseModel, Field
 
 from clanker.agents import load_agent as load_agent_config
 from clanker.changes import ChangeJournal, active_journal, change_actor
@@ -336,8 +337,6 @@ def _event_handler(task: ManagedTask, failure_limit: int) -> Callable[[dict[str,
             details = usage.get("input_token_details") or {}
             task.cache_read += details.get("cache_read", 0)
             task.cache_creation += details.get("cache_creation", 0)
-            if run.input_tokens + run.output_tokens >= run.max_tokens:
-                task.cancel("budget_exceeded")
         if task.stop.is_set():
             raise asyncio.CancelledError
 
@@ -523,7 +522,24 @@ def _run(
                 )
 
 
-@tool
+class SpawnSubagentArgs(BaseModel):
+    agent_name: str = Field(description="Name of the agent to spawn.")
+    prompt: str = Field(description="Task prompt or instructions for the subagent.")
+    background: bool = Field(
+        default=False,
+        description="Set True to receive a task_id immediately and continue other work.",
+    )
+    isolation: Literal["shared", "worktree"] = Field(
+        default="shared",
+        description="Filesystem isolation: 'shared' uses the current workspace, 'worktree' snapshots to an isolated Git worktree.",
+    )
+    timeout_seconds: int | None = Field(
+        default=None,
+        description="Timeout in seconds for the task.",
+    )
+
+
+@tool(args_schema=SpawnSubagentArgs)
 async def spawn_subagent(
     agent_name: str,
     prompt: str,
@@ -531,6 +547,7 @@ async def spawn_subagent(
     isolation: Literal["shared", "worktree"] = "shared",
     timeout_seconds: int | None = None,
     max_tokens: int | None = None,
+    **kwargs: Any,
 ) -> dict[str, Any]:
     """Start a managed task using a configured agent.
 
@@ -539,8 +556,7 @@ async def spawn_subagent(
     for concurrent writers: snapshots the repository's current changes into a
     separate retained Git worktree. The parent reviews and integrates its files.
     Shared tasks must have non-overlapping edits. Worktrees separate files, not
-    OS permissions. Token budgets are checked after each model response and may
-    overshoot by one response. Time limits start when the task leaves the queue.
+    OS permissions. Time limits start when the task leaves the queue.
     """
     from clanker.ui.streaming import get_active_console
 
@@ -552,9 +568,8 @@ async def spawn_subagent(
     timeout_seconds = (
         timeout_seconds if timeout_seconds is not None else settings.subagents.timeout_seconds
     )
-    max_tokens = max_tokens if max_tokens is not None else settings.subagents.max_tokens
-    if timeout_seconds <= 0 or max_tokens <= 0:
-        return {"success": False, "error": "Time and token budgets must be positive."}
+    if timeout_seconds is not None and timeout_seconds <= 0:
+        return {"success": False, "error": "Timeout must be positive."}
     parent_console = get_active_console()
     app = getattr(parent_console, "_textual_app", None)
     parent_model = agent_config.model
@@ -564,12 +579,17 @@ async def spawn_subagent(
             sm_model = getattr(session_manager, "model_name", None)
             if isinstance(sm_model, str):
                 parent_model = sm_model
+    effective_timeout = (
+        min(timeout_seconds, settings.subagents.timeout_seconds)
+        if timeout_seconds is not None and settings.subagents.timeout_seconds is not None
+        else (timeout_seconds or settings.subagents.timeout_seconds)
+    )
     run = SubagentRun(
         agent_name=agent_name,
         prompt=prompt,
         status="queued",
-        timeout_seconds=min(timeout_seconds, settings.subagents.timeout_seconds),
-        max_tokens=min(max_tokens, settings.subagents.max_tokens),
+        timeout_seconds=effective_timeout,
+        max_tokens=max_tokens,
         working_directory=root,
         model=parent_model,
     )
@@ -598,7 +618,7 @@ async def spawn_subagent(
 
 @tool
 def subagent_status(task_id: str | None = None) -> dict[str, Any]:
-    """Get a task's result, evidence and budgets, or list all session tasks."""
+    """Get a task's result, evidence, and status, or list all session tasks."""
     with _lock:
         if task_id is None:
             return {"tasks": [t.result() for t in _tasks.values()]}
