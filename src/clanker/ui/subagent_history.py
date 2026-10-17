@@ -220,7 +220,12 @@ class SubagentHistoryScreen(ModalScreen[None]):
         text = Text()
         text.append(f"{self._status_icon(run.status)} ", style=_STATUS_STYLE.get(run.status, "white"))
         text.append(run.agent_name, style="bold white")
-        text.append(f"\n{run.status} · {len(run.tool_calls)} calls · {run.elapsed_seconds:.0f}s", style="dim")
+        total_tokens = run.input_tokens + run.output_tokens
+        tokens_part = f"{total_tokens:,} tok · " if total_tokens else ""
+        text.append(
+            f"\n{run.status} · {len(run.tool_calls)} calls · {tokens_part}{run.elapsed_seconds:.0f}s",
+            style="dim",
+        )
         return text
 
     def _tool_output_summary(self, tc: SubagentToolCall) -> str:
@@ -254,10 +259,12 @@ class SubagentHistoryScreen(ModalScreen[None]):
         text.append(f"{run.status}\n\n", style=_STATUS_STYLE.get(run.status, "white"))
         text.append(f"Task {run.task_id} · {run.elapsed_seconds:.0f}s / {run.timeout_seconds}s\n", style="dim")
         text.append(f"Model: {run.model or 'session default'}\n", style="dim")
+        tokens_str = f"Task tokens: {run.input_tokens + run.output_tokens:,} ({run.input_tokens:,} in · {run.output_tokens:,} out)"
         if run.max_tokens:
-            text.append(f"Tokens: {run.input_tokens + run.output_tokens:,} / {run.max_tokens:,}\n", style="dim")
-        else:
-            text.append(f"Tokens: {run.input_tokens + run.output_tokens:,}\n", style="dim")
+            tokens_str += f" / {run.max_tokens:,}"
+        if run.cost_usd is not None:
+            tokens_str += f" · ${run.cost_usd:.4f}"
+        text.append(f"{tokens_str}\n", style="dim")
         if run.working_directory:
             text.append(f"Workspace: {run.working_directory}\n", style="dim")
         text.append("\n")

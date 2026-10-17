@@ -337,6 +337,14 @@ def _event_handler(task: ManagedTask, failure_limit: int) -> Callable[[dict[str,
             details = usage.get("input_token_details") or {}
             task.cache_read += details.get("cache_read", 0)
             task.cache_creation += details.get("cache_creation", 0)
+            with contextlib.suppress(Exception):
+                from clanker.config import get_default_model, get_model_by_name
+
+                model = (get_model_by_name(run.model) if run.model else None) or get_default_model()
+                if model:
+                    run.cost_usd = model.compute_cost(
+                        run.input_tokens, run.output_tokens, task.cache_read, task.cache_creation
+                    )
         if task.stop.is_set():
             raise asyncio.CancelledError
 

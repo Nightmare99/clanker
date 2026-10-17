@@ -168,3 +168,46 @@ class TestPrintTokenUsage:
         high = _render_to_ansi(lambda c: c.print_token_usage(10_000, 100, 10.0))
         low = _render_to_ansi(lambda c: c.print_token_usage(180_000, 100, 90.0))
         assert high.count("█") > low.count("█")
+
+
+class TestStatusBarTokenSeparation:
+    """Status bar shows main agent and subagent tokens separately."""
+
+    def test_status_bar_without_subagents(self) -> None:
+        from clanker.ui.status_bar import StatusBar
+
+        bar = StatusBar()
+        bar.set_token_usage(input_tokens=1_234, output_tokens=567, cost=0.005)
+        assert bar.token_info == "in:1,234  out:567  $0.0050"
+
+    def test_status_bar_with_subagents(self) -> None:
+        from clanker.ui.status_bar import StatusBar
+
+        bar = StatusBar()
+        bar.set_token_usage(
+            input_tokens=1_234,
+            output_tokens=567,
+            cost=0.005,
+            subagent_input_tokens=10_000,
+            subagent_output_tokens=500,
+            subagent_cost=0.02,
+        )
+        assert "main: in:1,234 out:567" in bar.token_info
+        assert "subagents: in:10,000 out:500" in bar.token_info
+        assert "$0.0250" in bar.token_info
+
+    def test_tracker_tracks_main_and_subagent_separately(self) -> None:
+        t = SessionTokenTracker(context_window=100_000)
+        t.add_turn(input_tokens=2_000, output_tokens=200, turn_cost=0.01)
+        assert t.main_input == 2_000
+        assert t.main_output == 200
+        assert t.main_cost_usd == 0.01
+
+        t.subagent_input += 5_000
+        t.subagent_output += 400
+        t.subagent_cost_usd = 0.03
+        t.total_cost_usd = (t.total_cost_usd or 0.0) + 0.03
+
+        assert t.main_input == 2_000
+        assert t.subagent_input == 5_000
+        assert t.total_cost_usd == 0.04

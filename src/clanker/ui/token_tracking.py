@@ -80,8 +80,15 @@ class SessionTokenTracker:
     # Cumulative input tokens (for subagent aggregation)
     total_input: int = 0
 
-    # Cumulative input tokens (for subagent aggregation)
-    total_input: int = 0
+    # Main agent breakdown
+    main_input: int = 0
+    main_output: int = 0
+    main_cost_usd: float | None = None
+
+    # Subagent breakdown
+    subagent_input: int = 0
+    subagent_output: int = 0
+    subagent_cost_usd: float | None = None
 
     # Cumulative cost across all turns (None when no pricing is configured)
     total_cost_usd: float | None = None
@@ -114,9 +121,12 @@ class SessionTokenTracker:
         # model will see on the NEXT turn (history + this response).
         self.current_context_tokens = input_tokens + output_tokens
         self.total_output += output_tokens
+        self.main_input = input_tokens
+        self.main_output += output_tokens
 
         # Accumulate session cost (stays None until at least one priced turn)
         if turn_cost is not None:
+            self.main_cost_usd = (self.main_cost_usd or 0.0) + turn_cost
             self.total_cost_usd = (self.total_cost_usd or 0.0) + turn_cost
 
         usage = TokenUsage(

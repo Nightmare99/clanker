@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
+
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.reactive import reactive
@@ -93,22 +95,26 @@ class StatusBar(Horizontal):
             self.remove_class("visible")
 
     def watch_model_name(self, value: str) -> None:
-        self.query_one("#status-model", Label).update(f"  {value}" if value else "")
+        with suppress(Exception):
+            self.query_one("#status-model", Label).update(f"  {value}" if value else "")
         self._update_visibility()
 
     def watch_session_id(self, value: str) -> None:
-        self.query_one("#status-session", Label).update(f"Session ID: {value}" if value else "")
+        with suppress(Exception):
+            self.query_one("#status-session", Label).update(f"Session ID: {value}" if value else "")
         self._update_visibility()
 
     def watch_token_info(self, value: str) -> None:
-        if value:
-            self.query_one("#status-tokens", Label).update(f"  {value}")
-        else:
-            self.query_one("#status-tokens", Label).update("")
+        with suppress(Exception):
+            if value:
+                self.query_one("#status-tokens", Label).update(f"  {value}")
+            else:
+                self.query_one("#status-tokens", Label).update("")
         self._update_visibility()
 
     def watch_subagent_info(self, value: str) -> None:
-        self.query_one("#status-subagents", Label).update(f"  {value}" if value else "")
+        with suppress(Exception):
+            self.query_one("#status-subagents", Label).update(f"  {value}" if value else "")
         self._update_visibility()
 
     def set_subagent_runs(self, running: int, total: int) -> None:
@@ -134,10 +140,22 @@ class StatusBar(Horizontal):
         output_tokens: int,
         context_remaining: float | None = None,
         cost: float | None = None,
+        subagent_input_tokens: int = 0,
+        subagent_output_tokens: int = 0,
+        subagent_cost: float | None = None,
     ) -> None:
-        parts = [f"in:{input_tokens:,}  out:{output_tokens:,}"]
-        if cost is not None:
-            parts.append(f"${cost:.4f}")
+        if subagent_input_tokens > 0 or subagent_output_tokens > 0:
+            parts = [
+                f"main: in:{input_tokens:,} out:{output_tokens:,}",
+                f"subagents: in:{subagent_input_tokens:,} out:{subagent_output_tokens:,}",
+            ]
+        else:
+            parts = [f"in:{input_tokens:,}  out:{output_tokens:,}"]
+        total_cost = None
+        if cost is not None or subagent_cost is not None:
+            total_cost = (cost or 0.0) + (subagent_cost or 0.0)
+        if total_cost is not None:
+            parts.append(f"${total_cost:.4f}")
         self.token_info = "  ".join(parts)
 
         if context_remaining is not None:

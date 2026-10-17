@@ -1144,26 +1144,44 @@ class ClankerApp(App):
             else:
                 turn_cost = None
             # Accumulate token counts and cost
-            token_tracker.total_input += input_tokens
-            token_tracker.total_output += output_tokens
-            if turn_cost is not None:
-                token_tracker.total_cost_usd = (
-                    (token_tracker.total_cost_usd or 0.0) + turn_cost
-                )
-            # Refresh the status bar to show updated totals
-            try:
-                from clanker.config import get_settings
-                settings = get_settings()
-                if settings.output.show_token_usage:
-                    status_bar = self.get_status_bar()
-                    status_bar.set_token_usage(
-                        token_tracker.total_input,
-                        token_tracker.total_output,
-                        token_tracker.context_remaining_percent,
-                        token_tracker.total_cost_usd,
+            if token_tracker is not None:
+                token_tracker.total_input += input_tokens
+                token_tracker.total_output += output_tokens
+                token_tracker.subagent_input += input_tokens
+                token_tracker.subagent_output += output_tokens
+                if turn_cost is not None:
+                    token_tracker.subagent_cost_usd = (
+                        (token_tracker.subagent_cost_usd or 0.0) + turn_cost
                     )
-            except Exception:
-                pass
+                    token_tracker.total_cost_usd = (
+                        (token_tracker.total_cost_usd or 0.0) + turn_cost
+                    )
+            # Refresh the status bar to show updated totals
+            self._update_status_bar_tokens()
+        except Exception:
+            pass
+
+    def _update_status_bar_tokens(self) -> None:
+        """Refresh the status bar token display with main agent and subagents separated."""
+        try:
+            from clanker.config import get_settings
+
+            settings = get_settings()
+            if not settings.output.show_token_usage:
+                return
+            token_tracker = self._token_tracker
+            if token_tracker is None:
+                return
+            status_bar = self.get_status_bar()
+            status_bar.set_token_usage(
+                input_tokens=token_tracker.main_input,
+                output_tokens=token_tracker.main_output,
+                context_remaining=token_tracker.context_remaining_percent,
+                cost=token_tracker.main_cost_usd,
+                subagent_input_tokens=token_tracker.subagent_input,
+                subagent_output_tokens=token_tracker.subagent_output,
+                subagent_cost=token_tracker.subagent_cost_usd,
+            )
         except Exception:
             pass
 
@@ -1522,7 +1540,6 @@ class ClankerApp(App):
         working_dir = self._working_dir
 
         chat_log = self.get_chat_log()
-        status_bar = self.get_status_bar()
 
         user_msg = HumanMessage(content=_build_user_message_content(user_input, images or []))
         conversation_messages.append(user_msg)
@@ -1599,12 +1616,7 @@ class ClankerApp(App):
                 result.input_tokens > 0
                 or result.output_tokens > 0
             ) and settings.output.show_token_usage:
-                status_bar.set_token_usage(
-                    result.input_tokens,
-                    result.output_tokens,
-                    token_tracker.context_remaining_percent,
-                    token_tracker.total_cost_usd,
-                )
+                self._update_status_bar_tokens()
 
             chat_log.add_separator()
             logger.debug("Agent response completed successfully")
