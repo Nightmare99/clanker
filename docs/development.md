@@ -118,6 +118,15 @@ Tool protocol and encrypted reasoning remain in the live graph checkpoint.
 failure, import replay, and syncing a large imported transcript without another
 model call.
 
+The TUI uses `ui/selection_screen.py` as its default screen. Its hit-test guard
+rejects detached widgets left in a previous compositor frame, preventing
+Textual's selection handler from dereferencing a removed Markdown block's
+parent. Typewriter reveals suspend screen text selection without pausing the
+animation, and restore selection after the last overlapping reveal finishes.
+The suspension also ends on cancellation or removal of the message.
+`tests/test_text_selection.py` reproduces the stale-hit crash and exercises
+selection blocking during reveals, drag/copy after completion, and removal.
+
 ## Safety Features
 
 Clanker includes several safety features:

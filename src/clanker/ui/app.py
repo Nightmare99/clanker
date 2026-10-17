@@ -37,6 +37,7 @@ from clanker.ui.history_modal import HistoryScreen
 from clanker.ui.memory_screen import MemoryScreen
 from clanker.ui.message_composer import MessageComposer
 from clanker.ui.prompt_history import PromptDraft
+from clanker.ui.selection_screen import SelectionScreen
 from clanker.ui.shortcut_help import ShortcutHelpScreen
 from clanker.ui.status_bar import StatusBar, WorkspaceStatus
 from clanker.ui.subagent_history import SubagentHistoryScreen, SubagentRun
@@ -761,6 +762,9 @@ class ClankerApp(App):
             history_file.write_text(json.dumps([item.to_dict() for item in self._input_history[-500:]]))
         except OSError:
             pass
+
+    def get_default_screen(self) -> SelectionScreen:
+        return SelectionScreen(id="_default")
 
     def compose(self) -> ComposeResult:
         yield ChatLog(id="chat-log")

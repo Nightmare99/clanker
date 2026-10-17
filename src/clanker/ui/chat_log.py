@@ -16,6 +16,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Rule, Static
 
 from clanker.ui import tool_summary
+from clanker.ui.selection_screen import SelectionScreen
 
 
 class MessageType(StrEnum):
@@ -485,13 +486,24 @@ class ChatLog(VerticalScroll):
         tick_delay = 0.015
         chunk_size = max(1, -(-length // target_ticks))  # ceil(length / target_ticks)
 
-        revealed = 0
-        while revealed < length:
-            revealed = min(length, revealed + chunk_size)
-            with contextlib.suppress(Exception):
-                await widget.update(full_text[:revealed])
-            self._scroll_to_bottom()
-            await asyncio.sleep(tick_delay)
+        if not widget.is_attached:
+            return
+        screen = widget.screen
+        selection_guard = (
+            screen.suspend_selection()
+            if isinstance(screen, SelectionScreen)
+            else contextlib.nullcontext()
+        )
+        with selection_guard:
+            revealed = 0
+            while revealed < length:
+                if not widget.is_attached:
+                    return
+                revealed = min(length, revealed + chunk_size)
+                with contextlib.suppress(Exception):
+                    await widget.update(full_text[:revealed])
+                self._scroll_to_bottom()
+                await asyncio.sleep(tick_delay)
 
     def _notify_message(self, msg: Message) -> Markdown | Static:
         level_colors = {

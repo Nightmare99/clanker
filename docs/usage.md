@@ -172,6 +172,11 @@ Use `/tasks` as an alternative to F2. Task history stays available for the entir
 session. The task panel supports follow-up messages and stopping an individual
 task; Ctrl+C without a selection stops the parent and its managed tasks.
 
+Screen text selection is temporarily disabled while response text is being
+revealed. The typewriter animation continues normally; selection becomes
+available automatically after all active reveals finish. Then drag to select
+text and press Ctrl+C to copy it.
+
 ### Reviewing changes
 
 F4 lists each recorded edit with its file, turn and author. Select an edit to
