@@ -61,6 +61,7 @@ def _get_clean_env() -> dict[str, str]:
 
 class CommandRejectedError(Exception):
     """Raised when user rejects a bash command."""
+
     pass
 
 
@@ -222,7 +223,12 @@ def run_safety_checks(command: str) -> str | None:
 
 
 @tool
-def execute_shell(command: str, timeout: int | None = None) -> str:
+def execute_shell(
+    command: str,
+    timeout: int | None = None,
+    input: str | None = None,
+    pty: bool = False,
+) -> str:
     """Execute a bash command and return the output.
 
     Blocking commands that exceed `safety.foreground_promote_after_seconds`
@@ -236,6 +242,10 @@ def execute_shell(command: str, timeout: int | None = None) -> str:
         timeout: Optional hard timeout in seconds. Defaults to
             `safety.command_timeout`. Applied to the foreground wait;
             after auto-promotion, the job has no timeout (use `bash_kill`).
+        input: Optional string to write to standard input (stdin) of the command.
+        pty: If True, execute the command in a pseudo-terminal (PTY) on Unix,
+            making the subprocess perceive an interactive terminal (enables
+            colored output, TTY-dependent tools, and interactive line buffering).
 
     Returns:
         Command output (stdout and stderr combined), an auto-promotion
@@ -254,14 +264,26 @@ def execute_shell(command: str, timeout: int | None = None) -> str:
     timeout_seconds = timeout or (settings.safety.command_timeout // 1000)
     promote_after = settings.safety.foreground_promote_after_seconds
 
+    if pty:
+        if os.name != "nt":
+            return _run_pty_command(command, timeout_seconds, input_data=input)
+        logger.debug("PTY execution requested on Windows; falling back to standard pipes")
+
     if task_stop.get() is not None:
-        return _run_managed_command(command, timeout_seconds)
+        return _run_managed_command(command, timeout_seconds, input_data=input)
+
+    # When explicit input is provided, auto-promotion to background doesn't apply;
+    # execute synchronously to completion or timeout.
+    if input is not None:
+        if cancellation_event() is not None:
+            return _run_managed_command(command, timeout_seconds, input_data=input)
+        return _run_foreground_blocking(command, timeout_seconds, input_data=input)
 
     # If promotion is disabled, keep the simple blocking path.
     if promote_after <= 0:
         if cancellation_event() is not None:
-            return _run_managed_command(command, timeout_seconds)
-        return _run_foreground_blocking(command, timeout_seconds)
+            return _run_managed_command(command, timeout_seconds, input_data=input)
+        return _run_foreground_blocking(command, timeout_seconds, input_data=input)
 
     # Run the subprocess on the JobManager's dedicated loop so that, if
     # we hit the promotion threshold, the live process and its streams
@@ -275,6 +297,7 @@ def execute_shell(command: str, timeout: int | None = None) -> str:
                 command=command,
                 timeout_seconds=timeout_seconds,
                 promote_after=promote_after,
+                input_data=input,
             )
         )
     except Exception as exc:  # noqa: BLE001
@@ -282,7 +305,120 @@ def execute_shell(command: str, timeout: int | None = None) -> str:
         return f"Error: {type(exc).__name__}: {exc}"
 
 
-def _run_managed_command(command: str, timeout_seconds: int) -> str:
+def _run_pty_command(
+    command: str,
+    timeout_seconds: int,
+    input_data: str | None = None,
+) -> str:
+    """Execute a command attached to a pseudo-terminal (PTY) on POSIX systems."""
+    import errno
+    import fcntl
+    import pty
+    import select
+
+    check_cancelled()
+    stop = cancellation_event()
+    deadline = time.monotonic() + timeout_seconds
+
+    try:
+        master_fd, slave_fd = pty.openpty()
+    except Exception as e:
+        logger.warning("pty.openpty failed (%s); falling back to managed command", e)
+        return _run_managed_command(command, timeout_seconds, input_data=input_data)
+
+    output_chunks: list[bytes] = []
+    total_bytes = 0
+    reason = ""
+
+    with process_lifetime():
+        process = subprocess.Popen(
+            command,
+            shell=True,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            cwd=working_directory(),
+            env=_get_clean_env(),
+            start_new_session=True,
+        )
+        os.close(slave_fd)  # Slave must be closed in parent process for EOF to work
+
+        # Set master_fd to non-blocking
+        flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+        fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+        if input_data:
+            try:
+                os.write(master_fd, input_data.encode("utf-8"))
+            except OSError as e:
+                logger.debug("Failed writing initial input to PTY master: %s", e)
+
+        try:
+            while True:
+                if stop is not None and stop.is_set():
+                    reason = "Task cancelled"
+                    break
+                rem = deadline - time.monotonic()
+                if rem <= 0:
+                    reason = f"Command timed out after {timeout_seconds} seconds"
+                    break
+
+                try:
+                    r, _, _ = select.select([master_fd], [], [], min(0.1, max(0.01, rem)))
+                except (OSError, ValueError):
+                    break
+
+                if master_fd in r:
+                    try:
+                        chunk = os.read(master_fd, 4096)
+                        if not chunk:
+                            break
+                        total_bytes += len(chunk)
+                        if total_bytes <= MAX_OUTPUT_SIZE:
+                            output_chunks.append(chunk)
+                    except OSError as e:
+                        if e.errno in (errno.EIO, errno.EBADF):
+                            break
+                        break
+
+                if process.poll() is not None:
+                    # Drain remaining bytes
+                    while True:
+                        try:
+                            chunk = os.read(master_fd, 4096)
+                            if not chunk:
+                                break
+                            total_bytes += len(chunk)
+                            if total_bytes <= MAX_OUTPUT_SIZE:
+                                output_chunks.append(chunk)
+                        except OSError:
+                            break
+                    break
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(master_fd)
+            kill_process_tree(process.pid)
+            process.wait()
+
+    raw_output = b"".join(output_chunks)
+    text = raw_output[:MAX_OUTPUT_SIZE].decode("utf-8", errors="replace")
+    if total_bytes > MAX_OUTPUT_SIZE:
+        text += "\n... (output truncated)"
+
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    if reason:
+        return f"Error: {reason}\n{text}"
+    if process.returncode:
+        return f"Command exited with code {process.returncode}\n{text}"
+    return text.strip() or "Command completed successfully (no output)"
+
+
+def _run_managed_command(
+    command: str,
+    timeout_seconds: int,
+    input_data: str | None = None,
+) -> str:
     """Keep shell processes cancellable and owned by their turn or subagent."""
     import tempfile
 
@@ -292,9 +428,23 @@ def _run_managed_command(command: str, timeout_seconds: int) -> str:
     # Spool output to disk so a noisy command cannot exhaust process memory.
     with process_lifetime(), tempfile.TemporaryFile() as output:
         process = subprocess.Popen(
-            command, shell=True, stdout=output, stderr=subprocess.STDOUT,
-            cwd=working_directory(), env=_get_clean_env(), start_new_session=True,
+            command,
+            shell=True,
+            stdin=subprocess.PIPE if input_data is not None else None,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            cwd=working_directory(),
+            env=_get_clean_env(),
+            start_new_session=True,
         )
+        if input_data is not None and process.stdin:
+            try:
+                process.stdin.write(input_data.encode("utf-8"))
+                process.stdin.flush()
+                process.stdin.close()
+            except OSError:
+                pass
+
         reason = ""
         try:
             while process.poll() is None:
@@ -322,7 +472,11 @@ def _run_managed_command(command: str, timeout_seconds: int) -> str:
         return text or "Command completed successfully (no output)"
 
 
-def _run_foreground_blocking(command: str, timeout_seconds: int) -> str:
+def _run_foreground_blocking(
+    command: str,
+    timeout_seconds: int,
+    input_data: str | None = None,
+) -> str:
     """Simple subprocess.run path used when promotion is disabled."""
     try:
         result = subprocess.run(
@@ -330,6 +484,7 @@ def _run_foreground_blocking(command: str, timeout_seconds: int) -> str:
             shell=True,
             capture_output=True,
             text=True,
+            input=input_data,
             timeout=timeout_seconds,
             cwd=None,
             env=_get_clean_env(),
@@ -353,17 +508,13 @@ def _run_foreground_blocking(command: str, timeout_seconds: int) -> str:
         output = "".join(output_parts).strip()
 
         if result.returncode != 0:
-            logger.warning(
-                "Command exited with code %d: %s", result.returncode, command[:50]
-            )
+            logger.warning("Command exited with code %d: %s", result.returncode, command[:50])
             return f"Command exited with code {result.returncode}\n{output}"
 
         return output if output else "(no output)"
 
     except subprocess.TimeoutExpired:
-        logger.error(
-            "Command timed out after %d seconds: %s", timeout_seconds, command[:50]
-        )
+        logger.error("Command timed out after %d seconds: %s", timeout_seconds, command[:50])
         return f"Error: Command timed out after {timeout_seconds} seconds"
     except OSError as e:
         logger.error("Error executing command: %s", e)
@@ -377,6 +528,7 @@ async def _run_foreground_with_promotion(
     command: str,
     timeout_seconds: int,
     promote_after: int,
+    input_data: str | None = None,
 ) -> str:
     """Run a command in the foreground, auto-promoting to background if slow.
 
@@ -392,12 +544,21 @@ async def _run_foreground_with_promotion(
     started = time.time()
     process = await asyncio.create_subprocess_shell(
         command,
+        stdin=asyncio.subprocess.PIPE if input_data is not None else None,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         env=_get_clean_env(),
         start_new_session=True,
     )
     watch_process(process)
+
+    if input_data is not None and process.stdin:
+        try:
+            process.stdin.write(input_data.encode("utf-8"))
+            await process.stdin.drain()
+            process.stdin.close()
+        except OSError:
+            pass
 
     buffer = bytearray()
 
@@ -471,7 +632,6 @@ async def _run_foreground_with_promotion(
         logger.warning("Command exited with code %s: %s", rc, command[:50])
         return f"Command exited with code {rc}\n{output}"
     return output if output else "(no output)"
-
 
 
 async def bash_async(command: str, timeout: int | None = None) -> str:

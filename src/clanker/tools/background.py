@@ -87,9 +87,7 @@ class Job:
             "returncode": self.returncode,
             "started_at": self.started_at,
             "ended_at": self.ended_at,
-            "runtime_seconds": round(
-                (self.ended_at or time.time()) - self.started_at, 2
-            ),
+            "runtime_seconds": round((self.ended_at or time.time()) - self.started_at, 2),
             "bytes_captured": self.bytes_written,
             "log_path": str(self.log_path),
         }
@@ -108,9 +106,7 @@ class JobManager:
         _JOB_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
         self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(
-            target=self._run_loop, name="clanker-jobs", daemon=True
-        )
+        self._thread = threading.Thread(target=self._run_loop, name="clanker-jobs", daemon=True)
         self._thread.start()
 
     def _run_loop(self) -> None:
@@ -162,9 +158,7 @@ class JobManager:
     # Coroutines (run on the manager loop)
     # ------------------------------------------------------------------
 
-    async def _launch_coro(
-        self, command: str, timeout: int | None, name: str | None
-    ) -> Job:
+    async def _launch_coro(self, command: str, timeout: int | None, name: str | None) -> Job:
         check_cancelled()
         job_id = self._new_id()
         while job_id in self._jobs:
@@ -175,6 +169,7 @@ class JobManager:
 
         process = await asyncio.create_subprocess_shell(
             command,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             env=_get_clean_env(),
@@ -270,8 +265,11 @@ class JobManager:
         job.ended_at = time.time()
         if job.state == "running":
             job.state = (
-                "killed" if job._owner_stop is not None and job._owner_stop.is_set()
-                else "exited" if rc == 0 else "failed"
+                "killed"
+                if job._owner_stop is not None and job._owner_stop.is_set()
+                else "exited"
+                if rc == 0
+                else "failed"
             )
 
         if job._timeout_handle is not None:
@@ -341,16 +339,33 @@ class JobManager:
         except TimeoutError:
             return job, False
 
+    async def _write_stdin_coro(self, job_id: str, data: bytes) -> dict[str, Any]:
+        job = self.get(job_id)
+        if job is None:
+            return {"ok": False, "error": f"Unknown job_id '{job_id}'"}
+        if job.state != "running":
+            return {"ok": False, "error": f"Job {job_id} is not running (state={job.state})"}
+        if job.process.stdin is None or job.process.stdin.is_closing():
+            return {"ok": False, "error": f"Job {job_id} stdin is not open"}
+        try:
+            job.process.stdin.write(data)
+            await job.process.stdin.drain()
+            return {"ok": True, "job_id": job_id, "bytes_written": len(data)}
+        except Exception as e:
+            logger.warning("Failed writing to stdin of job %s: %s", job_id, e)
+            return {"ok": False, "error": f"Failed writing to stdin: {e}"}
+
+    def write_stdin(self, job_id: str, text: str, end: str = "\n") -> dict[str, Any]:
+        """Write text to a running background job's stdin."""
+        data = (text + end).encode("utf-8")
+        return self.run(self._write_stdin_coro(job_id, data))
+
     # ------------------------------------------------------------------
     # Public API (thread-safe; schedules on the manager loop)
     # ------------------------------------------------------------------
 
-    async def launch(
-        self, command: str, timeout: int | None, name: str | None = None
-    ) -> Job:
-        return await asyncio.wrap_future(
-            self.submit(self._launch_coro(command, timeout, name))
-        )
+    async def launch(self, command: str, timeout: int | None, name: str | None = None) -> Job:
+        return await asyncio.wrap_future(self.submit(self._launch_coro(command, timeout, name)))
 
     async def adopt(
         self,
@@ -367,12 +382,8 @@ class JobManager:
     async def kill(self, job_id: str) -> str:
         return await asyncio.wrap_future(self.submit(self._kill_coro(job_id)))
 
-    async def wait(
-        self, job_id: str, timeout: float | None
-    ) -> tuple[Job | None, bool]:
-        return await asyncio.wrap_future(
-            self.submit(self._wait_coro(job_id, timeout))
-        )
+    async def wait(self, job_id: str, timeout: float | None) -> tuple[Job | None, bool]:
+        return await asyncio.wrap_future(self.submit(self._wait_coro(job_id, timeout)))
 
     async def shutdown(self) -> None:
         async def _do() -> None:
@@ -389,6 +400,7 @@ class JobManager:
         if not self._thread.is_alive():
             return
         try:
+
             async def _cleanup() -> None:
                 running = [j for j in self._jobs.values() if j.state == "running"]
                 for job in running:
@@ -449,9 +461,7 @@ def _format_tail(data: bytes, tail_lines: int | None) -> str:
 
 
 @tool
-async def bash_background(
-    command: str, name: str | None = None, timeout: int | None = None
-) -> str:
+async def bash_background(command: str, name: str | None = None, timeout: int | None = None) -> str:
     """Launch a shell command in the background and return immediately.
 
     Use this for commands expected to take more than a few seconds
@@ -512,7 +522,7 @@ def _status_text(job_id: str | None) -> str:
         lines = ["Background jobs (newest first):"]
         for j in jobs:
             d = j.status_dict()
-            label = f" \"{j.name}\"" if j.name else ""
+            label = f' "{j.name}"' if j.name else ""
             cmd = j.command if len(j.command) <= 60 else j.command[:57] + "..."
             lines.append(
                 f"  {d['job_id']}{label}  [{d['state']:<10}] "
@@ -533,14 +543,16 @@ def _status_text(job_id: str | None) -> str:
     ]
     if job.name:
         out.append(f"name:        {job.name}")
-    out.extend([
-        f"command:     {d['command']}",
-        f"state:       {d['state']}",
-        f"returncode:  {d['returncode']}",
-        f"runtime:     {d['runtime_seconds']}s",
-        f"bytes:       {d['bytes_captured']}",
-        f"log_path:    {d['log_path']}",
-    ])
+    out.extend(
+        [
+            f"command:     {d['command']}",
+            f"state:       {d['state']}",
+            f"returncode:  {d['returncode']}",
+            f"runtime:     {d['runtime_seconds']}s",
+            f"bytes:       {d['bytes_captured']}",
+            f"log_path:    {d['log_path']}",
+        ]
+    )
     if preview:
         out.append("recent output:")
         out.append(preview)
@@ -586,7 +598,7 @@ async def bash_output(
         if len(body) > DEFAULT_OUTPUT_READ_BYTES * 4:
             body = body[-DEFAULT_OUTPUT_READ_BYTES * 4 :]
 
-    label = f"{job.id} \"{job.name}\"" if job.name else job.id
+    label = f'{job.id} "{job.name}"' if job.name else job.id
     header = (
         f"[{label} {job.state}, {total} bytes, next_byte={total}"
         + (f", rc={job.returncode}" if job.returncode is not None else "")
@@ -649,3 +661,22 @@ async def bash_wait(job_id: str, timeout: float | None = 300.0) -> str:
         + f"\n\n(Job still running after {timeout}s. Call bash_wait again "
         + "to keep waiting, or bash_kill to stop it.)"
     )
+
+
+@tool
+def bash_input(job_id: str, text: str, end: str = "\n") -> dict[str, Any]:
+    """Send input text to a running background job's stdin.
+
+    Useful for interactive commands running in the background that prompt for
+    confirmation or user input (e.g., 'y\\n', 'yes', passwords, or menu options).
+
+    Args:
+        job_id: The background job id (e.g. 'bg_a4f2c1').
+        text: Text to write to the process stdin.
+        end: Trailing newline or delimiter (defaults to '\\n').
+
+    Returns:
+        Dict with `ok` (bool), `job_id`, and `bytes_written` or `error`.
+    """
+    mgr = get_job_manager()
+    return mgr.write_stdin(job_id, text, end=end)

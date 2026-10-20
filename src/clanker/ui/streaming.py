@@ -285,7 +285,7 @@ def _suppress_subprocess_stderr() -> Iterator[None]:
 def _get_tool_arg_summary(tool_name: str, tool_input: dict[str, Any]) -> str:
     """Get a short argument summary for a tool call."""
     args = tool_input or {}
-    if tool_name in ("read_file", "write_file", "edit_file", "append_file"):
+    if tool_name in ("read_file", "write_file", "edit_file", "append_file", "outline_file"):
         return str(args.get("file_path", ""))
     elif tool_name == "execute_shell":
         cmd = str(args.get("command", ""))
@@ -297,6 +297,10 @@ def _get_tool_arg_summary(tool_name: str, tool_input: dict[str, Any]) -> str:
         return f"[{name}] {cmd}" if name else cmd
     elif tool_name in ("bash_status", "bash_output", "bash_wait", "bash_kill"):
         return str(args.get("job_id", "all"))
+    elif tool_name == "bash_input":
+        job = str(args.get("job_id", ""))
+        text = repr(str(args.get("text", "")))[:30]
+        return f"{job} <- {text}"
     elif tool_name == "glob_search":
         return str(args.get("pattern", "*"))
     elif tool_name == "grep_search":
@@ -313,6 +317,12 @@ def _get_tool_arg_summary(tool_name: str, tool_input: dict[str, Any]) -> str:
     elif tool_name == "todo_write":
         n = len(args.get("todos", []) or [])
         return f"{n} item{'s' if n != 1 else ''}"
+    elif tool_name == "todo_update":
+        status = args.get("status", "")
+        match = args.get("match", "")
+        idx = args.get("index")
+        target = f"#{idx}" if idx is not None else (f"'{match[:20]}'" if match else "")
+        return f"{target} -> {status}".strip() if status else target
     else:
         for key in ["query", "path", "url", "input", "text", "command", "name"]:
             if key in args:
@@ -823,7 +833,7 @@ async def stream_agent_response_async(
                                 # TUI -- the pinned panel above the input bar (updated at
                                 # tool_end below) is the single source of truth for todo
                                 # state, so skip registering a debounce/loader for them.
-                                if textual_app and tool_name_ev not in ("todo_write", "todo_read"):
+                                if textual_app and tool_name_ev not in ("todo_write", "todo_read", "todo_update"):
                                     try:
                                         # Store pending tool info — debounce timer will
                                         # mount the LoadingIndicator if the tool takes >200ms
@@ -899,7 +909,7 @@ async def stream_agent_response_async(
                                 with suppress(Exception):
                                     progress_callback("end", tool_name_end, "", tool_output)
 
-                            if textual_app and tool_name_end in ("todo_write", "todo_read"):
+                            if textual_app and tool_name_end in ("todo_write", "todo_read", "todo_update"):
                                 # No transcript entry -- the pinned panel above the input
                                 # bar (updated here) is the single source of truth for
                                 # todo state, so nothing gets mounted in the chat log.

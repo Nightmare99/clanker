@@ -111,6 +111,18 @@ def compact_result_summary(
             return str(parsed.get("message", "error"))[:max_chars]
         return None
 
+    if tool_name == "outline_file":
+        if parsed and parsed.get("ok"):
+            symbols = parsed.get("total_symbols", 0)
+            path = parsed.get("path", "") or (tool_input or {}).get("file_path", "")
+            short = shorten_path(path) if path else ""
+            lang = parsed.get("language", "")
+            lang_str = f" ({lang})" if lang else ""
+            return f"{symbols} symbol{'s' if symbols != 1 else ''}{lang_str}{f'  {short}' if short else ''}"
+        if parsed and not parsed.get("ok"):
+            return str(parsed.get("error", "error"))[:max_chars]
+        return None
+
     if tool_name == "read_project_instructions":
         if parsed and parsed.get("ok"):
             if parsed.get("found"):
@@ -157,6 +169,15 @@ def compact_result_summary(
         suffix = f"  (+{total_lines - 1} lines)" if total_lines > 1 else ""
         return truncate(first_line, max_chars) + suffix
 
+    if tool_name == "bash_input":
+        if parsed and parsed.get("ok"):
+            job_id = parsed.get("job_id", "")
+            bytes_written = parsed.get("bytes_written", 0)
+            return f"sent {bytes_written} bytes to job {job_id}"
+        if parsed and not parsed.get("ok"):
+            return str(parsed.get("error", "error"))[:max_chars]
+        return None
+
     if tool_name == "glob_search":
         lines = [line.strip() for line in result.splitlines() if line.strip()]
         if not lines:
@@ -192,7 +213,7 @@ def compact_result_summary(
             return f"{len(items)} item{'s' if len(items) != 1 else ''}"
         return None
 
-    if tool_name in ("todo_write", "todo_read"):
+    if tool_name in ("todo_write", "todo_read", "todo_update"):
         # Full checklist is rendered separately (see build_todo_checklist_text);
         # this one-liner is only the fallback for renderers that don't call it.
         if parsed and parsed.get("ok"):

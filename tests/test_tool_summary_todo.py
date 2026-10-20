@@ -83,3 +83,42 @@ class TestCompactResultSummaryTodo:
         result = json.dumps({"ok": False, "error": "todo #1 is missing 'content'"})
         summary = compact_result_summary(result, "todo_write", None)
         assert "missing" in summary
+
+
+class TestCompactResultSummaryNewTools:
+    def test_outline_file_success(self) -> None:
+        result = json.dumps({
+            "ok": True,
+            "path": "clanker/agent/graph.py",
+            "language": "python",
+            "total_symbols": 8,
+            "outline": "..."
+        })
+        summary = compact_result_summary(result, "outline_file", {"file_path": "clanker/agent/graph.py"})
+        assert summary == "8 symbols (python)  clanker/agent/graph.py"
+
+    def test_outline_file_single_symbol(self) -> None:
+        result = json.dumps({
+            "ok": True,
+            "path": "main.go",
+            "language": "go",
+            "total_symbols": 1,
+            "outline": "..."
+        })
+        summary = compact_result_summary(result, "outline_file", None)
+        assert summary == "1 symbol (go)  main.go"
+
+    def test_outline_file_error(self) -> None:
+        result = json.dumps({"ok": False, "error": "File does not exist: /ghost"})
+        summary = compact_result_summary(result, "outline_file", None)
+        assert summary == "File does not exist: /ghost"
+
+    def test_bash_input_success(self) -> None:
+        result = json.dumps({"ok": True, "job_id": "bg_1234", "bytes_written": 5})
+        summary = compact_result_summary(result, "bash_input", None)
+        assert summary == "sent 5 bytes to job bg_1234"
+
+    def test_bash_input_error(self) -> None:
+        result = json.dumps({"ok": False, "error": "Job bg_1234 not found"})
+        summary = compact_result_summary(result, "bash_input", None)
+        assert summary == "Job bg_1234 not found"

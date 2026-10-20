@@ -9,14 +9,19 @@ The agent has access to these built-in tools:
 | `append_file` | Core | Append content to files |
 | `edit_file` | Core | Make targeted string replacements |
 | `list_directory` | Core | List directory contents |
-| `execute_shell` | Core | Execute shell commands |
+| `execute_shell` | Core | Execute shell commands (sandboxed, with `input` and `pty` support) |
 | `bash_background` | Core | Launch a long-running command in the background |
+| `bash_input` | Core | Send stdin input to a running background job |
 | `bash_status` | Core | Inspect background job state |
 | `bash_output` | Core | Read captured background job output |
 | `bash_wait` | Core | Block until a background job finishes |
 | `bash_kill` | Core | Terminate a background job |
 | `glob_search` | Core | Find files by pattern |
 | `grep_search` | Core | Search file contents with regex |
+| `outline_file` | Core | Structural symbol outline (classes, functions, methods, signatures) |
+| `todo_write` | Planning | Replace or initialize the task checklist |
+| `todo_read` | Planning | Inspect current task checklist |
+| `todo_update` | Planning | Incrementally update task status or description |
 | `web_search` | Web Browsing | Search the web via DDGS metasearch |
 | `web_read` | Web Browsing | Extract a web page's main content as Markdown |
 | `remember` | Memory | Store info for future sessions |
@@ -42,7 +47,8 @@ web configuration UI (`clanker config`).
 
 | Category | Flag | Tools | Default |
 |----------|------|-------|---------|
-| Core | — | `read_file`, `write_file`, `edit_file`, `append_file`, `list_directory`, `execute_shell`, `bash_background`, `bash_status`, `bash_output`, `bash_wait`, `bash_kill`, `glob_search`, `grep_search` | Always on |
+| Core | — | `read_file`, `write_file`, `edit_file`, `append_file`, `list_directory`, `execute_shell`, `bash_background`, `bash_status`, `bash_output`, `bash_wait`, `bash_kill`, `bash_input`, `glob_search`, `grep_search`, `outline_file` | Always on |
+| Planning | `todo` | `todo_write`, `todo_read`, `todo_update` | Enabled |
 | Web Browsing | `web_browsing` | `web_search`, `web_read` | Enabled |
 | Memory | `memory` | `remember`, `recall`, `revise_memory`, `forget`, `list_memories` | Enabled |
 | Skills | `skills` | `load_skill` | Enabled |
@@ -83,6 +89,21 @@ Lists files and directories at a given path.
 
 Executes shell commands in a sandboxed environment. Dangerous commands are blocked by default.
 
+**Parameters:**
+- `command` — The bash command to execute.
+- `timeout` — Optional timeout in seconds (defaults to `safety.command_timeout`).
+- `input` — Optional string to feed to standard input (stdin).
+- `pty` — Run in a pseudo-terminal (PTY) on Unix so the command perceives an interactive terminal (enables TTY prompts and ANSI formatting).
+
+### bash_input
+
+Sends stdin input text to a running background job. Useful when a long-running process prompts for confirmation (`y\n`, answers, or menu selections).
+
+**Parameters:**
+- `job_id` — The background job id (e.g. `bg_a4f2c1`).
+- `text` — Text to write to standard input.
+- `end` — Trailing delimiter (default `\n`).
+
 ### glob_search
 
 Finds files matching a glob pattern (e.g., `**/*.py`, `src/**/*.js`).
@@ -90,6 +111,22 @@ Finds files matching a glob pattern (e.g., `**/*.py`, `src/**/*.js`).
 ### grep_search
 
 Searches file contents using regular expressions. Returns matching lines with context.
+
+### outline_file
+
+Extracts a structural symbol outline of a file without reading all its implementation lines. Shows classes, functions, methods, interfaces, type definitions, and signatures with line numbers.
+
+Supported languages include Python (AST parsing with signatures and docstrings), JavaScript/TypeScript, Go, Rust, Markdown headings, and generic code fallback.
+
+**Parameters:**
+- `file_path` — Path to the file.
+- `max_depth` — Maximum nesting depth (default 2).
+
+### Planning Tools (`todo_write`, `todo_read`, `todo_update`)
+
+- `todo_write`: Initializes or replaces the current task's checklist.
+- `todo_read`: Inspects the active checklist.
+- `todo_update`: Incrementally updates a single item's status (`pending`, `in_progress`, `completed`), description, or active form by index or content match. When an item is set to `in_progress`, any previous in-progress item is automatically returned to `pending`.
 
 ### web_search
 

@@ -4,6 +4,7 @@ from clanker.tools.agent_tools import load_agent
 from clanker.tools.ask_tools import ask_user
 from clanker.tools.background import (
     bash_background,
+    bash_input,
     bash_kill,
     bash_output,
     bash_status,
@@ -20,6 +21,7 @@ from clanker.tools.file_tools import (
 )
 from clanker.tools.memory_tools import forget, list_memories, recall, remember, revise_memory
 from clanker.tools.notify_tools import notify
+from clanker.tools.outline_tools import outline_file
 from clanker.tools.search_tools import glob_search, grep_search
 from clanker.tools.skill_tools import load_skill
 from clanker.tools.subagent import (
@@ -29,7 +31,7 @@ from clanker.tools.subagent import (
     subagent_stop,
     subagent_wait,
 )
-from clanker.tools.todo_tools import todo_read, todo_write
+from clanker.tools.todo_tools import todo_read, todo_update, todo_write
 from clanker.tools.web_tools import web_read, web_search
 
 # All available tools
@@ -46,11 +48,14 @@ ALL_TOOLS = [
     bash_output,
     bash_wait,
     bash_kill,
+    bash_input,
     glob_search,
     grep_search,
+    outline_file,
     # Planning tools
     todo_write,
     todo_read,
+    todo_update,
     # Communication tools
     notify,
     ask_user,
@@ -93,11 +98,20 @@ def get_tools() -> list:
     if not settings.tools.skills:
         excluded.append(load_skill)
     if not settings.tools.subagents:
-        excluded.extend([load_agent, spawn_subagent, subagent_status, subagent_message, subagent_stop, subagent_wait])
+        excluded.extend(
+            [
+                load_agent,
+                spawn_subagent,
+                subagent_status,
+                subagent_message,
+                subagent_stop,
+                subagent_wait,
+            ]
+        )
     if not settings.tools.communication:
         excluded.extend([notify, ask_user])
     if not settings.tools.todo:
-        excluded.extend([todo_write, todo_read])
+        excluded.extend([todo_write, todo_read, todo_update])
     if excluded:
         return [t for t in ALL_TOOLS if t not in excluded]
     return list(ALL_TOOLS)
@@ -118,10 +132,13 @@ __all__ = [
     "bash_output",
     "bash_wait",
     "bash_kill",
+    "bash_input",
     "glob_search",
     "grep_search",
+    "outline_file",
     "todo_write",
     "todo_read",
+    "todo_update",
     "notify",
     "ask_user",
     "load_skill",

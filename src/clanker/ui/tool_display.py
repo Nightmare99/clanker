@@ -169,7 +169,7 @@ class ToolDisplayHandler:
             return False
         self._shown_results.add(result_key)
 
-        if matched_name in ("todo_write", "todo_read") and result and result.strip():
+        if matched_name in ("todo_write", "todo_read", "todo_update") and result and result.strip():
             from clanker.ui import tool_summary
 
             parsed = tool_summary.parse_tool_json(result)
@@ -242,7 +242,7 @@ class ToolDisplayHandler:
             display_name = parts[1]
 
         # Build arg summary inline
-        if tool_name in ("read_file", "write_file", "edit_file", "append_file"):
+        if tool_name in ("read_file", "write_file", "edit_file", "append_file", "outline_file"):
             arg = str(args.get("file_path", "file"))
         elif tool_name == "execute_shell":
             arg = str(args.get("command", "") or "")[:60]
@@ -253,6 +253,10 @@ class ToolDisplayHandler:
             arg = f"[{name}] {cmd}" if name else cmd
         elif tool_name in ("bash_status", "bash_output", "bash_wait", "bash_kill"):
             arg = _job_label(args.get("job_id", "all"))
+        elif tool_name == "bash_input":
+            job = _job_label(args.get("job_id", ""))
+            text = repr(str(args.get("text", "")))[:30]
+            arg = f"{job} <- {text}"
         elif tool_name == "glob_search":
             arg = str(args.get("pattern", "*"))
         elif tool_name == "grep_search":
@@ -268,6 +272,12 @@ class ToolDisplayHandler:
         elif tool_name == "todo_write":
             n = len(args.get("todos", []) or [])
             arg = f"{n} item{'s' if n != 1 else ''}"
+        elif tool_name == "todo_update":
+            status = args.get("status", "")
+            match = args.get("match", "")
+            idx = args.get("index")
+            target = f"#{idx}" if idx is not None else (f"'{match[:20]}'" if match else "")
+            arg = f"{target} -> {status}".strip() if status else target
         else:
             arg = ""
             for key in ["query", "path", "url", "input", "text", "command", "name"]:
@@ -386,7 +396,7 @@ class ToolDisplayHandler:
         # Print header + result together (permanent output)
         self._console.print_tool_use(tool_name, tool_input)
 
-        if tool_name in ("todo_write", "todo_read"):
+        if tool_name in ("todo_write", "todo_read", "todo_update"):
             # No file-op diff, no generic one-line result -- the console has no
             # pinned panel (that's TUI-only), so this checklist print is its
             # only view into plan state.

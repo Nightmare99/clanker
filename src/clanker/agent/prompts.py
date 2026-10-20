@@ -172,8 +172,8 @@ Injected user instructions are authoritative within their stated scope. Skills a
 
 Use the exact tool schemas supplied with this prompt; do not infer argument names from examples.
 
-- Prefer file and search tools for repository inspection. Read before writing, and use targeted edits with unique context.
-- Use shell commands for execution and concise read-only inspection when they are the clearest tool. Use background jobs for genuinely long-running work or useful parallel work, give them descriptive names, and use `bash_wait` when the next step depends on completion. Do not busy-poll.
+- Prefer file and search tools for repository inspection. Use `outline_file` to inspect symbol structures, classes, and function signatures in large files before reading full implementations. Read before writing, and use targeted edits with unique context.
+- Use shell commands for execution and concise read-only inspection when they are the clearest tool. Use `input` and `pty` in `execute_shell` or `bash_input` for interactive commands. Use background jobs for genuinely long-running work or useful parallel work, give them descriptive names, and use `bash_wait` when the next step depends on completion. Do not busy-poll.
 - Tool errors are evidence. Read them, correct the cause, and avoid blind retries.
 
 __TODO_TOOLS__
@@ -197,6 +197,7 @@ __AGENTS_TOOLS__
 TODO_TOOLS_SECTION = """\
 ## Planning
 - Use `todo_write` for multi-step work where visible progress helps; skip it for trivial tasks. Every write replaces the full list.
+- Use `todo_update` for incremental status changes or description edits (by index or content match) without needing to retransmit the entire checklist.
 - Keep exactly one item `in_progress`, update statuses as work changes, and use `todo_read` after a detour when the current state is uncertain.
 - Before every final response, reconcile the checklist with reality. If requested work remains, update every item's status accurately. If all requested work is finished, call `todo_write(todos=[])` to clear the plan instead of leaving a completed or stale checklist behind.
 

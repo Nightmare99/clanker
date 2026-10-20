@@ -24,9 +24,7 @@ _VALID_STATUSES = ("pending", "in_progress", "completed")
 
 # Uses ContextVar so the store propagates across asyncio.to_thread / run_in_executor boundaries.
 # Falls back to threading.local for thread isolation if ContextVar is unset.
-_todo_store_var: ContextVar[TodoStore | None] = ContextVar(
-    "_todo_store", default=None
-)
+_todo_store_var: ContextVar[TodoStore | None] = ContextVar("_todo_store", default=None)
 _thread_locals = threading.local()
 
 
@@ -64,6 +62,77 @@ class TodoStore:
     def clear(self) -> None:
         self._items = []
 
+    def update(
+        self,
+        index: int | None = None,
+        match: str | None = None,
+        status: str | None = None,
+        content: str | None = None,
+        active_form: str | None = None,
+    ) -> tuple[bool, str, int, TodoItem | None]:
+        """Update an item in the store by index or content match.
+
+        Returns (ok, error_msg, target_index, updated_item).
+        """
+        if not self._items:
+            return False, "Todo list is currently empty", -1, None
+
+        target_idx: int | None = None
+        if index is not None:
+            if 0 <= index < len(self._items):
+                target_idx = index
+            elif 1 <= index <= len(self._items):
+                target_idx = index - 1
+            else:
+                return (
+                    False,
+                    f"Index {index} out of range (list has {len(self._items)} items)",
+                    -1,
+                    None,
+                )
+        elif match is not None:
+            norm_match = match.strip().lower()
+            if not norm_match:
+                return False, "Match string cannot be empty", -1, None
+            for i, item in enumerate(self._items):
+                if item.content.strip().lower() == norm_match:
+                    target_idx = i
+                    break
+            if target_idx is None:
+                for i, item in enumerate(self._items):
+                    if norm_match in item.content.lower():
+                        target_idx = i
+                        break
+            if target_idx is None:
+                return False, f"No todo item found matching '{match}'", -1, None
+        else:
+            return False, "Must provide either 'index' or 'match'", -1, None
+
+        item = self._items[target_idx]
+        if status is not None:
+            norm_status = status.strip().lower()
+            if norm_status not in _VALID_STATUSES:
+                return (
+                    False,
+                    f"Invalid status '{status}' (must be one of: {', '.join(_VALID_STATUSES)})",
+                    target_idx,
+                    None,
+                )
+
+            if norm_status == "in_progress":
+                for other in self._items:
+                    if other is not item and other.status == "in_progress":
+                        other.status = "pending"
+
+            item.status = norm_status
+
+        if content is not None and content.strip():
+            item.content = content.strip()
+        if active_form is not None:
+            item.active_form = active_form.strip()
+
+        return True, "", target_idx, item
+
 
 def get_todo_store() -> TodoStore:
     """Return the current context/thread's todo store, creating it on first use."""
@@ -98,10 +167,12 @@ def format_current_todos_for_context() -> str:
         "This checklist still exists outside conversation history:",
     ]
     lines.extend(f"- [{item.status}] {item.content}" for item in items)
-    lines.extend([
-        "Keep it accurate with todo_write before the next final response.",
-        "If all requested work is finished, clear it with todo_write(todos=[]).",
-    ])
+    lines.extend(
+        [
+            "Keep it accurate with todo_write before the next final response.",
+            "If all requested work is finished, clear it with todo_write(todos=[]).",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -205,6 +276,55 @@ def todo_read() -> dict[str, Any]:
     items = get_todo_store().read()
     return {
         "ok": True,
+        "todos": [t.to_dict() for t in items],
+        "summary": _summary(items),
+    }
+
+
+@tool
+def todo_update(
+    index: int | None = None,
+    match: str | None = None,
+    status: str | None = None,
+    content: str | None = None,
+    active_form: str | None = None,
+) -> dict[str, Any]:
+    """Incrementally update a single todo item's status or content.
+
+    Avoids having to resend the entire todo list when checking off an item
+    or advancing the active step.
+
+    Identify the item by either 0-based `index` (e.g. 0 for the first item)
+    or text `match` (e.g. "Fix the login redirect").
+
+    Args:
+        index: 0-based index of the item to update (e.g. 0, 1, 2...).
+        match: Substring or exact text to match against the item description.
+        status: New status - one of "pending", "in_progress", "completed".
+                If set to "in_progress", any other currently in-progress item
+                is automatically set back to "pending".
+        content: Optional new description for the item.
+        active_form: Optional new present-continuous description shown while in_progress.
+
+    Returns:
+        A dict with `ok`, `updated_index`, `item`, `todos`, and `summary`.
+    """
+    store = get_todo_store()
+    ok, err, target_idx, updated_item = store.update(
+        index=index,
+        match=match,
+        status=status,
+        content=content,
+        active_form=active_form,
+    )
+    if not ok:
+        return {"ok": False, "error": err}
+
+    items = store.read()
+    return {
+        "ok": True,
+        "updated_index": target_idx,
+        "item": updated_item.to_dict() if updated_item else None,
         "todos": [t.to_dict() for t in items],
         "summary": _summary(items),
     }

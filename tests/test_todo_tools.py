@@ -7,6 +7,7 @@ from clanker.tools.todo_tools import (
     format_current_todos_for_context,
     get_todo_store,
     todo_read,
+    todo_update,
     todo_write,
 )
 
@@ -16,20 +17,31 @@ class TestTodoWrite:
         get_todo_store().clear()
 
     def test_write_returns_normalized_todos_and_summary(self) -> None:
-        result = todo_write.invoke({
-            "todos": [
-                {"content": "Read the config", "status": "completed"},
-                {"content": "Fix the bug", "status": "in_progress", "active_form": "Fixing the bug"},
-                {"content": "Write tests", "status": "pending"},
-            ]
-        })
+        result = todo_write.invoke(
+            {
+                "todos": [
+                    {"content": "Read the config", "status": "completed"},
+                    {
+                        "content": "Fix the bug",
+                        "status": "in_progress",
+                        "active_form": "Fixing the bug",
+                    },
+                    {"content": "Write tests", "status": "pending"},
+                ]
+            }
+        )
 
         assert result["ok"] is True
         assert result["summary"] == {
-            "total": 3, "completed": 1, "in_progress": 1, "pending": 1,
+            "total": 3,
+            "completed": 1,
+            "in_progress": 1,
+            "pending": 1,
         }
         assert result["todos"][0] == {
-            "content": "Read the config", "status": "completed", "active_form": "Read the config",
+            "content": "Read the config",
+            "status": "completed",
+            "active_form": "Read the config",
         }
         assert result["todos"][1]["active_form"] == "Fixing the bug"
 
@@ -57,12 +69,14 @@ class TestTodoWrite:
         assert result["todos"][0]["active_form"] == "Fix it"
 
     def test_context_snapshot_preserves_exact_live_plan(self) -> None:
-        todo_write.invoke({
-            "todos": [
-                {"content": "Inspect code", "status": "completed"},
-                {"content": "Fix compaction", "status": "in_progress"},
-            ]
-        })
+        todo_write.invoke(
+            {
+                "todos": [
+                    {"content": "Inspect code", "status": "completed"},
+                    {"content": "Fix compaction", "status": "in_progress"},
+                ]
+            }
+        )
 
         context = format_current_todos_for_context()
 
@@ -71,23 +85,27 @@ class TestTodoWrite:
         assert "todo_write(todos=[])" in context
 
     def test_completed_plan_is_cleared_at_turn_boundary(self) -> None:
-        todo_write.invoke({
-            "todos": [
-                {"content": "Patch", "status": "completed"},
-                {"content": "Test", "status": "completed"},
-            ]
-        })
+        todo_write.invoke(
+            {
+                "todos": [
+                    {"content": "Patch", "status": "completed"},
+                    {"content": "Test", "status": "completed"},
+                ]
+            }
+        )
 
         assert clear_todos_if_completed() is True
         assert todo_read.invoke({})["todos"] == []
 
     def test_incomplete_plan_survives_turn_boundary(self) -> None:
-        todo_write.invoke({
-            "todos": [
-                {"content": "Patch", "status": "completed"},
-                {"content": "Test", "status": "pending"},
-            ]
-        })
+        todo_write.invoke(
+            {
+                "todos": [
+                    {"content": "Patch", "status": "completed"},
+                    {"content": "Test", "status": "pending"},
+                ]
+            }
+        )
 
         assert clear_todos_if_completed() is False
         assert todo_read.invoke({})["summary"]["total"] == 2
@@ -179,8 +197,138 @@ async def test_thread_fallback_store_binds_to_context_before_copying(monkeypatch
     try:
         assert get_todo_store() is store
         await asyncio.to_thread(
-            todo_write.invoke, {"todos": [{"content": "Shared plan", "status": "pending"}]},
+            todo_write.invoke,
+            {"todos": [{"content": "Shared plan", "status": "pending"}]},
         )
         assert [item.content for item in store.read()] == ["Shared plan"]
     finally:
         todo_tools._todo_store_var.reset(token)
+
+
+class TestTodoUpdate:
+    def setup_method(self) -> None:
+        get_todo_store().clear()
+
+    def test_update_by_index(self) -> None:
+        todo_write.invoke(
+            {
+                "todos": [
+                    {"content": "Read files", "status": "pending"},
+                    {"content": "Fix bug", "status": "pending"},
+                ]
+            }
+        )
+
+        res = todo_update.invoke(
+            {"index": 0, "status": "in_progress", "active_form": "Reading files"}
+        )
+        assert res["ok"] is True
+        assert res["updated_index"] == 0
+        assert res["item"]["status"] == "in_progress"
+        assert res["item"]["active_form"] == "Reading files"
+        assert res["summary"]["in_progress"] == 1
+        assert res["summary"]["pending"] == 1
+
+        # Check off item 0 as completed
+        res2 = todo_update.invoke({"index": 0, "status": "completed"})
+        assert res2["ok"] is True
+        assert res2["item"]["status"] == "completed"
+        assert res2["summary"]["completed"] == 1
+
+    def test_update_by_content_match(self) -> None:
+        todo_write.invoke(
+            {
+                "todos": [
+                    {"content": "Inspect database", "status": "completed"},
+                    {"content": "Refactor auth middleware", "status": "pending"},
+                ]
+            }
+        )
+
+        res = todo_update.invoke({"match": "auth middleware", "status": "in_progress"})
+        assert res["ok"] is True
+        assert res["updated_index"] == 1
+        assert res["item"]["status"] == "in_progress"
+        assert res["item"]["content"] == "Refactor auth middleware"
+
+    def test_in_progress_demotes_other_in_progress_items(self) -> None:
+        todo_write.invoke(
+            {
+                "todos": [
+                    {"content": "Step 1", "status": "in_progress"},
+                    {"content": "Step 2", "status": "pending"},
+                    {"content": "Step 3", "status": "pending"},
+                ]
+            }
+        )
+
+        # Advance Step 2 to in_progress: Step 1 should automatically become pending
+        res = todo_update.invoke({"index": 1, "status": "in_progress"})
+        assert res["ok"] is True
+        todos = res["todos"]
+        assert todos[0]["status"] == "pending"
+        assert todos[1]["status"] == "in_progress"
+        assert todos[2]["status"] == "pending"
+        assert res["summary"]["in_progress"] == 1
+
+    def test_update_content_and_active_form(self) -> None:
+        todo_write.invoke(
+            {
+                "todos": [
+                    {"content": "Initial step", "status": "pending"},
+                ]
+            }
+        )
+
+        res = todo_update.invoke(
+            {
+                "index": 0,
+                "content": "Expanded step description",
+                "active_form": "Expanding step description",
+            }
+        )
+        assert res["ok"] is True
+        assert res["item"]["content"] == "Expanded step description"
+        assert res["item"]["active_form"] == "Expanding step description"
+
+    def test_update_1_based_index_tolerance(self) -> None:
+        todo_write.invoke(
+            {
+                "todos": [
+                    {"content": "Only item", "status": "pending"},
+                ]
+            }
+        )
+        # index=1 should resolve to index 0 for 1-item list
+        res = todo_update.invoke({"index": 1, "status": "completed"})
+        assert res["ok"] is True
+        assert res["updated_index"] == 0
+        assert res["item"]["status"] == "completed"
+
+    def test_update_error_handling(self) -> None:
+        # Empty list error
+        res1 = todo_update.invoke({"index": 0, "status": "completed"})
+        assert res1["ok"] is False
+        assert "empty" in res1["error"].lower()
+
+        todo_write.invoke({"todos": [{"content": "Task A", "status": "pending"}]})
+
+        # Out of bounds
+        res2 = todo_update.invoke({"index": 10, "status": "completed"})
+        assert res2["ok"] is False
+        assert "out of range" in res2["error"].lower()
+
+        # No match found
+        res3 = todo_update.invoke({"match": "non_existent_text", "status": "completed"})
+        assert res3["ok"] is False
+        assert "no todo item found" in res3["error"].lower()
+
+        # Missing index and match
+        res4 = todo_update.invoke({"status": "completed"})
+        assert res4["ok"] is False
+        assert "must provide either" in res4["error"].lower()
+
+        # Invalid status
+        res5 = todo_update.invoke({"index": 0, "status": "invalid_status"})
+        assert res5["ok"] is False
+        assert "invalid status" in res5["error"].lower()

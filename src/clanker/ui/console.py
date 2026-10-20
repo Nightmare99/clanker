@@ -354,7 +354,7 @@ class Console:
 
     def _tool_summary_arg(self, tool_name: str, args: dict) -> str:
         """Return a short human-readable argument string for a tool call."""
-        if tool_name in ("read_file", "write_file", "append_file", "edit_file"):
+        if tool_name in ("read_file", "write_file", "append_file", "edit_file", "outline_file"):
             return str(args.get("file_path", ""))
         elif tool_name == "execute_shell":
             return self._truncate(str(args.get("command", "")), 60)
@@ -365,6 +365,10 @@ class Console:
             return f"[{name}] {cmd}" if name else cmd
         elif tool_name in ("bash_status", "bash_output", "bash_wait", "bash_kill"):
             return _job_label(str(args.get("job_id", "all")))
+        elif tool_name == "bash_input":
+            job = _job_label(str(args.get("job_id", "")))
+            text = self._truncate(repr(str(args.get("text", ""))), 30)
+            return f"{job} <- {text}"
         elif tool_name == "glob_search":
             pat = str(args.get("pattern", "*"))
             path = str(args.get("path", ""))
@@ -384,6 +388,12 @@ class Console:
         elif tool_name == "todo_write":
             n = len(args.get("todos", []) or [])
             return f"{n} item{'s' if n != 1 else ''}"
+        elif tool_name == "todo_update":
+            status = args.get("status", "")
+            match = args.get("match", "")
+            idx = args.get("index")
+            target = f"#{idx}" if idx is not None else (f"'{match[:20]}'" if match else "")
+            return f"{target} -> {status}".strip() if status else target
         elif tool_name in ("remember", "recall"):
             return self._truncate(str(args.get("topic", "") or args.get("query", "")), 40)
         elif tool_name == "notify":

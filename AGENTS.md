@@ -42,13 +42,18 @@ The agent has access to the following first-party tools:
 | Tool | Purpose |
 |-----|--------|
 | `read_file` | Read file contents with line numbers |
+| `outline_file` | Structural symbol outline (classes, functions, methods, signatures) |
 | `write_file` | Create or overwrite a file |
 | `append_file` | Append content to a file |
 | `edit_file` | Targeted string replacement (context must be unique) |
 | `list_directory` | List directory contents |
 | `glob_search` | Find files by glob pattern |
 | `grep_search` | Search file contents using regex |
-| `execute_shell` | Execute shell commands (sandboxed) |
+| `execute_shell` | Execute shell commands (sandboxed, with `input` and `pty` support) |
+| `bash_background` | Launch a command in the background |
+| `bash_input` | Send stdin input to a running background job |
+| `bash_status` / `bash_output` / `bash_wait` / `bash_kill` | Manage background jobs |
+| `todo_write` / `todo_read` / `todo_update` | Plan and track multi-step tasks |
 | `notify` | Send an immediate status update to the user mid-execution |
 | `load_agent` | Load configuration for a configured agent |
 | `spawn_subagent` | Spawn a configured agent to handle a subtask |
