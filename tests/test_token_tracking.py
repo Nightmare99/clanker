@@ -6,6 +6,8 @@ and the themed `print_token_usage` rendering.
 
 from __future__ import annotations
 
+import pytest
+
 from clanker.ui import token_tracking
 from clanker.ui.token_tracking import SessionTokenTracker, TokenUsage
 
@@ -211,3 +213,82 @@ class TestStatusBarTokenSeparation:
         assert t.main_input == 2_000
         assert t.subagent_input == 5_000
         assert t.total_cost_usd == 0.04
+
+    def test_context_gauge_continuous_update(self) -> None:
+        from clanker.ui.status_bar import StatusBar
+
+        bar = StatusBar()
+        bar.update_context_remaining(85.0)
+        assert "85%" in bar.context_info
+        assert "█" in bar.context_info
+
+        bar.update_context_remaining(40.0)
+        assert "40%" in bar.context_info
+
+    def test_compacting_indicator_and_restore(self) -> None:
+        from clanker.ui.status_bar import StatusBar
+
+        bar = StatusBar()
+        bar.update_context_remaining(70.0)
+        assert "70%" in bar.context_info
+
+        bar.set_compacting(True)
+        assert "compacting" in bar.context_info
+
+        bar._tick_spinner()
+        assert "compacting" in bar.context_info
+
+        bar.set_compacting(False)
+        assert "70%" in bar.context_info
+
+    @pytest.mark.asyncio
+    async def test_context_gauge_visible_on_mount(self, tmp_path) -> None:
+        import io
+        from unittest.mock import AsyncMock
+
+        from rich.console import Console as RichConsole
+        from textual.widgets import Label
+
+        from clanker.memory.checkpointer import SessionManager
+        from clanker.ui.app import ClankerApp
+        from clanker.ui.console import Console
+
+        console = Console()
+        console._console = RichConsole(file=io.StringIO(), force_terminal=False, width=100)
+        app = ClankerApp(console)
+        app._play_hero = AsyncMock()
+        app._session_manager = SessionManager(workspace_path=str(tmp_path))
+        app._token_tracker = SessionTokenTracker(context_window=200_000)
+
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            lbl = app.query_one("#status-context", Label)
+            rendered = str(lbl.render())
+            assert "100%" in rendered
+            assert "█" in rendered
+
+            # Must remain visible during execution (when processing is True)
+            app._set_processing(True)
+            await pilot.pause()
+            assert lbl.display is True
+            assert "100%" in str(lbl.render())
+
+            # Across turns, context size must not reset to 100%
+            app._token_tracker.current_context_tokens = 40_000
+            app._update_status_bar_tokens()
+            await pilot.pause()
+            expected_rem = round(app._token_tracker.context_remaining_percent)
+            assert f"{expected_rem}%" in str(lbl.render())
+            assert expected_rem < 100
+
+            # Submitting next user message increments, does NOT reset to 100%
+            prompt_input = app.get_prompt_input()
+            prompt_input.value = "Next instruction"
+            # Simulate _run_agent start logic
+            user_tokens = max(1, len(prompt_input.value) // 4)
+            app._token_tracker.current_context_tokens += user_tokens
+            app._update_status_bar_tokens()
+            await pilot.pause()
+            next_rem = round(app._token_tracker.context_remaining_percent)
+            assert f"{next_rem}%" in str(lbl.render())
+            assert next_rem < 100

@@ -798,6 +798,7 @@ class ClankerApp(App):
         bottom_status = self.query_one(WorkspaceStatus)
         self.watch(self.get_status_bar(), "context_info", bottom_status.set_context)
         self.watch(self.get_status_bar(), "loading_info", bottom_status.set_loading)
+        self._update_status_bar_tokens()
         prompt_input = self.query_one("#prompt-input", PromptInput)
         prompt_input.focus()
         prompt_input.set_history(self._input_history)
@@ -870,6 +871,11 @@ class ClankerApp(App):
         model = (get_model_by_name(model_name) if model_name else None) or get_default_model()
         if status_bar:
             status_bar.model_name = model.name if model else ""
+        token_tracker = getattr(self, "_token_tracker", None)
+        if token_tracker and model:
+            token_tracker.model_name = model.name
+            token_tracker.context_window = model.max_input_tokens
+        self._update_status_bar_tokens()
 
     def _refresh_session_id(self) -> None:
         manager = self._session_manager
@@ -1279,15 +1285,9 @@ class ClankerApp(App):
             else "Type your message... (ctrl+c interrupt)"
         )
 
-        # Hide token/context stats while the agent is executing
-        try:
-            # Use visibility (not display) for tokens so the 1fr spacer
-            # keeps the model label pinned to the right.
-            tokens_label = self.query_one("#status-tokens", Label)
-            tokens_label.styles.visibility = "hidden" if processing else "visible"
-            self.query_one("#status-context", Label).display = not processing
-        except Exception:
-            pass
+        # Ensure context stats remain visible while the agent is executing
+        with suppress(Exception):
+            self.query_one("#status-context", Label).display = True
 
         if not processing:
             prompt_input.focus()
@@ -1467,6 +1467,8 @@ class ClankerApp(App):
         chat_log = self.get_chat_log()
         manager = self._session_manager
         self._compaction_task = asyncio.current_task()
+        with suppress(Exception):
+            self.get_status_bar().set_compacting(True)
         try:
             if self._interrupt_event.is_set():
                 raise asyncio.CancelledError
@@ -1501,6 +1503,13 @@ class ClankerApp(App):
             self._conversation_messages.extend(conversation_transcript(result.compacted_messages))
             self._pending_restore_messages = []
             manager.save_conversation_snapshot(self._conversation_messages)
+            if result and result.compacted_messages and self._token_tracker:
+                from langchain_core.messages import get_buffer_string
+
+                compacted_text = get_buffer_string(result.compacted_messages)
+                approx_tokens = max(1, len(compacted_text) // 4)
+                self._token_tracker.current_context_tokens = approx_tokens
+                self._token_tracker.main_input = approx_tokens
             chat_log.add_message(
                 f"Compacted {result.summarized_count} messages into a summary; "
                 f"{len(self._conversation_messages)} transcript messages retained.", MessageType.SUCCESS
@@ -1512,6 +1521,9 @@ class ClankerApp(App):
             get_logger("tui").exception("Failed to compact conversation: %s", exc)
             chat_log.add_message(f"Failed to compact conversation: {exc}", MessageType.ERROR)
         finally:
+            with suppress(Exception):
+                self.get_status_bar().set_compacting(False)
+            self._update_status_bar_tokens()
             self._compaction_task = None
             self._compacting = False
             self._set_processing(False)
@@ -1542,6 +1554,20 @@ class ClankerApp(App):
 
         user_msg = HumanMessage(content=_build_user_message_content(user_input, images or []))
         conversation_messages.append(user_msg)
+
+        if token_tracker:
+            user_prompt_tokens = max(1, len(user_input) // 4)
+            if token_tracker.current_context_tokens > 0:
+                token_tracker.current_context_tokens += user_prompt_tokens
+                token_tracker.main_input = token_tracker.current_context_tokens
+            else:
+                from langchain_core.messages import get_buffer_string
+
+                all_text = get_buffer_string(conversation_messages)
+                approx_in = max(1, len(all_text) // 4)
+                token_tracker.current_context_tokens = approx_in
+                token_tracker.main_input = approx_in
+            self._update_status_bar_tokens()
 
         if pending_restore_messages:
             turn_messages = [*pending_restore_messages, user_msg]

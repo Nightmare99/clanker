@@ -12,6 +12,7 @@ import os
 import signal
 import sys
 import threading
+import time
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager, nullcontext, suppress
 from contextvars import ContextVar
@@ -474,6 +475,56 @@ async def stream_agent_response_async(
     cumulative_cache_read_tokens = 0
     cumulative_cache_creation_tokens = 0
     model_name = ""
+
+    from clanker.config import get_default_model, get_model_by_name
+
+    _active_model = (get_model_by_name(model_name) if model_name else None) or get_default_model()
+    _context_window = getattr(_active_model, "max_input_tokens", None) if _active_model else None
+    if not isinstance(_context_window, (int, float)):
+        _context_window = None
+
+    _streaming_tokens_approx = 0
+    _last_live_context_update = 0.0
+
+    from langchain_core.messages import get_buffer_string
+
+    _init_text = get_buffer_string(state.get("messages", []))
+    last_input_tokens = max(1, (len(_init_text) + len(system_prompt or "")) // 4)
+    if textual_app:
+        tt = getattr(textual_app, "_token_tracker", None)
+        _tt_toks = getattr(tt, "current_context_tokens", None)
+        if isinstance(_tt_toks, (int, float)) and _tt_toks > 0:
+            last_input_tokens = max(last_input_tokens, int(_tt_toks))
+        if _context_window is None and tt:
+            cw = getattr(tt, "context_window", None)
+            if isinstance(cw, (int, float)) and cw > 0:
+                _context_window = int(cw)
+
+    def _update_live_context(in_tok: int, out_tok: int) -> None:
+        cw = _context_window
+        if not isinstance(cw, (int, float)) and textual_app:
+            tt = getattr(textual_app, "_token_tracker", None)
+            val = getattr(tt, "context_window", None)
+            if isinstance(val, (int, float)):
+                cw = val
+        if not textual_app or not isinstance(cw, (int, float)) or cw <= 0:
+            return
+        tot = in_tok + out_tok
+        rem = max(0.0, 100.0 - (tot / cw * 100.0))
+        with suppress(Exception):
+            sb = textual_app.get_status_bar()
+            if hasattr(sb, "update_context_remaining"):
+                sb.update_context_remaining(rem)
+
+    _update_live_context(last_input_tokens, 0)
+
+    def _set_live_compacting(compacting: bool) -> None:
+        if not textual_app:
+            return
+        with suppress(Exception):
+            sb = textual_app.get_status_bar()
+            if hasattr(sb, "set_compacting"):
+                sb.set_compacting(compacting)
 
     def _update_loading(message: str) -> None:
         """Update loading indicator in TUI."""
@@ -979,7 +1030,22 @@ async def stream_agent_response_async(
                                             MessageType.INFO,
                                         )
                                 _start_loading()
+                                _set_live_compacting(True)
+                            elif not is_summarization and in_summarization_call:
+                                _set_live_compacting(False)
                             in_summarization_call = is_summarization
+
+                            input_data = event.get("data", {}).get("input")
+                            if isinstance(input_data, list):
+                                est_tokens = sum(len(str(getattr(m, "content", ""))) for m in input_data) // 4
+                                if in_summarization_call:
+                                    if est_tokens > 0:
+                                        last_input_tokens = est_tokens
+                                else:
+                                    if est_tokens > last_input_tokens:
+                                        last_input_tokens = est_tokens
+                            if not in_summarization_call:
+                                _update_live_context(last_input_tokens, 0)
 
                             if tool_handler.has_pending_tools():
                                 tool_handler.flush_pending_tools()
@@ -1007,6 +1073,20 @@ async def stream_agent_response_async(
                         chunk = event.get("data", {}).get("chunk")
                         if chunk:
                             content = getattr(chunk, "content", None)
+
+                            if not in_summarization_call and last_input_tokens > 0:
+                                if isinstance(content, str):
+                                    _streaming_tokens_approx += max(1, len(content) // 4)
+                                elif isinstance(content, list):
+                                    for block in content:
+                                        if isinstance(block, dict):
+                                            t_text = str(block.get("thinking", "") or block.get("text", ""))
+                                            if t_text:
+                                                _streaming_tokens_approx += max(1, len(t_text) // 4)
+                                now = time.monotonic()
+                                if now - _last_live_context_update >= 0.15:
+                                    _last_live_context_update = now
+                                    _update_live_context(last_input_tokens, _streaming_tokens_approx)
 
                             if content and not first_content_received:
                                 first_content_received = True
@@ -1163,6 +1243,10 @@ async def stream_agent_response_async(
                                     last_output_tokens = meta.get("completion_tokens", 0)
                                     cumulative_input_tokens += last_input_tokens
                                     cumulative_output_tokens += last_output_tokens
+
+                            _streaming_tokens_approx = 0
+                            if not in_summarization_call:
+                                _update_live_context(last_input_tokens, last_output_tokens)
             if _pending_restart_state is not None:
                 state = _pending_restart_state
                 continue
@@ -1286,6 +1370,7 @@ async def stream_agent_response_async(
                         entry, "Interrupted before completion.", success=False,
                     )
         _stop_loading()
+        _set_live_compacting(False)
         tool_handler.finalize_live()
         set_notify_callback(old_notify)
         set_ask_callback(old_ask)

@@ -62,11 +62,22 @@ class StatusBar(Horizontal):
         self._subagent_running = 0
         self._subagent_total = 0
         self._spinner_idx = 0
+        self._compacting = False
+        self._compact_frame = 0
+        self._last_context_remaining: float | None = None
 
     def on_mount(self) -> None:
-        self.set_interval(0.12, self._tick_subagent_spinner)
+        self.set_interval(0.12, self._tick_spinner)
 
-    def _tick_subagent_spinner(self) -> None:
+    def _tick_spinner(self) -> None:
+        if self._compacting:
+            self._compact_frame += 1
+            bar_width = 16
+            frame = self._compact_frame % bar_width
+            cells = ["░"] * bar_width
+            cells[frame] = "█"
+            cells[(frame + 1) % bar_width] = "█"
+            self.context_info = f"[rgb(255,220,60)]compacting {''.join(cells)}[/]"
         if not self._subagent_running:
             return
         self._spinner_idx += 1
@@ -147,19 +158,36 @@ class StatusBar(Horizontal):
         if total_cost is not None:
             parts.append(f"${total_cost:.4f}")
         self.token_info = "  ".join(parts)
+        self.update_context_remaining(context_remaining)
 
-        if context_remaining is not None:
-            remaining = max(0.0, context_remaining)
-            if remaining > 50:
+    def set_compacting(self, compacting: bool = True) -> None:
+        """Toggle the compacting animation on the context gauge."""
+        self._compacting = compacting
+        if compacting:
+            self._compact_frame = 0
+            self.context_info = "[rgb(255,220,60)]compacting ░░░░░░░░░░░░░░░░[/]"
+        elif self._last_context_remaining is not None:
+            self.update_context_remaining(self._last_context_remaining)
+        else:
+            self.context_info = ""
+
+    def update_context_remaining(self, remaining: float | None) -> None:
+        """Update the fuel gauge with the percentage of context remaining."""
+        self._last_context_remaining = remaining
+        if self._compacting:
+            return
+        if remaining is not None:
+            rem = max(0.0, remaining)
+            if rem > 50:
                 style = "rgb(180,255,60)"
-            elif remaining > 20:
+            elif rem > 20:
                 style = "rgb(255,220,60)"
             else:
                 style = "rgb(255,105,180)"
             bar_width = 16
-            filled = int(round(remaining / 100.0 * bar_width))
+            filled = int(round(rem / 100.0 * bar_width))
             filled = max(0, min(bar_width, filled))
-            gauge = f"[{style}]{remaining:.0f}% {'█' * filled}{'░' * (bar_width - filled)}[/]"
+            gauge = f"[{style}]{rem:.0f}% {'█' * filled}{'░' * (bar_width - filled)}[/]"
             self.context_info = gauge
         else:
             self.context_info = ""
