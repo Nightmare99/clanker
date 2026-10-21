@@ -35,6 +35,7 @@ from clanker.tools.bash_tools import (
 )
 from clanker.tools.notify_tools import get_notify_callback, set_notify_callback
 from clanker.ui import tool_summary
+from clanker.ui.model_text import ModelText
 from clanker.ui.tool_display import ToolDisplayHandler, normalize_tool_output
 
 _active_console_var: ContextVar[Any] = ContextVar("_active_console", default=None)
@@ -426,21 +427,11 @@ async def stream_agent_response_async(
         except Exception:
             return False
 
-    current_response = ""
-    current_thinking = ""
+    model_text = ModelText()
     shown_tool_calls: set[str] = set()
     subagent_run_ids: set[str] = set()
     current_model_run: str | None = None
     thinking_shown = False
-    in_think_tag = False
-    think_tag_closed = False
-    # True once current_thinking has received a structured `type: "thinking"`
-    # content block (Anthropic-style extended thinking). Unlike the ad-hoc
-    # string `<think>...</think>` tag format, a structured block is
-    # unambiguously real thinking -- there's no "tag" to have failed to
-    # close -- so it must never be reclassified as response text by the
-    # unclosed-tag fallback in _flush_current_turn_text.
-    structured_thinking = False
 
     # Track TUI tool state per run_id for debounced loading indicators
     from clanker.ui.chat_log import ToolEntry
@@ -454,7 +445,7 @@ async def stream_agent_response_async(
     # True for the duration of a model call that belongs to
     # RobustSummarizationMiddleware's internal compaction, not the visible
     # agent turn (see _is_summarization_event). While True, on_chat_model_stream
-    # content is not accumulated into current_response/current_thinking -- that
+    # content is not accumulated into model_text.response/model_text.thinking -- that
     # call's own generated summary text has no business appearing in the
     # transcript as if it were the agent talking, themed or not.
     in_summarization_call = False
@@ -571,65 +562,46 @@ async def stream_agent_response_async(
         """Emit the current model call's accumulated response/thinking, then clear it.
 
         Each model call within a turn (there can be several across a
-        tool-calling loop) streams into the same ``current_response``/
-        ``current_thinking`` buffers. Called both between model calls (so a
-        reasoning step that leads into a tool call isn't silently dropped
-        when the buffers reset for the next call) and once more at the very
-        end of the turn.
+        tool-calling loop) streams into the same ``model_text.response``/
+        ``model_text.thinking`` buffers. Flush before tool execution to preserve
+        ordering, between model calls as a fallback, and at the end of the turn.
 
         Returns the response text that was just flushed, so the final call
         (at the end of the turn) can still report it via ``StreamResult``
         even though the buffer itself is cleared as a side effect.
         """
-        nonlocal current_response, current_thinking
-
-        # If we buffered thinking via the ad-hoc string `<think>` tag format
-        # but never saw a closing tag, treat it as response text instead of
-        # losing it. Structured `type: "thinking"` blocks are exempt --
-        # they're unambiguously real thinking, with no tag to have failed
-        # to close.
-        if (
-            current_thinking
-            and not structured_thinking
-            and not think_tag_closed
-            and not current_response
-        ):
-            current_response = current_thinking
-            current_thinking = ""
-
-        flushed_response = current_response
+        nonlocal model_text
+        model_text.finish()
+        flushed_response = model_text.response
 
         def _emit_response() -> None:
-            if current_response.strip():
-                console.print_assistant_message(current_response)
+            if model_text.response.strip():
+                console.print_assistant_message(model_text.response)
                 if textual_app:
                     with suppress(Exception):
                         textual_app.get_chat_log().add_message(
-                            current_response, MessageType.ASSISTANT
+                            model_text.response, MessageType.ASSISTANT
                         )
 
         def _emit_thinking() -> None:
-            if current_thinking.strip():
-                console.print_thinking(current_thinking)
+            if model_text.thinking.strip():
+                console.print_thinking(model_text.thinking)
                 if textual_app:
                     with suppress(Exception):
-                        textual_app.get_chat_log().add_thinking(current_thinking)
+                        textual_app.get_chat_log().add_thinking(model_text.thinking)
             elif textual_app:
                 with suppress(Exception):
                     textual_app.get_chat_log().cleanup_pending_thinking()
 
-        # Structured thinking (Anthropic) arrives before text, so render
-        # thinking first to preserve chronological order.  Ad-hoc <think>
-        # tag thinking arrives inline/after text, so response comes first.
-        if structured_thinking:
+        # Preserve whether reasoning preceded the visible response text.
+        if model_text.thinking_first:
             _emit_thinking()
             _emit_response()
         else:
             _emit_response()
             _emit_thinking()
 
-        current_response = ""
-        current_thinking = ""
+        model_text = ModelText()
         return flushed_response
 
     # Unified tool display handler
@@ -793,7 +765,7 @@ async def stream_agent_response_async(
                             except Exception:
                                 pass
                         return StreamResult(
-                            response=current_response,
+                            response=model_text.response,
                             status="cancelled",
                             input_tokens=last_input_tokens,
                             output_tokens=last_output_tokens,
@@ -808,6 +780,11 @@ async def stream_agent_response_async(
                         )
 
                     if event_type == "on_tool_start":
+                        # Render the preceding model call before mounting its tools.
+                        # Waiting for the next model start puts this text AFTER
+                        # the tool result and makes reasoning look like an answer.
+                        if not in_summarization_call:
+                            _flush_current_turn_text()
                         if settings.output.show_tool_calls:
                             run_id = event.get("run_id", "")
                             if run_id and run_id not in shown_tool_calls:
@@ -1066,16 +1043,13 @@ async def stream_agent_response_async(
                             _flush_current_turn_text()
                             thinking_shown = False
                             first_content_received = False
-                            in_think_tag = False
-                            think_tag_closed = False
-                            structured_thinking = False
                             current_model_run = run_id
 
                     elif event_type == "on_chat_model_stream":
                         if in_summarization_call:
                             # This call's own generated summary text is not the
                             # agent talking -- never accumulate it into
-                            # current_response/current_thinking. The "Compacting
+                            # model_text.response/model_text.thinking. The "Compacting
                             # conversation history..." message above (plus the
                             # loading spinner) is all the user sees while it runs.
                             continue
@@ -1102,116 +1076,14 @@ async def stream_agent_response_async(
                                 first_content_received = True
                                 _stop_loading()
 
-                            if isinstance(content, list):
-                                for block in content:
-                                    if isinstance(block, dict):
-                                        if block.get("type") == "thinking":
-                                            thinking_text = block.get("thinking", "")
-                                            if thinking_text:
-                                                current_thinking += thinking_text
-                                                structured_thinking = True
-                                                if not thinking_shown:
-                                                    _show_thinking_start()
-                                                    thinking_shown = True
-                                        elif block.get("type") == "text":
-                                            text = block.get("text", "")
-                                            if text:
-                                                current_response += text
-                                    elif hasattr(block, "type"):
-                                        if block.type == "thinking":
-                                            thinking_text = getattr(block, "thinking", "")
-                                            if thinking_text:
-                                                current_thinking += thinking_text
-                                                structured_thinking = True
-                                                if not thinking_shown:
-                                                    _show_thinking_start()
-                                                    thinking_shown = True
-                                        elif block.type == "text":
-                                            text = getattr(block, "text", "")
-                                            if text:
-                                                current_response += text
-
-                            # OpenAI / Copilot reasoning models: after
-                            # _convert_to_v03_ai_message, reasoning content
-                            # lives in additional_kwargs["reasoning"] rather
-                            # than in the content list. Extract it so it
-                            # gets the same Thinking treatment as Anthropic's
-                            # structured thinking blocks.
-                            ak = getattr(chunk, "additional_kwargs", None) or {}
-                            ak_reasoning = ak.get("reasoning")
-                            if ak_reasoning:
-                                # Responses-API format: {"summary": [{"type": "summary_text", "text": "..."}]}
-                                # Chat-Completions fallback: plain string
-                                _got_reasoning = False
-                                if isinstance(ak_reasoning, dict):
-                                    for item in ak_reasoning.get("summary", []):
-                                        if isinstance(item, dict):
-                                            r_text = item.get("text", "")
-                                            if r_text:
-                                                current_thinking += r_text
-                                                _got_reasoning = True
-                                    # Also accept {"content": "..."} (older/custom)
-                                    if not _got_reasoning:
-                                        r_text = ak_reasoning.get("content", "")
-                                        if r_text:
-                                            current_thinking += r_text
-                                            _got_reasoning = True
-                                elif isinstance(ak_reasoning, str) and ak_reasoning:
-                                    current_thinking += ak_reasoning
-                                    _got_reasoning = True
-
-                                if _got_reasoning:
-                                    structured_thinking = True
-                                    if not thinking_shown:
-                                        _show_thinking_start()
-                                        thinking_shown = True
-                                    if not first_content_received:
-                                        first_content_received = True
-                                        _stop_loading()
-
-                            elif content and isinstance(content, str):
-                                remaining = content
-                                while remaining:
-                                    if think_tag_closed:
-                                        current_response += remaining
-                                        remaining = ""
-                                    elif in_think_tag:
-                                        end_idx = remaining.find("</think>")
-                                        if end_idx != -1:
-                                            current_thinking += remaining[:end_idx]
-                                            remaining = remaining[end_idx + 8:]
-                                            in_think_tag = False
-                                            think_tag_closed = True
-                                        else:
-                                            current_thinking += remaining
-                                            remaining = ""
-                                    else:
-                                        end_idx = remaining.find("</think>")
-                                        start_idx = remaining.find("<think>")
-
-                                        if start_idx != -1 and (end_idx == -1 or start_idx < end_idx):
-                                            current_response += remaining[:start_idx]
-                                            remaining = remaining[start_idx + 7:]
-                                            in_think_tag = True
-                                            if not thinking_shown:
-                                                _show_thinking_start()
-                                                thinking_shown = True
-                                        elif end_idx != -1:
-                                            current_thinking += remaining[:end_idx]
-                                            remaining = remaining[end_idx + 8:]
-                                            think_tag_closed = True
-                                            if not thinking_shown and current_thinking:
-                                                _show_thinking_start()
-                                                thinking_shown = True
-                                        else:
-                                            # No <think> tags found -- treat as
-                                            # normal response text.  (Previous
-                                            # code assumed tagless content was
-                                            # thinking, which caused a false
-                                            # "Thinking" badge for every model
-                                            # that streams plain strings.)
-                                            current_response += remaining
-                                            remaining = ""
+                            model_text.add(content, getattr(chunk, "additional_kwargs", None) or {})
+                            if model_text.has_thinking:
+                                if not thinking_shown:
+                                    _show_thinking_start()
+                                    thinking_shown = True
+                                if not first_content_received:
+                                    first_content_received = True
+                                    _stop_loading()
 
                     elif event_type == "on_chat_model_end":
                         output = event.get("data", {}).get("output")
@@ -1296,7 +1168,7 @@ async def stream_agent_response_async(
                     MessageType.WARNING,
                 )
         return StreamResult(
-            response=current_response,
+            response=model_text.response,
             status="step_limit",
             input_tokens=last_input_tokens,
             output_tokens=last_output_tokens,
@@ -1324,7 +1196,7 @@ async def stream_agent_response_async(
                     "*BZZZT* Agent halted. *CLANK*", MessageType.WARNING
                 )
         return StreamResult(
-            response=current_response,
+            response=model_text.response,
             status="cancelled",
             input_tokens=last_input_tokens,
             output_tokens=last_output_tokens,
@@ -1354,7 +1226,7 @@ async def stream_agent_response_async(
                     MessageType.ERROR,
                 )
         return StreamResult(
-            response=current_response,
+            response=model_text.response,
             status="error",
             input_tokens=last_input_tokens,
             output_tokens=last_output_tokens,

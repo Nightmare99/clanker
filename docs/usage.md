@@ -214,6 +214,11 @@ revealed. The typewriter animation continues normally; selection becomes
 available automatically after all active reveals finish. Then drag to select
 text: it copies automatically when you release the mouse on every platform.
 
+Models that provide marked reasoning show it in separate Thinking cards,
+including Claude models through Copilot. These cards and any assistant preamble
+appear before the corresponding tool call. Opaque signatures and encrypted
+data are never displayed.
+
 ### Reviewing changes
 
 F4 lists each recorded edit with its file, turn and author. Select an edit to

@@ -631,7 +631,9 @@ def create_llm_from_config(model_config: ModelConfig):
                 include=["reasoning.encrypted_content"], output_version="responses/v1",
             )
         else:
-            chat_cls = ChatOpenAI
+            from clanker.agent.copilot import ChatCopilot
+
+            chat_cls = ChatCopilot
 
         # Pass the FUNCTION itself as api_key, not a resolved token string.
         # ChatOpenAI's underlying openai.OpenAI/AsyncOpenAI clients call this

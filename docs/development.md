@@ -96,6 +96,18 @@ agent. Copilot refresh preserves endpoint overrides and other custom settings.
 `tests/test_copilot_responses.py` covers routing, web edits, refresh, and real
 sync/async Clanker tool rounds with mocked HTTP responses.
 
+Copilot Chat Completions uses `agent/copilot.py` to retain `reasoning_text`
+and `reasoning_opaque`, which generic ChatOpenAI decoding drops. Thinking is
+stored separately from assistant content and replayed with tool calls. The
+shared `ui/model_text.py` separates native Anthropic thinking, LangChain and
+Responses reasoning blocks, additional reasoning fields, and `<think>` /
+`<thinking>` markers across chunk boundaries. Unclosed marked thinking remains
+thinking; opaque signatures and encrypted content are never displayed. The
+stream renderer flushes model text before tool execution so preambles and
+Thinking cards precede their tools. Ordinary assistant prose stays assistant
+text. `tests/test_copilot_thinking.py`, `tests/test_model_text.py`, and
+`tests/test_streaming_thinking.py` cover decoding, replay, and display ordering.
+
 ChatGPT authentication is in `config/chatgpt_auth.py`; `agent/chatgpt.py` uses
 LangChain's Responses request conversion and streaming event decoder, with
 account authentication on each request and encrypted reasoning capture at
