@@ -873,6 +873,11 @@ async def stream_agent_response_async(
                                     textual_app.get_chat_log().add_tool_complete(
                                         "ask_user", summary, "", success=not cancelled
                                     )
+                                else:
+                                    summary = str(output).split("\n")[0][:80]
+                                    textual_app.get_chat_log().add_tool_complete(
+                                        "ask_user", summary, "", success=False
+                                    )
                             _start_loading()
                             continue
 
@@ -960,6 +965,30 @@ async def stream_agent_response_async(
                         else:
                             tool_handler.clear_tool_tracking(tool_name_end)
                             _start_loading()
+
+                    elif event_type == "on_tool_error":
+                        tool_name_err = event.get("name", "unknown")
+                        error_val = event.get("data", {}).get("error", "Tool error")
+                        run_id_err = event.get("run_id", "")
+                        debounce_task = _tui_debounce_tasks.pop(run_id_err, None)
+                        if debounce_task is not None and not debounce_task.done():
+                            debounce_task.cancel()
+                            with suppress(asyncio.CancelledError):
+                                await debounce_task
+                        existing_entry = _tui_tool_entries.pop(run_id_err, None)
+                        pending_info = _tui_tool_pending.pop(run_id_err, None)
+                        if textual_app and settings.output.show_tool_calls:
+                            summary = str(error_val).split("\n")[0][:80]
+                            if existing_entry is not None:
+                                textual_app.get_chat_log().update_tool_end(
+                                    existing_entry, summary, success=False
+                                )
+                            else:
+                                arg_str = pending_info["args"] if pending_info else summary
+                                textual_app.get_chat_log().add_tool_complete(
+                                    tool_name_err, arg_str, str(error_val), success=False
+                                )
+                        _start_loading()
 
                     elif event_type == "on_chat_model_start":
                         if input_queue is not None and not input_queue.empty():

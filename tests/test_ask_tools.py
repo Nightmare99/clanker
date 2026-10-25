@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import builtins
-from typing import Any, Callable, Sequence, cast
+from collections.abc import Callable, Sequence
+from typing import Any, cast
 
 import pytest
 
@@ -144,6 +145,91 @@ class TestAskUserValidation:
             ask_tools.set_ask_callback(None)
         assert out["ok"] is True
         assert captured["options"] == ["10", "20"]
+
+    def test_comma_separated_string_options(self) -> None:
+        from clanker.tools import ask_tools
+
+        captured: dict[str, list[str]] = {}
+
+        def fake(question: str, options: list[str], **kw: Any) -> dict[str, Any]:
+            captured["options"] = options
+            return {"selected": [options[0]], "cancelled": False}
+
+        ask_tools.set_ask_callback(fake)
+        try:
+            out = ask_tools.ask_user.invoke({"question": "Q", "options": "staging, production"})
+        finally:
+            ask_tools.set_ask_callback(None)
+        assert out["ok"] is True
+        assert captured["options"] == ["staging", "production"]
+
+    def test_json_string_options(self) -> None:
+        from clanker.tools import ask_tools
+
+        captured: dict[str, list[str]] = {}
+
+        def fake(question: str, options: list[str], **kw: Any) -> dict[str, Any]:
+            captured["options"] = options
+            return {"selected": [options[0]], "cancelled": False}
+
+        ask_tools.set_ask_callback(fake)
+        try:
+            out = ask_tools.ask_user.invoke({"question": "Q", "options": '["staging", "production"]'})
+        finally:
+            ask_tools.set_ask_callback(None)
+        assert out["ok"] is True
+        assert captured["options"] == ["staging", "production"]
+
+    def test_choices_alias(self) -> None:
+        from clanker.tools import ask_tools
+
+        captured: dict[str, list[str]] = {}
+
+        def fake(question: str, options: list[str], **kw: Any) -> dict[str, Any]:
+            captured["options"] = options
+            return {"selected": [options[0]], "cancelled": False}
+
+        ask_tools.set_ask_callback(fake)
+        try:
+            out = ask_tools.ask_user.invoke({"question": "Q", "choices": ["opt1", "opt2"]})
+        finally:
+            ask_tools.set_ask_callback(None)
+        assert out["ok"] is True
+        assert captured["options"] == ["opt1", "opt2"]
+
+    def test_dict_options(self) -> None:
+        from clanker.tools import ask_tools
+
+        captured: dict[str, list[str]] = {}
+
+        def fake(question: str, options: list[str], **kw: Any) -> dict[str, Any]:
+            captured["options"] = options
+            return {"selected": [options[0]], "cancelled": False}
+
+        ask_tools.set_ask_callback(fake)
+        try:
+            out = ask_tools.ask_user.invoke({"question": "Q", "options": [{"label": "Opt A"}, {"label": "Opt B"}]})
+        finally:
+            ask_tools.set_ask_callback(None)
+        assert out["ok"] is True
+        assert captured["options"] == ["Opt A", "Opt B"]
+
+    def test_omitted_options_defaults_to_yes_no(self) -> None:
+        from clanker.tools import ask_tools
+
+        captured: dict[str, list[str]] = {}
+
+        def fake(question: str, options: list[str], **kw: Any) -> dict[str, Any]:
+            captured["options"] = options
+            return {"selected": [options[0]], "cancelled": False}
+
+        ask_tools.set_ask_callback(fake)
+        try:
+            out = ask_tools.ask_user.invoke({"question": "Should I proceed?"})
+        finally:
+            ask_tools.set_ask_callback(None)
+        assert out["ok"] is True
+        assert captured["options"] == ["Yes", "No"]
 
 
 class TestAskUserCallback:
@@ -432,6 +518,70 @@ class TestTaskPromptModal:
             result = await pending
             assert result == {"selected": ["Beta"], "cancelled": False}
 
+    @pytest.mark.asyncio
+    async def test_multi_select_enter_key_submits(self) -> None:
+        import asyncio
+
+        from textual.app import App
+
+        from clanker.ui.task_prompt import TaskPromptScreen, show_prompt_modal
+
+        app: App[object] = App()
+        async with app.run_test(size=(80, 28)) as pilot:
+            pending = asyncio.create_task(
+                asyncio.to_thread(
+                    show_prompt_modal,
+                    app,
+                    "clanker",
+                    "Pick options",
+                    ["Alpha", "Beta", "Gamma"],
+                    multi_select=True,
+                    allow_other=False,
+                    allow_cancel=True,
+                )
+            )
+            for _ in range(50):
+                await pilot.pause(0.02)
+                if isinstance(app.screen, TaskPromptScreen):
+                    break
+
+            # Toggle Alpha (space), navigate down to Beta, toggle Beta (space), press enter to submit
+            await pilot.press("space")
+            await pilot.press("down")
+            await pilot.press("space")
+            await pilot.press("enter")
+            result = await pending
+            assert result == {"selected": ["Alpha", "Beta"], "cancelled": False}
+
+    @pytest.mark.asyncio
+    async def test_modal_dismiss_none_gracefully_cancels(self) -> None:
+        import asyncio
+
+        from textual.app import App
+
+        from clanker.ui.task_prompt import TaskPromptScreen, show_prompt_modal
+
+        app: App[object] = App()
+        async with app.run_test(size=(80, 28)) as pilot:
+            pending = asyncio.create_task(
+                asyncio.to_thread(
+                    show_prompt_modal,
+                    app,
+                    "clanker",
+                    "Pick an option",
+                    ["Alpha", "Beta"],
+                )
+            )
+            for _ in range(50):
+                await pilot.pause(0.02)
+                if isinstance(app.screen, TaskPromptScreen):
+                    break
+
+            # Dismiss screen with None (e.g. external pop)
+            cast(TaskPromptScreen, app.screen).dismiss(None)
+            result = await pending
+            assert result == {"selected": [], "cancelled": True}
+
 
 class TestContextVarPropagation:
     @pytest.mark.asyncio
@@ -530,7 +680,10 @@ class TestContextVarPropagation:
 
     @pytest.mark.asyncio
     async def test_langchain_agent_thread_propagation(self) -> None:
-        from langchain_core.callbacks.manager import AsyncCallbackManagerForLLMRun, CallbackManagerForLLMRun
+        from langchain_core.callbacks.manager import (
+            AsyncCallbackManagerForLLMRun,
+            CallbackManagerForLLMRun,
+        )
         from langchain_core.language_models.chat_models import BaseChatModel
         from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
         from langchain_core.outputs import ChatGeneration, ChatResult

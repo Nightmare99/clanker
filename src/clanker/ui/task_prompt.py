@@ -66,7 +66,7 @@ class TaskPromptScreen(ModalScreen[dict[str, Any]]):
             if self.allow_other:
                 yield Input(placeholder="Or enter your answer", id="question-other")
             if self.multi_select:
-                hint = "Space toggles · Tab to navigate · Enter on Respond to confirm · Esc to cancel"
+                hint = "Space toggles · Tab to navigate · Enter to confirm · Esc to cancel"
             elif self.allow_other:
                 hint = "↑/↓ to move · Enter to select · Tab for custom answer · Esc to cancel"
             else:
@@ -77,10 +77,14 @@ class TaskPromptScreen(ModalScreen[dict[str, Any]]):
                 if self.allow_cancel:
                     yield Button("Cancel", id="question-cancel")
 
+    def on_mount(self) -> None:
+        with contextlib.suppress(Exception):
+            self.query_one(SelectionList).focus()
+
     def on_key(self, event: events.Key) -> None:
-        if event.key == "enter" and not self.multi_select and isinstance(self.focused, SelectionList):
+        if event.key == "enter" and isinstance(self.focused, SelectionList):
             sl = self.focused
-            if sl.highlighted is not None:
+            if not self.multi_select and sl.highlighted is not None:
                 event.prevent_default()
                 event.stop()
                 val = sl.get_option_at_index(sl.highlighted).value
@@ -89,6 +93,17 @@ class TaskPromptScreen(ModalScreen[dict[str, Any]]):
                         sl.deselect(other)
                 sl.select(val)
                 self._respond()
+            elif self.multi_select:
+                if sl.selected:
+                    event.prevent_default()
+                    event.stop()
+                    self._respond()
+                elif sl.highlighted is not None:
+                    event.prevent_default()
+                    event.stop()
+                    val = sl.get_option_at_index(sl.highlighted).value
+                    sl.toggle(val)
+                    self._respond()
             elif sl.selected:
                 event.prevent_default()
                 event.stop()
@@ -119,7 +134,10 @@ class TaskPromptScreen(ModalScreen[dict[str, Any]]):
     def _respond(self) -> None:
         selected = self.query_one(SelectionList).selected
         other = self.query_one("#question-other", Input).value.strip() if self.allow_other else ""
-        answers = [other] if other else [self.options[i] for i in selected]
+        if other:
+            answers = [self.options[i] for i in selected if i < len(self.options)] + [other] if self.multi_select else [other]
+        else:
+            answers = [self.options[i] for i in selected if i < len(self.options)]
         if not answers or (not self.multi_select and len(answers) != 1):
             self.query_one("#question-help", Static).update(
                 "Choose one answer." if not self.multi_select else "Choose at least one answer."
@@ -175,8 +193,11 @@ def show_prompt_modal(
     response: list[dict[str, Any]] = []
     answered = threading.Event()
 
-    def receive(result: dict[str, Any]) -> None:
-        response.append(result)
+    def receive(result: dict[str, Any] | None) -> None:
+        if result is not None and isinstance(result, dict):
+            response.append(result)
+        else:
+            response.append({"selected": [], "cancelled": True})
         answered.set()
 
     if app is None or not getattr(app, "is_running", True):
@@ -208,4 +229,7 @@ def show_prompt_modal(
                 app.call_from_thread(screen.force_cancel)
             return {"selected": [], "cancelled": True}
 
-    return response[0] if response else {"selected": [], "cancelled": True}
+    res = response[0] if response else {"selected": [], "cancelled": True}
+    if not isinstance(res, dict):
+        res = {"selected": [], "cancelled": True}
+    return res

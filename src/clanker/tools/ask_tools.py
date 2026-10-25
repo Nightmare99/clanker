@@ -16,12 +16,15 @@ callback scope.
 
 from __future__ import annotations
 
+import contextlib
+import json
 import threading
 from collections.abc import Callable
 from contextvars import ContextVar
 from typing import Any
 
 from langchain_core.tools import tool
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from clanker.logging import get_logger
 
@@ -29,6 +32,65 @@ logger = get_logger("tools.ask")
 
 # Upper bound on options to keep the menu usable.
 MAX_OPTIONS = 10
+
+
+class AskUserArgs(BaseModel):
+    """Arguments for the ask_user tool."""
+
+    question: str = Field(description="The question to ask. Be specific and concise.")
+    options: list[str] = Field(
+        default_factory=lambda: ["Yes", "No"],
+        description="2-10 short option labels for the user to choose from.",
+    )
+    multi_select: bool = Field(
+        default=False,
+        description="If True, the user may pick more than one option.",
+    )
+    allow_other: bool = Field(
+        default=True,
+        description="If True, the user may type a free-text answer instead.",
+    )
+    allow_cancel: bool = Field(
+        default=True,
+        description="If True, the user may cancel without choosing.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def check_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "options" not in data and "choices" in data:
+            data["options"] = data.pop("choices")
+        return data
+
+    @field_validator("options", mode="before")
+    @classmethod
+    def normalize_options(cls, v: Any) -> Any:
+        if v is None:
+            return ["Yes", "No"]
+        if isinstance(v, str):
+            v = v.strip()
+            if v.startswith("[") and v.endswith("]"):
+                with contextlib.suppress(Exception):
+                    parsed = json.loads(v)
+                    if isinstance(parsed, list):
+                        return [str(item).strip() for item in parsed if str(item).strip()]
+            return [part.strip() for part in v.split(",") if part.strip()]
+        if isinstance(v, (list, tuple)):
+            res: list[str] = []
+            for item in v:
+                if isinstance(item, dict):
+                    text = (
+                        item.get("label")
+                        or item.get("text")
+                        or item.get("name")
+                        or item.get("value")
+                        or str(item)
+                    )
+                    res.append(str(text).strip())
+                else:
+                    res.append(str(item).strip())
+            return res
+        return v
 
 # Asker callback set by the streaming layer.
 # Signature: (question, options, multi_select, allow_other, allow_cancel) -> dict
@@ -62,7 +124,7 @@ def get_ask_callback() -> Callable[..., dict[str, Any]] | None:
     return getattr(_thread_locals, "_ask_callback", None)
 
 
-@tool
+@tool(args_schema=AskUserArgs)
 def ask_user(
     question: str,
     options: list[str],
@@ -137,6 +199,9 @@ def ask_user(
     except Exception as exc:  # noqa: BLE001 - a UI failure must not break the turn
         logger.warning("ask_user selection failed: %s", exc)
         return {"ok": False, "error": f"could not collect an answer: {exc}"}
+
+    if not isinstance(result, dict):
+        result = {"selected": [], "cancelled": True}
 
     selected = list(result.get("selected", []))
     cancelled = bool(result.get("cancelled", False)) or not selected
