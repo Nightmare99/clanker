@@ -127,7 +127,7 @@ Clanker also shows a notification on startup if an update is available.
 curl -fsSL https://raw.githubusercontent.com/Nightmare99/clanker/main/scripts/install.sh | bash
 ```
 
-The install script detects existing installations and prompts before upgrading.
+The install script detects existing installations and prompts before upgrading. If you have an instance already running in another window, enter `/reload` inside Clanker to restart the app in place and resume your current session with all active flags preserved.
 
 ## Uninstalling
 

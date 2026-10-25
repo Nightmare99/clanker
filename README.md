@@ -64,7 +64,8 @@ clanker --check-update         # Check for updates
 
 Inside Clanker, `/restore` (or `/resume`) opens a paginated conversation
 picker. `/import` guides you through importing Codex, Claude Code, OpenCode,
-or GitHub Copilot CLI sessions from the current workspace. See the
+or GitHub Copilot CLI sessions from the current workspace. Use `/reload` to
+restart Clanker in place and resume your session after updating the app. See the
 [usage guide](docs/usage.md#resuming-and-importing-conversations).
 
 Google Antigravity uses browser login and discovers Claude/Gemini models without

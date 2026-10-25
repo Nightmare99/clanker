@@ -275,13 +275,14 @@ class SessionManager:
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
 
-    def save_conversation_snapshot(self, messages: list) -> None:
+    def save_conversation_snapshot(self, messages: list, force: bool = False) -> None:
         """Save a snapshot of the conversation with messages.
 
         Args:
             messages: List of LangChain messages.
+            force: If True, save snapshot even if messages is empty.
         """
-        if not messages:
+        if not messages and not force:
             return
 
         # Auto-generate title from first user message if not set

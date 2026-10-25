@@ -71,6 +71,7 @@ Inside the interactive session:
 | `/memories` | Search and manage workspace and global memories in the TUI |
 | `/remember <text>` | Save a memory |
 | `/forget <id>` | Delete a memory |
+| `/reload` | Reload Clanker in place and resume the current session (useful after updating the app) |
 | `/exit` | Exit Clanker |
 
 ### Switching Models
@@ -148,6 +149,19 @@ The wizard discovers local histories at `~/.codex/sessions/` (and
 GitHub Copilot import covers the Copilot **CLI** history; editor chat history
 uses different storage. The same flow is available with numbered pages in
 `--no-tui` mode.
+
+### Reloading a session
+
+Use `/reload` to close and reopen Clanker in place without manually exiting and restarting. This is particularly useful when you update Clanker in another terminal window (via the installation script, binary update, or package manager) and want to start using the updated version immediately in your running session.
+
+When you run `/reload`:
+- Your current session snapshot is cleanly saved to disk.
+- Clanker replaces the process image in the same terminal window and resumes the active session (`--resume <session-id>`).
+- Current runtime flags are preserved:
+  - Adheres to the current YOLO mode state (passing `--yolo` if YOLO mode is active or was enabled mid-session).
+  - Retains the active model and any relevant startup flags (such as `--no-tui` or `--provider`).
+
+If an agent or compaction operation is actively running, `/reload` is rejected until the turn completes or you interrupt it with Ctrl+C.
 
 ## Keyboard Shortcuts
 

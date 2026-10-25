@@ -169,6 +169,7 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("/config", "Display configuration parameters"),
         ("/mcp", "Show MCP server connections"),
         ("/logs", "Access diagnostic log files"),
+        ("/reload", "Reload clanker and resume current session"),
         ("/exit", "Initiate shutdown sequence"),
     ]),
     ("History & Memory", [

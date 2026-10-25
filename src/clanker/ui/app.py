@@ -69,7 +69,7 @@ _SLASH_COMMANDS = [
     "/changes", "/tasks",
     "/clear", "/compact", "/config", "/copilot-login", "/antigravity-login", "/openai-login", "/exit", "/forget",
     "/help", "/history", "/list_memories", "/logs", "/memories", "/model",
-    "/import", "/mcp", "/remember", "/restore", "/resume", "/skill", "/workflow",
+    "/import", "/mcp", "/reload", "/remember", "/restore", "/resume", "/skill", "/workflow",
 ]
 
 
@@ -1259,6 +1259,8 @@ class ClankerApp(App):
         if cmd_result is not None:
             if cmd_result == "exit":
                 self.exit()
+            elif cmd_result == "reload":
+                self.exit(result="reload")
             elif cmd_result == "skip":
                 pass
             else:
@@ -1306,7 +1308,7 @@ class ClankerApp(App):
 
         command = text.strip().lower()
         head = command.split(maxsplit=1)[0]
-        if head in ("/compact", "/clear") and getattr(self, "_processing", False):
+        if head in ("/compact", "/clear", "/reload") and getattr(self, "_processing", False):
             self.get_chat_log().add_message(
                 "Wait for the current operation, or press Ctrl+C to cancel it first.",
                 MessageType.WARNING,
@@ -1387,6 +1389,12 @@ class ClankerApp(App):
                 token_tracker.context_window = cm.max_input_tokens
         if result == "exit":
             return "exit"
+        if result == "reload":
+            if self._conversation_messages:
+                self._session_manager.save_conversation_snapshot(self._conversation_messages)
+            else:
+                self._session_manager.save_conversation_snapshot([], force=True)
+            return "reload"
         if result and result.startswith("restore:"):
             self._restore_session(result.split(":", 1)[1])
             return "skip"

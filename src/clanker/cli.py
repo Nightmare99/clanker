@@ -3,6 +3,7 @@
 
 import contextlib
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -32,7 +33,7 @@ from clanker.config.setup_wizard import run_setup_wizard
 from clanker.logging import get_log_path, get_logger, setup_logging
 from clanker.memory.checkpointer import SessionManager
 from clanker.memory.memories import get_memory_store
-from clanker.runtime import set_yolo_mode
+from clanker.runtime import is_yolo_mode, set_yolo_mode
 from clanker.ui.chat_log import MessageType
 from clanker.ui.console import Console
 from clanker.ui.streaming import cleanup_event_loop, stream_agent_response_sync
@@ -148,6 +149,13 @@ def handle_command(
         if chat_log:
             chat_log.add_message("Shutdown sequence initiated. *WHIRR... click*", MessageType.SYSTEM)
         return "exit"
+
+    elif parts[0].lower() == "/reload":
+        logger.info("User requested reload")
+        console.print("[bold cyan]*WHIRR*[/bold cyan] Reloading session... [bold cyan]*CLICK*[/bold cyan]")
+        if chat_log:
+            chat_log.add_message("Reloading session...", MessageType.SYSTEM)
+        return "reload"
 
     elif cmd == "/help":
         from clanker.ui.console import build_help_text
@@ -650,8 +658,120 @@ class CommandCompleter:
     COMMANDS = [
         "/help", "/exit", "/quit", "/q", "/clear", "/model", "/copilot-login", "/antigravity-login", "/openai-login",
         "/config", "/mcp", "/logs", "/history", "/restore", "/resume", "/import", "/compact",
-        "/memories", "/remember", "/forget", "/workflow", "/skill",
+        "/memories", "/remember", "/forget", "/reload", "/workflow", "/skill",
     ]
+
+
+def build_reload_args(
+    current_args: list[str],
+    session_id: str,
+    yolo: bool,
+    active_model: str | None = None,
+) -> list[str]:
+    """Construct the command line arguments to resume the session on reload.
+
+    Args:
+        current_args: sys.argv[1:] of the current process.
+        session_id: The active session ID to resume.
+        yolo: Whether YOLO mode is currently active.
+        active_model: The currently active model name, if pinned.
+
+    Returns:
+        New arguments list for re-executing clanker.
+    """
+    new_args: list[str] = []
+    has_model_flag = False
+    original_model_val: str | None = None
+    skip_next = False
+
+    for i, arg in enumerate(current_args):
+        if skip_next:
+            skip_next = False
+            continue
+
+        if arg in ("--resume", "-r"):
+            if i + 1 < len(current_args):
+                skip_next = True
+            continue
+        if arg.startswith(("--resume=", "-r=")):
+            continue
+
+        if arg == "--yolo":
+            continue
+
+        if arg in ("--model", "-m"):
+            has_model_flag = True
+            if i + 1 < len(current_args):
+                original_model_val = current_args[i + 1]
+                skip_next = True
+            continue
+        if arg.startswith(("--model=", "-m=")):
+            has_model_flag = True
+            original_model_val = arg.split("=", 1)[1]
+            continue
+
+        new_args.append(arg)
+
+    # Always resume the active session
+    new_args.extend(["--resume", session_id])
+
+    # Adhere to current yolo mode
+    if yolo:
+        new_args.append("--yolo")
+
+    # If the user originally specified --model, preserve/update it
+    if has_model_flag:
+        if active_model and active_model != "cli-override":
+            new_args.extend(["--model", active_model])
+        elif original_model_val:
+            new_args.extend(["--model", original_model_val])
+
+    return new_args
+
+
+def reload_clanker(session_manager: SessionManager) -> None:
+    """Reload clanker, replacing the current process and resuming the active session."""
+    session_id = session_manager.session_id
+    yolo = is_yolo_mode()
+    active_model = session_manager.model_name
+
+    reload_args = build_reload_args(sys.argv[1:], session_id, yolo, active_model)
+
+    if getattr(sys, "frozen", False):
+        target = sys.executable
+        argv = [sys.executable, *reload_args]
+    else:
+        script = sys.argv[0]
+        resolved = shutil.which(script) if not os.path.isabs(script) else script
+        if (
+            resolved
+            and os.path.isfile(resolved)
+            and not resolved.endswith(".py")
+            and os.access(resolved, os.X_OK)
+        ):
+            target = resolved
+            argv = [resolved, *reload_args]
+        elif resolved and os.path.isfile(resolved):
+            target = sys.executable
+            argv = [sys.executable, resolved, *reload_args]
+        else:
+            target = sys.executable
+            argv = [sys.executable, "-m", "clanker", *reload_args]
+
+    logger.info("Reloading clanker: target=%s, argv=%s", target, argv)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        if os.name == "nt":
+            import subprocess
+
+            sys.exit(subprocess.call(argv))
+        else:
+            os.execv(target, argv)
+    except Exception as e:
+        logger.error("Failed to reload clanker: %s", e)
+        print(f"\nFailed to reload clanker: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def _print_resume_hint(console: Console, session_id: str) -> None:
@@ -681,12 +801,15 @@ def run_interactive(
         if resume_session:
             update_status(f"Resuming session {resume_session}...")
             messages = session_manager.get_session_messages(resume_session)
-            if messages:
+            if messages is not None:
                 session_manager.resume_session(resume_session)
                 if initial_model:
                     session_manager.model_name = initial_model
                 resumed_messages = messages
-                console.print_info(f"Resuming session {resume_session} with {len(messages)} messages")
+                if messages:
+                    console.print_info(f"Resuming session {resume_session} with {len(messages)} messages")
+                else:
+                    console.print_info(f"Resuming session {resume_session}")
             else:
                 console.print_warning(f"Session {resume_session} not found, starting new session")
 
@@ -752,13 +875,20 @@ def run_interactive(
         app._working_dir = working_dir
         app._user_instructions_loaded = _has_user_instructions
 
-    app.run()
+    exit_result = app.run()
 
     # Cleanup on exit
     if conversation_messages:
         session_manager.save_conversation_snapshot(conversation_messages)
+    elif exit_result == "reload":
+        session_manager.save_conversation_snapshot([], force=True)
+
+    if exit_result != "reload" and conversation_messages:
         _print_resume_hint(console, session_manager.session_id)
     cleanup_event_loop()
+
+    if exit_result == "reload":
+        reload_clanker(session_manager)
 
 
 def run_single_prompt(
@@ -1042,12 +1172,15 @@ def run_interactive_legacy(
     resumed_messages: list | None = None
     if resume_session:
         messages = session_manager.get_session_messages(resume_session)
-        if messages:
+        if messages is not None:
             session_manager.resume_session(resume_session)
             if initial_model:
                 session_manager.model_name = initial_model
             resumed_messages = messages
-            console.print_info(f"Resuming session {resume_session} with {len(messages)} messages")
+            if messages:
+                console.print_info(f"Resuming session {resume_session} with {len(messages)} messages")
+            else:
+                console.print_info(f"Resuming session {resume_session}")
         else:
             console.print_warning(f"Session {resume_session} not found, starting new session")
 
@@ -1065,7 +1198,7 @@ def run_interactive_legacy(
     class CommandCompleter(Completer):
         COMMANDS = ["/help", "/exit", "/quit", "/q", "/clear", "/model", "/copilot-login", "/antigravity-login", "/openai-login",
                     "/config", "/mcp", "/logs", "/history", "/restore", "/resume", "/import", "/compact",
-                    "/memories", "/remember", "/forget", "/workflow", "/skill"]
+                    "/memories", "/remember", "/forget", "/reload", "/workflow", "/skill"]
 
         def get_completions(self, document, complete_event):
             text = document.text_before_cursor
@@ -1123,6 +1256,14 @@ def run_interactive_legacy(
                     if conversation_messages:
                         session_manager.save_conversation_snapshot(conversation_messages)
                     cleanup_event_loop()
+                    break
+                elif result == "reload":
+                    if conversation_messages:
+                        session_manager.save_conversation_snapshot(conversation_messages)
+                    else:
+                        session_manager.save_conversation_snapshot([], force=True)
+                    cleanup_event_loop()
+                    reload_clanker(session_manager)
                     break
                 elif result == "restore_picker":
                     sessions = session_manager.list_sessions()
@@ -1249,7 +1390,7 @@ def run_interactive_legacy(
             console.print("\n[bold cyan]*BZZZT*[/bold cyan] Powering down. [bold cyan]*click*[/bold cyan]")
             break
 
-    if conversation_messages:
+    if conversation_messages and locals().get("result") != "reload":
         _print_resume_hint(console, session_manager.session_id)
 
 
