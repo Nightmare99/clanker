@@ -32,6 +32,17 @@ from clanker.config.models import (
     remove_model,
     set_default_model,
 )
+from clanker.config.theme import (
+    DEFAULT_ASCII_ART,
+    MINIMAL_ASCII_ART,
+    ROBOT_ASCII_ART,
+    THEME_CONFIG_PATH,
+    THEME_PRESETS,
+    UIThemeConfig,
+    get_theme_config,
+    reset_theme_config,
+    save_theme_config,
+)
 
 router = APIRouter(tags=["config"])
 
@@ -64,6 +75,16 @@ class MessageResponse(BaseModel):
 
     message: str
     success: bool
+
+
+class ThemeResponse(BaseModel):
+    """UI theme configuration and metadata response."""
+
+    theme: UIThemeConfig
+    presets: dict[str, Any]
+    default_ascii_art: str
+    sample_ascii_arts: dict[str, str]
+    theme_path: str
 
 
 def get_env_status() -> dict[str, bool]:
@@ -184,6 +205,56 @@ async def reset_config() -> MessageResponse:
         default_settings.save_yaml_with_comments(CONFIG_PATH)
         reload_settings()
         return MessageResponse(message="Configuration reset to defaults", success=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/theme", response_model=ThemeResponse)
+async def get_theme() -> ThemeResponse:
+    """Get current UI theme configuration, presets, and sample ASCII art."""
+    try:
+        theme = get_theme_config()
+        return ThemeResponse(
+            theme=theme,
+            presets=THEME_PRESETS,
+            default_ascii_art=DEFAULT_ASCII_ART,
+            sample_ascii_arts={
+                "CLNKR (Default)": DEFAULT_ASCII_ART,
+                "Minimal Block": MINIMAL_ASCII_ART,
+                "Robot Ready": ROBOT_ASCII_ART,
+            },
+            theme_path=str(THEME_CONFIG_PATH),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.put("/theme", response_model=MessageResponse)
+async def update_theme(theme_data: UIThemeConfig) -> MessageResponse:
+    """Update and persist UI theme configuration."""
+    try:
+        save_theme_config(theme_data)
+        return MessageResponse(message="Theme saved successfully", success=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/theme/reset", response_model=ThemeResponse)
+async def reset_theme() -> ThemeResponse:
+    """Reset UI theme to defaults."""
+    try:
+        theme = reset_theme_config()
+        return ThemeResponse(
+            theme=theme,
+            presets=THEME_PRESETS,
+            default_ascii_art=DEFAULT_ASCII_ART,
+            sample_ascii_arts={
+                "CLNKR (Default)": DEFAULT_ASCII_ART,
+                "Minimal Block": MINIMAL_ASCII_ART,
+                "Robot Ready": ROBOT_ASCII_ART,
+            },
+            theme_path=str(THEME_CONFIG_PATH),
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

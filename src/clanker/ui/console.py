@@ -139,6 +139,31 @@ CLANKER_THEME = Theme({
 })
 
 
+def get_console_theme() -> Theme:
+    """Build a Rich Theme using the user's active theme palette."""
+    try:
+        from clanker.config.theme import get_theme_config, rgb_str
+
+        p = get_theme_config().palette
+        return Theme({
+            "info": rgb_str(p.notify_info),
+            "warning": rgb_str(p.notify_warning),
+            "error": f"bold {rgb_str(p.notify_error)}",
+            "success": rgb_str(p.notify_success),
+            "tool": f"bold {rgb_str(p.tool_card)}",
+            "tool.badge": f"black on {rgb_str(p.tool_card)}",
+            "tool.arg": f"dim {rgb_str(p.foreground)}",
+            "tool.result": rgb_str(p.notify_success),
+            "tool.error": f"bold {rgb_str(p.notify_error)}",
+            "tokens.badge": f"black on {rgb_str(p.secondary)}",
+            "user": f"bold {rgb_str(p.user_msg)}",
+            "assistant": rgb_str(p.assistant_msg),
+            "prompt.arrow": f"bold {rgb_str(p.prompt_symbol)}",
+        })
+    except Exception:
+        return CLANKER_THEME
+
+
 # A borderless box that draws ONLY a left edge -- the "quote bar" look shared by
 # the assistant message panel and the notify tool. Reused so both stay in sync.
 _LEFT_BORDER_BOX = box.Box(
@@ -263,7 +288,7 @@ class Console:
                 output lines so the user can tell which agent is acting.
                 ``None`` means the main Clanker agent.
         """
-        self._console = RichConsole(theme=CLANKER_THEME)
+        self._console = RichConsole(theme=get_console_theme())
         self._settings = get_settings()
         self._agent_label = agent_label
 
@@ -433,11 +458,11 @@ class Console:
         text.append(" ", style="dim")
         agent_prefix = self._agent_prefix()
         if agent_prefix:
-            text.append(agent_prefix, style="dim cyan")
+            text.append(agent_prefix, style="dim tool")
         text.append(f" {display_name} ", style="tool.badge")
         text.append(" ", style="dim")
         if mcp_prefix:
-            text.append(mcp_prefix, style="dim cyan")
+            text.append(mcp_prefix, style="dim tool")
         # Argument in muted colour
         if arg_str:
             text.append(arg_str, style="tool.arg")

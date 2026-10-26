@@ -4,10 +4,20 @@ from __future__ import annotations
 
 from contextlib import suppress
 
+from textual import _border
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.reactive import reactive
 from textual.widgets import Label
+
+from clanker.config.theme import get_theme_config, rgb_str
+
+# Use thin hairline overline (U+203E) for tab bottom border instead of thick 1/8 block
+_border.BORDER_CHARS["tab"] = (
+    ("▁", "▁", "▁"),
+    ("▎", " ", "▊"),
+    ("‾", "‾", "‾"),
+)
 
 _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
@@ -20,9 +30,11 @@ class StatusBar(Horizontal):
     DEFAULT_CSS = """
     StatusBar {
         width: 100%;
-        height: 1;
+        height: auto;
         dock: top;
-        border-top: none;
+        border: none;
+        border-bottom: tab rgb(60,60,80);
+        margin: 0;
         padding: 0 1;
         background: black;
         visibility: hidden;
@@ -32,21 +44,31 @@ class StatusBar(Horizontal):
         visibility: visible;
     }
 
-    #status-model {
+    #status-subagents {
         color: rgb(0,240,240);
-        text-style: bold;
-        max-width: 40%;
+        width: 1fr;
+        height: 1;
+        text-align: left;
         text-wrap: nowrap;
         text-overflow: ellipsis;
     }
 
     #status-tokens {
         color: rgb(100,100,100);
-        width: 1fr;
+        width: auto;
+        height: 1;
+        text-align: center;
+        text-wrap: nowrap;
     }
 
-    #status-subagents {
+    #status-model {
         color: rgb(0,240,240);
+        text-style: bold;
+        width: 1fr;
+        height: 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+        text-align: right;
     }
     """
 
@@ -77,7 +99,8 @@ class StatusBar(Horizontal):
             cells = ["░"] * bar_width
             cells[frame] = "█"
             cells[(frame + 1) % bar_width] = "█"
-            self.context_info = f"[rgb(255,220,60)]compacting {''.join(cells)}[/]"
+            compact_color = rgb_str(get_theme_config().palette.bottom_bar_context)
+            self.context_info = f"[{compact_color}]compacting {''.join(cells)}[/]"
         if not self._subagent_running:
             return
         self._spinner_idx += 1
@@ -99,7 +122,7 @@ class StatusBar(Horizontal):
 
     def watch_model_name(self, value: str) -> None:
         with suppress(Exception):
-            self.query_one("#status-model", Label).update(f"  {value}" if value else "")
+            self.query_one("#status-model", Label).update(value or "")
         self._update_visibility()
 
     def watch_session_id(self, value: str) -> None:
@@ -107,15 +130,12 @@ class StatusBar(Horizontal):
 
     def watch_token_info(self, value: str) -> None:
         with suppress(Exception):
-            if value:
-                self.query_one("#status-tokens", Label).update(f"  {value}")
-            else:
-                self.query_one("#status-tokens", Label).update("")
+            self.query_one("#status-tokens", Label).update(value or "")
         self._update_visibility()
 
     def watch_subagent_info(self, value: str) -> None:
         with suppress(Exception):
-            self.query_one("#status-subagents", Label).update(f"  {value}" if value else "")
+            self.query_one("#status-subagents", Label).update(value or "")
         self._update_visibility()
 
     def set_subagent_runs(self, running: int, total: int) -> None:
@@ -131,7 +151,7 @@ class StatusBar(Horizontal):
         if self._subagent_running:
             icon = _SPINNER_FRAMES[self._spinner_idx % len(_SPINNER_FRAMES)]
         else:
-            icon = "✓"
+            icon = "⚡"
         n = self._subagent_total
         self.subagent_info = f"{icon} {n} subagent{'s' if n != 1 else ''} (F2)"
 
@@ -165,7 +185,8 @@ class StatusBar(Horizontal):
         self._compacting = compacting
         if compacting:
             self._compact_frame = 0
-            self.context_info = "[rgb(255,220,60)]compacting ░░░░░░░░░░░░░░░░[/]"
+            compact_color = rgb_str(get_theme_config().palette.bottom_bar_context)
+            self.context_info = f"[{compact_color}]compacting ░░░░░░░░░░░░░░░░[/]"
         elif self._last_context_remaining is not None:
             self.update_context_remaining(self._last_context_remaining)
         else:
@@ -177,17 +198,19 @@ class StatusBar(Horizontal):
         if self._compacting:
             return
         if remaining is not None:
+            pal = get_theme_config().palette
             rem = max(0.0, remaining)
             if rem > 50:
-                style = "rgb(180,255,60)"
+                style = rgb_str(pal.notify_success)
             elif rem > 20:
-                style = "rgb(255,220,60)"
+                style = rgb_str(pal.notify_warning)
             else:
-                style = "rgb(255,105,180)"
+                style = rgb_str(pal.notify_error)
             bar_width = 16
             filled = int(round(rem / 100.0 * bar_width))
             filled = max(0, min(bar_width, filled))
-            gauge = f"[{style}]{rem:.0f}% {'█' * filled}{'░' * (bar_width - filled)}[/]"
+            unfilled_color = rgb_str(pal.status_bar_tokens)
+            gauge = f"[{style}]{rem:.0f}% {'█' * filled}[/][{unfilled_color}]{'░' * (bar_width - filled)}[/]"
             self.context_info = gauge
         else:
             self.context_info = ""
@@ -220,6 +243,7 @@ class WorkspaceStatus(Horizontal):
         height: 1;
         text-wrap: nowrap;
         text-overflow: ellipsis;
+        text-align: right;
     }
     WorkspaceStatus #status-context {
         width: auto;
@@ -231,7 +255,7 @@ class WorkspaceStatus(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield Label("", id="status-session", markup=False)
-        yield Label("F1 Help", id="workspace-hint", markup=False)
+        yield Label("F1 Help · F3 History · /reload to refresh", id="workspace-hint", markup=False)
         yield Label("", id="status-context")
 
     def set_session_id(self, session_id: str) -> None:
@@ -246,7 +270,9 @@ class WorkspaceStatus(Horizontal):
 
     def set_loading(self, message: str) -> None:
         with suppress(Exception):
-            self.query_one("#workspace-hint", Label).update(message or "F1 Help")
+            self.query_one("#workspace-hint", Label).update(
+                message or "F1 Help · F3 History · /reload to refresh"
+            )
 
     def set_context(self, context: str) -> None:
         with suppress(Exception):

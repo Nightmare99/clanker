@@ -22,6 +22,7 @@ from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
+from clanker.config.theme import get_theme_config, rgb_str
 from clanker.memory.checkpointer import message_content_to_text
 
 _USER_STYLE = "bold rgb(0,240,240)"
@@ -88,13 +89,19 @@ class HistoryScreen(ModalScreen[None]):
         ]
 
     def _render_header(self) -> Text:
+        pal = get_theme_config().palette
         count = len(self._turns())
         text = Text()
-        text.append("Conversation History", style="bold rgb(0,240,240)")
+        text.append("Conversation History", style=f"bold {rgb_str(pal.secondary)}")
         text.append(f"   {count} message{'s' if count != 1 else ''}", style="dim")
         return text
 
     def _render_body(self) -> RenderableType:
+        pal = get_theme_config().palette
+        user_style = f"bold {rgb_str(pal.user_msg)}"
+        assistant_style = f"bold {rgb_str(pal.primary)}"
+        rule_style = f"dim {rgb_str(pal.turn_separator)}"
+
         turns = self._turns()
         if not turns:
             return Text(
@@ -108,11 +115,11 @@ class HistoryScreen(ModalScreen[None]):
             content = message_content_to_text(msg.content)
             if isinstance(msg, HumanMessage):
                 if parts:
-                    parts.append(Rule(style=_RULE_STYLE))
-                parts.append(Text("❯ You", style=_USER_STYLE))
+                    parts.append(Rule(style=rule_style))
+                parts.append(Text("❯ You", style=user_style))
                 parts.append(Text(content))
             else:
-                parts.append(Text("◆ Clanker", style=_ASSISTANT_STYLE))
+                parts.append(Text("◆ Clanker", style=assistant_style))
                 parts.append(Markdown(content))
             parts.append(Text(""))
 

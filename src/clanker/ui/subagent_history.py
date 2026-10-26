@@ -14,6 +14,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, ListItem, ListView, Static
 
+from clanker.config.theme import get_theme_config, rgb_str
 from clanker.ui import tool_summary
 
 _STATUS_STYLE = {
@@ -254,9 +255,15 @@ class SubagentHistoryScreen(ModalScreen[None]):
             )
 
         run = self._runs[index]
+        pal = get_theme_config().palette
+        status_styles = {
+            "running": f"bold {rgb_str(pal.secondary)}",
+            "success": f"bold {rgb_str(pal.notify_success)}",
+            "error": f"bold {rgb_str(pal.notify_error)}",
+        }
         text = Text()
-        text.append(f"{run.agent_name} · ", style="bold rgb(0,240,240)")
-        text.append(f"{run.status}\n\n", style=_STATUS_STYLE.get(run.status, "white"))
+        text.append(f"{run.agent_name} · ", style=f"bold {rgb_str(pal.secondary)}")
+        text.append(f"{run.status}\n\n", style=status_styles.get(run.status, "white"))
         text.append(f"Task {run.task_id} · {run.elapsed_seconds:.0f}s / {run.timeout_seconds}s\n", style="dim")
         text.append(f"Model: {run.model or 'session default'}\n", style="dim")
         tokens_str = f"Task tokens: {run.input_tokens + run.output_tokens:,} ({run.input_tokens:,} in · {run.output_tokens:,} out)"
@@ -270,7 +277,7 @@ class SubagentHistoryScreen(ModalScreen[None]):
         text.append("\n")
 
         text.append("Prompt\n", style="bold white")
-        text.append(f"{run.prompt}\n\n", style="rgb(200,200,200)")
+        text.append(f"{run.prompt}\n\n", style=rgb_str(pal.foreground))
         if run.messages:
             text.append(f"Follow-ups ({run.pending_messages} pending)\n", style="bold white")
             for message in run.messages:
@@ -284,7 +291,7 @@ class SubagentHistoryScreen(ModalScreen[None]):
             text.append("Tool calls\n", style="bold white")
             for tc in run.tool_calls:
                 icon = self._status_icon(tc.status)
-                style = _STATUS_STYLE.get(tc.status, "white")
+                style = status_styles.get(tc.status, "white")
                 header = f"  {icon} [{tc.tool_name}]"
                 if tc.args:
                     header += f" {tc.args}"
@@ -296,10 +303,10 @@ class SubagentHistoryScreen(ModalScreen[None]):
 
         if run.response:
             text.append("Response\n", style="bold white")
-            text.append(run.response, style="rgb(200,200,200)")
+            text.append(run.response, style=rgb_str(pal.foreground))
         elif run.error:
-            text.append("Error\n", style="bold rgb(255,105,180)")
-            text.append(run.error, style="rgb(255,105,180)")
+            text.append("Error\n", style=f"bold {rgb_str(pal.notify_error)}")
+            text.append(run.error, style=rgb_str(pal.notify_error))
 
         if run.input_tokens or run.output_tokens:
             tokens_line = f"\n\ntokens: {run.input_tokens:,} in / {run.output_tokens:,} out"

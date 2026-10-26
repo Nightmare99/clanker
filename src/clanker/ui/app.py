@@ -52,15 +52,15 @@ if TYPE_CHECKING:
 
 # ansi_shadow CLNKR — reads clearly, block style
 _CLNKR_ART = r"""
- ▄████████  ▄█       ███▄▄▄▄      ▄█   ▄█▄    ▄████████ 
-███    ███ ███       ███▀▀▀██▄   ███ ▄███▀   ███    ███ 
-███    █▀  ███       ███   ███   ███▐██▀     ███    ███ 
-███        ███       ███   ███  ▄█████▀     ▄███▄▄▄▄██▀ 
-███        ███       ███   ███ ▀▀█████▄    ▀▀███▀▀▀▀▀   
-███    █▄  ███       ███   ███   ███▐██▄   ▀███████████ 
-███    ███ ███▌    ▄ ███   ███   ███ ▀███▄   ███    ███ 
-████████▀  █████▄▄██  ▀█   █▀    ███   ▀█▀   ███    ███ 
-           ▀                     ▀           ███    ███ 
+ ▄████████  ▄█       ███▄▄▄▄      ▄█   ▄█▄    ▄████████
+███    ███ ███       ███▀▀▀██▄   ███ ▄███▀   ███    ███
+███    █▀  ███       ███   ███   ███▐██▀     ███    ███
+███        ███       ███   ███  ▄█████▀     ▄███▄▄▄▄██▀
+███        ███       ███   ███ ▀▀█████▄    ▀▀███▀▀▀▀▀
+███    █▄  ███       ███   ███   ███▐██▄   ▀███████████
+███    ███ ███▌    ▄ ███   ███   ███ ▀███▄   ███    ███
+████████▀  █████▄▄██  ▀█   █▀    ███   ▀█▀   ███    ███
+           ▀                     ▀           ███    ███
   """
 
 _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -648,33 +648,35 @@ class PromptBar(Horizontal):
     DEFAULT_CSS = """
     PromptBar {
         height: 1;
-        background: black;
+        background: transparent;
+        margin: 0 0 1 0;
         padding: 0;
     }
 
     PromptBar #prompt-symbol {
         color: rgb(0, 240, 240);
         width: 2;
+        background: transparent;
     }
 
     PromptBar #prompt-input {
         width: 1fr;
         height: 1;
         border: none;
-        background: black;
+        background: transparent;
         color: rgb(200, 200, 200);
         padding: 0;
     }
 
     PromptBar #prompt-input:focus {
         border: none;
-        background: black;
+        background: transparent;
         color: rgb(200, 200, 200);
     }
 
     PromptBar #prompt-input:hover {
         border: none;
-        background: black;
+        background: transparent;
     }
     """
 
@@ -725,11 +727,14 @@ class ClankerApp(App):
     ) -> None:
         super().__init__()
         self.clanker_console = console
+        from clanker.config.theme import get_theme_config
+        self._theme_config = get_theme_config()
+        p = self._theme_config.palette
         self.register_theme(Theme(
-            name="clanker", primary="#b4ff3c", secondary="#00f0f0",
-            accent="#b4ff3c", success="#b4ff3c", error="#ff69b4",
-            warning="#ffdc3c", background="#000000", surface="#0f0f0f",
-            panel="#151515", foreground="#c8c8c8", dark=True,
+            name="clanker", primary=p.primary, secondary=p.secondary,
+            accent=p.primary, success=p.notify_success, error=p.notify_error,
+            warning=p.notify_warning, background=p.background, surface=p.surface,
+            panel=p.surface, foreground=p.foreground, dark=True,
         ))
         self.theme = "clanker"
         self.interrupt_requested = False
@@ -789,8 +794,8 @@ class ClankerApp(App):
             yield MessageQueue(id="message-queue")
             yield TodoPanel(id="todo-panel")
             yield PromptBar(id="prompt-bar")
+            yield WorkspaceStatus(id="workspace-shortcuts")
         yield CompletionMenu(_SLASH_COMMANDS)
-        yield WorkspaceStatus(id="workspace-shortcuts")
 
     def on_mount(self) -> None:
         self._refresh_selected_model()
@@ -809,9 +814,30 @@ class ClankerApp(App):
         prompt_input.set_completion_menu(menu)
         menu.set_subcommand_completer(self._complete_subcommand)
 
+        # Apply theme-specific TCSS overrides
+        from clanker.config.theme import generate_tcss
+        self.stylesheet.add_source(generate_tcss(self._theme_config))
+        self.refresh_css()
+
         chat_log = self.get_chat_log()
 
         self.run_worker(self._play_hero(chat_log))
+
+    def reload_theme(self) -> None:
+        """Reload theme configuration and update styles in-place."""
+        from clanker.config.theme import generate_tcss, get_theme_config
+        self._theme_config = get_theme_config()
+        p = self._theme_config.palette
+        self.register_theme(Theme(
+            name="clanker", primary=p.primary, secondary=p.secondary,
+            accent=p.primary, success=p.notify_success, error=p.notify_error,
+            warning=p.notify_warning, background=p.background, surface=p.surface,
+            panel=p.surface, foreground=p.foreground, dark=True,
+        ))
+        self.stylesheet.add_source(generate_tcss(self._theme_config))
+        self.refresh_css()
+        with suppress(Exception):
+            self.get_chat_log().set_hero_theme(self._theme_config.hero)
 
     async def _play_hero(self, chat_log: ChatLog) -> None:
         """Play the hero animation inside the chat log — persists after reveal.
@@ -821,24 +847,35 @@ class ClankerApp(App):
         """
         from clanker.runtime import is_yolo_mode
 
-        art_lines = _CLNKR_ART.split("\n")
-        spinner = itertools.cycle(_SPINNER_FRAMES)
+        hero_art = (self._theme_config.hero.ascii_art or "").strip() or _CLNKR_ART.strip("\n")
+        chat_log.set_hero_theme(self._theme_config.hero)
 
-        for i in range(1, len(art_lines) + 1):
-            partial = "\n".join(art_lines[:i])
-            chat_log.update_hero_art(partial)
-            await asyncio.sleep(0.08)
+        if not self._theme_config.hero.animation_enabled:
+            chat_log.update_hero_final(
+                art=hero_art,
+                model_info=self._model_info,
+                yolo_mode=is_yolo_mode(),
+            )
+        else:
+            lines = hero_art.split("\n")
+            max_cols = max(len(line) for line in lines) if lines else 1
+            # Typewriter sweep: reveal columns from left to right
+            step = max(2, max_cols // 14)
+            for col in range(1, max_cols + step, step):
+                chat_log.update_hero_art(hero_art, reveal_cols=min(col, max_cols))
+                await asyncio.sleep(0.04)
 
-        for _ in range(6):
-            frame = next(spinner)
-            chat_log.update_hero_art(_CLNKR_ART, init_text=f"  {frame} Initializing subsystems...")
-            await asyncio.sleep(0.12)
+            spinner = itertools.cycle(_SPINNER_FRAMES)
+            for _ in range(5):
+                frame = next(spinner)
+                chat_log.update_hero_art(hero_art, init_text=f"  {frame} Initializing subsystems...")
+                await asyncio.sleep(0.10)
 
-        chat_log.update_hero_final(
-            art=_CLNKR_ART,
-            model_info=self._model_info,
-            yolo_mode=is_yolo_mode(),
-        )
+            chat_log.update_hero_final(
+                art=hero_art,
+                model_info=self._model_info,
+                yolo_mode=is_yolo_mode(),
+            )
 
         if self._update_info:
             chat_log.add_update_banner(

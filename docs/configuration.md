@@ -530,6 +530,7 @@ The web UI provides:
 
 - **Accounts**: Connect GitHub Copilot, ChatGPT (OpenAI), or Google Antigravity; refresh models, reconnect, or disconnect
 - **Models Management**: Add, edit, delete, and test model configurations
+- **Customization**: Configure TUI color palettes, custom hero ASCII art, gradient animation colors, animation toggles, and theme presets
 - **Extended Thinking**: Enable and configure thinking budget for Claude models
 - **Reasoning Effort**: Configure reasoning for Azure OpenAI o1/o3 models
 - **Max Tokens**: Configure token limits per model
@@ -545,7 +546,18 @@ appear in **Models**, where you can test them, edit their settings, and select a
 default. Use **Manage Accounts** in Models or **View Models** in Accounts to
 switch between the two. Changing tabs keeps an in-progress login active.
 
-Models are saved to `~/.clanker/models.json`, other settings to `~/.clanker/config.yaml`.
+Models are saved to `~/.clanker/models.json`, UI theme configuration to `~/.clanker/theme.yaml`, and other settings to `~/.clanker/config.yaml`.
+
+## Theme Customization
+
+Clanker allows full personalization of its Terminal User Interface (TUI), persisted in `~/.clanker/theme.yaml` separately from operational settings:
+
+- **Color Palette**: Customize colors for background, surface, top and bottom status bars, prompt input bar, chat output messages (user, assistant, system), tool cards, thinking cards, and notification alerts.
+- **Hero ASCII Art**: Set custom ASCII banner art or pick from built-in art styles.
+- **Gradient & Animation**: Customize gradient start/end colors for the ASCII banner and toggle the banner shimmer and bounce animation effect on or off.
+- **Theme Presets**: One-click presets include **Cyberpunk Clanker (Default)**, **Synthwave Neon**, **Matrix Terminal**, **Nord Frost**, **Solarized Dark**, **Dracula**, and **Monochrome Minimal**.
+
+Open `clanker config` and navigate to the **Customization** tab to preview and adjust your theme with a live interactive terminal mockup.
 
 ## Extended Thinking (Anthropic)
 

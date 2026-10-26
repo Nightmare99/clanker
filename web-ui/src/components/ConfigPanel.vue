@@ -48,8 +48,10 @@ import {
   SearchOutline,
   SunnyOutline,
   MoonOutline,
+  BrushOutline,
 } from '@vicons/ionicons5'
 import { h } from 'vue'
+import CustomizationPanel from './CustomizationPanel.vue'
 
 // Types
 interface Config {
@@ -207,6 +209,7 @@ const menuOptions: MenuOption[] = [
   { label: 'Models', key: 'model', icon: () => h(NIcon, null, { default: () => h(HardwareChipOutline) }) },
   { label: 'Accounts', key: 'accounts', icon: () => h(NIcon, null, { default: () => h(KeyOutline) }) },
   { label: 'Agents', key: 'agents', icon: () => h(NIcon, null, { default: () => h(PeopleOutline) }) },
+  { label: 'Customization', key: 'customization', icon: () => h(NIcon, null, { default: () => h(BrushOutline) }) },
   { label: 'Context', key: 'context', icon: () => h(NIcon, null, { default: () => h(ColorPaletteOutline) }) },
   { label: 'Interface', key: 'interface', icon: () => h(NIcon, null, { default: () => h(SpeedometerOutline) }) },
   { label: 'Safety', key: 'safety', icon: () => h(NIcon, null, { default: () => h(ShieldCheckmarkOutline) }) },
@@ -726,7 +729,7 @@ onMounted(() => {
         <div v-if="config" class="content-wrapper">
           <!-- Header -->
           <div class="content-header">
-            <h1>{{ ['model', 'accounts', 'agents'].includes(activeKey) ? menuOptions.find(m => m.key === activeKey)?.label : menuOptions.find(m => m.key === activeKey)?.label + ' Settings' }}</h1>
+            <h1>{{ ['model', 'accounts', 'agents', 'customization'].includes(activeKey) ? menuOptions.find(m => m.key === activeKey)?.label : menuOptions.find(m => m.key === activeKey)?.label + ' Settings' }}</h1>
             <NSpace align="center" :size="12">
               <NTooltip>
                 <template #trigger>
@@ -745,14 +748,14 @@ onMounted(() => {
                 Switch to {{ isDark ? 'Light' : 'Dark' }} mode
               </NTooltip>
               <NButton
-                v-if="hasChanges"
+                v-if="hasChanges && activeKey !== 'customization'"
                 type="primary"
                 :loading="saving"
                 @click="saveConfig"
               >
                 Save Changes
               </NButton>
-              <NButton v-if="!['model', 'accounts', 'agents'].includes(activeKey)" quaternary @click="resetConfig">Reset to Defaults</NButton>
+              <NButton v-if="!['model', 'accounts', 'agents', 'customization'].includes(activeKey)" quaternary @click="resetConfig">Reset to Defaults</NButton>
             </NSpace>
           </div>
 
@@ -1338,6 +1341,11 @@ onMounted(() => {
                - Output.stream_responses was dead; rest moved out of UI
                - Memory: persist_sessions/max_history_length were dead; storage_path is read-only
                - Agent.name was barely used; removed to simplify -->
+
+          <!-- Customization Settings -->
+          <div v-if="activeKey === 'customization'" class="customization-section">
+            <CustomizationPanel />
+          </div>
 
           <!-- Context Settings -->
           <NCard v-if="activeKey === 'context'" class="settings-card">

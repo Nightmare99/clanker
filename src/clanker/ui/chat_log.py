@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import bisect
 import colorsys
 import contextlib
 import math
@@ -15,6 +14,7 @@ from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Rule, Static
 
+from clanker.config.theme import ColorPalette, HeroTheme, get_theme_config, hex_to_rgb, rgb_str
 from clanker.ui import tool_summary
 from clanker.ui.selection_screen import SelectionScreen
 
@@ -128,11 +128,16 @@ class _HeroArt(Static):
     DEFAULT_CSS = """
     _HeroArt {
         height: auto;
+        margin: 0;
+        padding: 0;
     }
     """
 
-    def __init__(self, **kwargs) -> None:
+    _hero_theme: HeroTheme = HeroTheme()
+
+    def __init__(self, hero_theme: HeroTheme | None = None, **kwargs) -> None:
         super().__init__("", **kwargs)
+        self._hero_theme: HeroTheme = hero_theme or HeroTheme()
         self._art_lines: list[str] = []
         self._init_text: str = ""
         self._is_final: bool = False
@@ -140,10 +145,22 @@ class _HeroArt(Static):
         self._yolo_mode: bool = False
         self._gradient_phase = 0.0
         self._wave_phase = 0.0
-        self._wave_settled = False
+        self._wave_settled = True
         self._letter_bounds: tuple[int, ...] = _WAVE_LETTER_BOUNDS
+        self._reveal_cols: int | None = None
         self._tick_timer = None
         self._settle_timer = None
+
+    def set_hero_theme(self, hero_theme: HeroTheme) -> None:
+        """Update hero banner theme (colors, ASCII art, and animation toggle)."""
+        self._hero_theme = hero_theme
+        if not self._hero_theme.animation_enabled:
+            if self._tick_timer is not None:
+                self._tick_timer.stop()
+                self._tick_timer = None
+        elif self._tick_timer is None and self.is_mounted:
+            self._tick_timer = self.set_interval(0.08, self._tick, name="hero-shimmer")
+        self.refresh()
 
     @property
     def _lime_phase(self) -> float:
@@ -154,7 +171,8 @@ class _HeroArt(Static):
         self._gradient_phase = val
 
     def on_mount(self) -> None:
-        self._tick_timer = self.set_interval(0.08, self._tick, name="hero-shimmer")
+        if self._hero_theme.animation_enabled:
+            self._tick_timer = self.set_interval(0.08, self._tick, name="hero-shimmer")
 
     def on_unmount(self) -> None:
         if self._tick_timer is not None:
@@ -162,131 +180,79 @@ class _HeroArt(Static):
         if self._settle_timer is not None:
             self._settle_timer.stop()
 
-    def set_art(self, art: str, init_text: str = "") -> None:
-        """Update hero during the boot animation (art reveal + init spinner).
-
-        Unlike ``_tick``'s per-frame repaint, this can change the total
-        rendered line count (the reveal grows the art line-by-line, and
-        toggling ``_is_final`` adds/removes trailing text lines) -- so it
-        needs a real layout pass to re-measure the widget's auto height,
-        not just a repaint. That's fine: this fires a handful of times
-        during the ~1-2s boot sequence, not on every animation tick.
-        """
-        self._art_lines = art.split("\n")
-        detected = _detect_letter_bounds(self._art_lines)
-        if detected is not None:
-            self._letter_bounds = detected
+    def set_art(self, art: str, init_text: str = "", reveal_cols: int | None = None) -> None:
+        """Update hero during the boot animation (art reveal + init spinner)."""
+        raw_lines = art.split("\n")
+        while raw_lines and not raw_lines[0].strip():
+            raw_lines.pop(0)
+        while raw_lines and not raw_lines[-1].strip():
+            raw_lines.pop()
+        self._art_lines = raw_lines
         self._init_text = init_text
+        self._reveal_cols = reveal_cols
         self._is_final = False
         self.refresh(layout=True)
 
     def set_final(self, art: str, model_info: str, yolo_mode: bool) -> None:
-        """Set the final persistent hero state and schedule the bounce to settle.
-
-        Like ``set_art``, this changes the rendered line count (adds the
-        "Systems online" / model / YOLO lines), so it needs a layout pass --
-        see ``set_art``.
-        """
-        self._art_lines = art.split("\n")
-        detected = _detect_letter_bounds(self._art_lines)
-        if detected is not None:
-            self._letter_bounds = detected
+        """Set the final persistent hero state."""
+        raw_lines = art.split("\n")
+        while raw_lines and not raw_lines[0].strip():
+            raw_lines.pop(0)
+        while raw_lines and not raw_lines[-1].strip():
+            raw_lines.pop()
+        self._art_lines = raw_lines
         self._model_info = model_info
         self._yolo_mode = yolo_mode
+        self._reveal_cols = None
         self._is_final = True
         self.refresh(layout=True)
 
-        if self._settle_timer is None:
-            self._settle_timer = self.set_timer(_HERO_SETTLE_SECONDS, self._settle)
-
     def _settle(self) -> None:
-        """Freeze the vertical bounce flat -- every letter level -- while the
-        color wash keeps looping.
-
-        Doesn't change the rendered line count (only which grid row each
-        column samples from), so a bare repaint -- no layout -- is enough.
-        """
-        self._settle_timer = None
+        """Compatibility method for tests."""
         self._wave_settled = True
         self.refresh()
 
     def _tick(self) -> None:
-        """Advance one animation frame.
-
-        Cheap: a bare repaint, no layout. The art's line count never changes
-        between ticks -- only per-character color and which grid row gets
-        sampled for the bounce -- so there's nothing to re-measure.
-        """
+        """Advance one animation frame (gradient color wash shimmer)."""
         self._gradient_phase = (self._gradient_phase + _GRADIENT_PHASE_STEP) % 1.0
-        if not self._wave_settled:
-            self._wave_phase = (self._wave_phase + _WAVE_PHASE_STEP) % math.tau
         self.refresh()
 
     def _gradient_style(self, x: int, y: int) -> str:
-        """RGB style string for a cyan-to-blue gradient wash at grid position (x, y).
-
-        Hue smoothly transitions between `_CYAN_HUE` and `_BLUE_HUE` across
-        the grid via a cosine wave so it wraps seamlessly without a visible
-        seam.
-        """
-        wave = (x * _GRADIENT_COL_STEP + y * _GRADIENT_ROW_STEP + self._gradient_phase) % 1.0
+        """RGB style string for gradient wash at grid position (x, y)."""
+        phase = self._gradient_phase if self._hero_theme.animation_enabled else 0.0
+        wave = (x * _GRADIENT_COL_STEP + y * _GRADIENT_ROW_STEP + phase) % 1.0
         factor = (1 + math.cos(wave * math.tau)) / 2
-        hue = _CYAN_HUE + (_BLUE_HUE - _CYAN_HUE) * factor
-        r, g, b = colorsys.hsv_to_rgb(hue, _GRADIENT_SATURATION, _GRADIENT_VALUE)
+        r1, g1, b1 = hex_to_rgb(self._hero_theme.gradient_start)
+        r2, g2, b2 = hex_to_rgb(self._hero_theme.gradient_end)
+        h1, s1, v1 = colorsys.rgb_to_hsv(r1 / 255, g1 / 255, b1 / 255)
+        h2, s2, v2 = colorsys.rgb_to_hsv(r2 / 255, g2 / 255, b2 / 255)
+        h = h1 + (h2 - h1) * factor
+        s = s1 + (s2 - s1) * factor
+        v = v1 + (v2 - v1) * factor
+        r, g, b = colorsys.hsv_to_rgb(h, s, v)
         return f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"
 
     def _lime_shade_style(self, x: int, y: int) -> str:
         return self._gradient_style(x, y)
 
     def _wave_offset(self, x: int) -> int:
-        """Vertical row offset (rows) for column *x*'s letter, at the current phase.
-
-        All columns belonging to the same letter (per ``_WAVE_LETTER_BOUNDS``)
-        share one offset, so each letter bobs as a rigid unit -- no in-glyph
-        shearing. Each letter's phase is delayed relative to the previous one,
-        producing a left-to-right bounce cascade. The wave is unipolar --
-        rescaled from sin's [-1, 1] to [0, 1] -- so letters only ever lift up
-        from the baseline rather than swinging both above and below it.
-
-        Returns 0 once ``_settle()`` has fired, regardless of phase -- every
-        letter renders flat and level instead of freezing mid-bounce.
-        """
-        if self._wave_settled:
-            return 0
-        bounds = getattr(self, "_letter_bounds", _WAVE_LETTER_BOUNDS)
-        letter_index = bisect.bisect_right(bounds, x) - 1
-        letter_index = max(0, min(letter_index, len(bounds) - 2))
-        angle = self._wave_phase + letter_index * _WAVE_LETTER_PHASE_SHIFT
-        lift = (math.sin(angle) + 1) / 2  # 0..1
-        return -round(_WAVE_AMPLITUDE * lift)
+        """Compatibility method returning 0 since vertical wobble is replaced by typewriter slide-in."""
+        return 0
 
     def _append_gradient_art(self, full: Text, art_lines: list[str]) -> None:
-        """Append ASCII art lines to *full*, with a cyan-to-blue gradient wash and a per-letter bob.
-
-        Each column is resampled from a row shifted by ``_wave_offset(x)`` so
-        each letter appears to bounce up and down. The grid is padded with
-        blank rows top/bottom (by the wave amplitude) so columns pulled from
-        beyond the original art render as blank instead of wrapping to the
-        opposite edge.
-        """
+        """Append ASCII art lines to *full*, with gradient wash and typewriter column reveal."""
         if not art_lines:
             return
 
-        width = max(len(line) for line in art_lines)
-        height = len(art_lines)
-        padded = [line.ljust(width) for line in art_lines]
-        blank_row = " " * width
-        grid = [blank_row] * _WAVE_AMPLITUDE + padded + [blank_row] * _WAVE_AMPLITUDE
-
-        for y in range(_WAVE_AMPLITUDE, _WAVE_AMPLITUDE + height):
-            for x in range(width):
-                src_y = y - self._wave_offset(x)
-                ch = grid[src_y][x]
+        for y, line in enumerate(art_lines):
+            for x, ch in enumerate(line):
+                if self._reveal_cols is not None and x >= self._reveal_cols:
+                    continue
                 if ch.strip():
                     full.append(ch, style=f"bold {self._gradient_style(x, y)}")
                 else:
                     full.append(ch)
-            if y < _WAVE_AMPLITUDE + height - 1:
+            if y < len(art_lines) - 1:
                 full.append("\n")
 
     _append_lime_art = _append_gradient_art
@@ -300,15 +266,19 @@ class _HeroArt(Static):
         full.append("\n")
 
         if self._is_final:
-            # Systems online — cyan
+            online_style = rgb_str(self._hero_theme.system_online_color)
+            model_label_style = rgb_str(self._hero_theme.model_label_color)
+            model_name_style = rgb_str(self._hero_theme.model_name_color)
+
+            # Systems online
             full.append(
-                "  Systems online. Circuits humming. Ready to build.\n", style=f"bold {_CYAN}"
+                "  Systems online. Circuits humming. Ready to build.\n", style=f"bold {online_style}"
             )
             full.append("\n")
 
-            # Model line — label white, name blue
-            full.append("  Model: ", style=_WHITE)
-            full.append(self._model_info, style=f"bold {_BLUE}")
+            # Model line
+            full.append("  Model: ", style=model_label_style)
+            full.append(self._model_info, style=f"bold {model_name_style}")
             full.append("\n")
 
             # YOLO indicator
@@ -324,8 +294,9 @@ class _HeroArt(Static):
             # Commands hint — grey
             full.append('  Type "/" for commands', style=_GREY)
         elif self._init_text:
-            # Init / systems online text — cyan
-            full.append(self._init_text, style=f"bold {_CYAN}")
+            online_style = rgb_str(self._hero_theme.system_online_color)
+            # Init / systems online text
+            full.append(self._init_text, style=f"bold {online_style}")
             full.append("\n")
 
         return full
@@ -365,7 +336,7 @@ class ChatLog(VerticalScroll):
         height: 1fr;
         overflow-y: scroll;
         border: none;
-        padding: 1;
+        padding: 0 1 1 1;
     }
     """
 
@@ -378,6 +349,7 @@ class ChatLog(VerticalScroll):
         self._tool_counter: int = 0
 
         # Hero state
+        self._hero_theme: HeroTheme | None = None
         self._hero_widget: _HeroArt | None = None
         self._hero_rule: Rule | None = None
 
@@ -387,20 +359,31 @@ class ChatLog(VerticalScroll):
 
     # --- Hero rendering ---
 
+    @property
+    def palette(self) -> ColorPalette:
+        return get_theme_config().palette
+
+    def set_hero_theme(self, hero_theme: HeroTheme) -> None:
+        """Set the hero banner theme (custom ASCII art, gradient colors, animation)."""
+        self._hero_theme = hero_theme
+        if self._hero_widget is not None:
+            self._hero_widget.set_hero_theme(hero_theme)
+
     def _ensure_hero_mounted(self) -> _HeroArt:
         if self._hero_widget is None:
-            self._hero_widget = _HeroArt(id="hero-widget")
+            self._hero_widget = _HeroArt(hero_theme=self._hero_theme, id="hero-widget")
             self.mount(self._hero_widget)
             self._messages.append(self._hero_widget)
 
-            self._hero_rule = Rule(line_style="double")
+            self._hero_rule = Rule(line_style="double", classes="hero-divider")
+            self._hero_rule.styles.color = rgb_str(self.palette.divider)
             self.mount(self._hero_rule)
             self._messages.append(self._hero_rule)
         return self._hero_widget
 
-    def update_hero_art(self, art: str, init_text: str = "") -> None:
-        """Update hero during animation (art reveal + init spinner)."""
-        self._ensure_hero_mounted().set_art(art, init_text)
+    def update_hero_art(self, art: str, init_text: str = "", reveal_cols: int | None = None) -> None:
+        """Update hero during animation (typewriter reveal + init spinner)."""
+        self._ensure_hero_mounted().set_art(art, init_text, reveal_cols=reveal_cols)
 
     def update_hero_final(self, art: str, model_info: str, yolo_mode: bool) -> None:
         """Set the final persistent hero state."""
@@ -422,17 +405,23 @@ class ChatLog(VerticalScroll):
 
     def add_update_banner(self, current: str, latest: str, install_cmd: str) -> None:
         """Mount a stylized 'update available' card, meant to sit below the hero."""
+        badge_style = f"bold black on {rgb_str(self._hero_theme.gradient_start)}"
+        arrow_style = f"bold {rgb_str(self._hero_theme.gradient_end)}"
+        latest_style = f"bold {rgb_str(self._hero_theme.model_name_color)}"
+        cmd_style = f"italic {rgb_str(self._hero_theme.model_label_color)}"
+        version_style = f"dim {rgb_str(self._hero_theme.model_label_color)}"
+
         text = Text()
-        text.append(" ⬆  UPDATE AVAILABLE ", style=f"bold black on {_CYAN}")
+        text.append(" ⬆  UPDATE AVAILABLE ", style=badge_style)
         text.append("\n\n")
         text.append("  ", style="")
-        text.append(f"v{current}", style=f"dim {_GREY}")
-        text.append("  ─────▶  ", style=f"bold {_CYAN}")
-        text.append(f"v{latest}", style=f"bold {_BLUE}")
+        text.append(f"v{current}", style=version_style)
+        text.append("  ─────▶  ", style=arrow_style)
+        text.append(f"v{latest}", style=latest_style)
         text.append("\n\n")
         text.append("  ", style="")
-        text.append("$ ", style=f"dim {_GREY}")
-        text.append(install_cmd, style=f"italic {_WHITE}")
+        text.append("$ ", style=version_style)
+        text.append(install_cmd, style=cmd_style)
 
         widget = Static(text, classes="update-banner")
         self.mount(widget)
@@ -459,8 +448,8 @@ class ChatLog(VerticalScroll):
 
     def _user_message(self, msg: Message) -> Static:
         text = Text()
-        text.append("> ", style="bold rgb(0,240,240)")
-        text.append(msg.content, style="bold white")
+        text.append("> ", style=f"bold {rgb_str(self.palette.primary)}")
+        text.append(msg.content, style=f"bold {rgb_str(self.palette.user_msg)}")
         return Static(text, classes="msg-user")
 
     def _assistant_message(self, msg: Message) -> Markdown:
@@ -507,10 +496,10 @@ class ChatLog(VerticalScroll):
 
     def _notify_message(self, msg: Message) -> Markdown | Static:
         level_colors = {
-            "info": "rgb(0,240,240)",
-            "success": "rgb(180,255,60)",
-            "warning": "rgb(255,220,60)",
-            "error": "rgb(255,105,180)",
+            "info": rgb_str(self.palette.notify_info),
+            "success": rgb_str(self.palette.notify_success),
+            "warning": rgb_str(self.palette.notify_warning),
+            "error": rgb_str(self.palette.notify_error),
         }
         color = level_colors.get(msg.level, level_colors["info"])
         content = (msg.content or "").strip()
@@ -526,23 +515,23 @@ class ChatLog(VerticalScroll):
         return md
 
     def _system_message(self, msg: Message) -> Static:
-        text = Text(msg.content, style="dim rgb(0,240,240)")
+        text = Text(msg.content, style=f"dim {rgb_str(self.palette.system_msg)}")
         return Static(text, classes="msg-system")
 
     def _error_message(self, msg: Message) -> Static:
-        text = Text(f"Error: {msg.content}", style="bold rgb(255,105,180)")
+        text = Text(f"Error: {msg.content}", style=f"bold {rgb_str(self.palette.notify_error)}")
         return Static(text, classes="msg-error")
 
     def _warning_message(self, msg: Message) -> Static:
-        text = Text(f"Warning: {msg.content}", style="rgb(255,220,60)")
+        text = Text(f"Warning: {msg.content}", style=rgb_str(self.palette.notify_warning))
         return Static(text, classes="msg-warning")
 
     def _info_message(self, msg: Message) -> Static:
-        text = Text(msg.content, style="rgb(0,240,240)")
+        text = Text(msg.content, style=rgb_str(self.palette.notify_info))
         return Static(text, classes="msg-info")
 
     def _success_message(self, msg: Message) -> Static:
-        text = Text(msg.content, style="rgb(180,255,60)")
+        text = Text(msg.content, style=rgb_str(self.palette.notify_success))
         return Static(text, classes="msg-success")
 
     # --- Tool rendering ---
@@ -556,9 +545,10 @@ class ChatLog(VerticalScroll):
             display_name = parts[1]
 
         text = Text()
-        text.append(f" {display_name} ", style="black on rgb(0,240,240)")
+        badge_bg = rgb_str(self.palette.tool_card)
+        text.append(f" {display_name} ", style=f"bold black on {badge_bg}")
         if mcp_prefix:
-            text.append(mcp_prefix, style="dim rgb(0,240,240)")
+            text.append(mcp_prefix, style=f"dim {badge_bg}")
         return text
 
     def _render_tool_header(self, entry: ToolEntry) -> Text:
@@ -566,15 +556,15 @@ class ChatLog(VerticalScroll):
         text.append(self._tool_badge_text(entry.tool_name))
 
         if entry.args:
-            text.append(f" {entry.args}", style="rgb(180,200,190)")
+            text.append(f" {entry.args}", style=f"dim {rgb_str(self.palette.foreground)}")
 
         if entry.status == "running":
             frame = getattr(entry, "_spinner_frame", "⠋")
-            text.append(f" {frame}", style="bold rgb(0,240,240)")
+            text.append(f" {frame}", style=f"bold {rgb_str(self.palette.tool_card)}")
         elif entry.status == "success":
-            text.append(" ✓", style="bold rgb(180,255,60)")
+            text.append(" ✓", style=f"bold {rgb_str(self.palette.notify_success)}")
         elif entry.status == "error":
-            text.append(" ✗", style="bold rgb(255,105,180)")
+            text.append(" ✗", style=f"bold {rgb_str(self.palette.notify_error)}")
 
         return text
 
@@ -596,7 +586,13 @@ class ChatLog(VerticalScroll):
         if tool_name == "edit_file" and success and tool_input:
             old_string = tool_input.get("old_string", "")
             new_string = tool_input.get("new_string", "")
-            diff_text = tool_summary.build_edit_diff_text(old_string, new_string)
+            diff_text = tool_summary.build_edit_diff_text(
+                old_string,
+                new_string,
+                add_color=rgb_str(self.palette.notify_success),
+                del_color=rgb_str(self.palette.notify_error),
+                hunk_color=f"dim {rgb_str(self.palette.secondary)}",
+            )
             if diff_text is not None:
                 return Static(diff_text, classes="msg-tool-output tool-card")
 
@@ -607,7 +603,7 @@ class ChatLog(VerticalScroll):
         if not summary:
             return None
 
-        color = "rgb(130,220,100)" if success else "rgb(255,105,180)"
+        color = rgb_str(self.palette.notify_success) if success else rgb_str(self.palette.notify_error)
         text = Text(summary, style=color)
         return Static(text, classes="msg-tool-output tool-card")
 
@@ -682,11 +678,12 @@ class ChatLog(VerticalScroll):
 
         # Update header to show agent name as tool badge with status
         header_text = Text()
-        header_text.append(f" {agent_name} ", style="black on rgb(0,240,240)")
+        subagent_badge_color = rgb_str(self.palette.secondary)
+        header_text.append(f" {agent_name} ", style=f"bold black on {subagent_badge_color}")
         if success:
-            header_text.append(" ✓", style="bold rgb(180,255,60)")
+            header_text.append(" ✓", style=f"bold {rgb_str(self.palette.notify_success)}")
         else:
-            header_text.append(" ✗", style="bold rgb(255,105,180)")
+            header_text.append(" ✗", style=f"bold {rgb_str(self.palette.notify_error)}")
         if entry.header_widget:
             entry.header_widget.update(header_text)
 
@@ -757,7 +754,8 @@ class ChatLog(VerticalScroll):
 
     def _thinking_badge_text(self) -> Text:
         text = Text()
-        text.append(" Thinking ", style="black on rgb(180,140,255)")
+        thinking_bg = rgb_str(self.palette.thinking_card)
+        text.append(" Thinking ", style=f"bold black on {thinking_bg}")
         return text
 
     def cleanup_pending_thinking(self) -> None:
@@ -802,7 +800,7 @@ class ChatLog(VerticalScroll):
             self.mount(header_widget)
             self._messages.append(header_widget)
 
-        body_text = Text(display, style="dim italic rgb(190,180,220)")
+        body_text = Text(display, style=f"dim italic {rgb_str(self.palette.thinking_card)}")
         body_widget = Static(body_text, classes="msg-tool-output thinking-card")
         self.mount(body_widget, after=header_widget)
         self._messages.append(body_widget)
@@ -836,7 +834,8 @@ class ChatLog(VerticalScroll):
         self._scroll_to_bottom()
 
     def add_separator(self) -> None:
-        widget = Rule(line_style="dashed")
+        widget = Rule(line_style="dashed", classes="dashed")
+        widget.styles.color = rgb_str(self.palette.turn_separator)
         self.mount(widget)
         self._messages.append(widget)
         self._maybe_prune()

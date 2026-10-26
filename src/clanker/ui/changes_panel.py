@@ -15,6 +15,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, ListItem, ListView, Static
 
 from clanker.changes import Change, ChangeJournal
+from clanker.config.theme import get_theme_config, rgb_str
 
 
 class ChangesScreen(ModalScreen[None]):
@@ -150,7 +151,8 @@ class ChangesScreen(ModalScreen[None]):
             if self.on_undo:
                 self.on_undo(ids)
         except (OSError, ValueError) as exc:
-            notice.update(Text(str(exc), style="bold rgb(255,105,180)"))
+            pal = get_theme_config().palette
+            notice.update(Text(str(exc), style=f"bold {rgb_str(pal.notify_error)}"))
         finally:
             self._undoing = False
             self._confirm = ()

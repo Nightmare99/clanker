@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 from dataclasses import dataclass
 from typing import Literal
@@ -86,10 +87,15 @@ class ToolStatus(Static):
             mcp_prefix = f"[{parts[0]}] "
             display_name = parts[1]
 
+        from clanker.config.theme import get_theme_config, rgb_str
+
+        pal = get_theme_config().palette
+        badge_bg = rgb_str(pal.tool_card)
+
         text = Text()
-        text.append(f" {display_name} ", style="black on rgb(0,190,220)")
+        text.append(f" {display_name} ", style=f"bold black on {badge_bg}")
         if mcp_prefix:
-            text.append(f" {mcp_prefix}", style="dim cyan")
+            text.append(f" {mcp_prefix}", style=f"dim {badge_bg}")
         return text
 
     def _update_display(self) -> None:
@@ -101,6 +107,10 @@ class ToolStatus(Static):
             self._stop_spinner_timer()
             return
 
+        from clanker.config.theme import get_theme_config, rgb_str
+
+        pal = get_theme_config().palette
+
         self.add_class("has-tools")
         lines = []
         for tool in all_tools:
@@ -109,22 +119,22 @@ class ToolStatus(Static):
             text.append(" ")
 
             if tool.args:
-                text.append(tool.args, style="rgb(200,220,210)")
+                text.append(tool.args, style=f"dim {rgb_str(pal.foreground)}")
 
             if tool.status == "running":
                 frame = next(self._spinner_iter)
                 text.append("  ", style="dim")
-                text.append(frame, style="dim cyan")
+                text.append(frame, style=f"bold {rgb_str(pal.tool_card)}")
             elif tool.status == "success":
                 text.append("  ", style="dim")
-                text.append("✓ ", style="bold rgb(130,220,100)")
+                text.append("✓ ", style=f"bold {rgb_str(pal.notify_success)}")
                 if tool.result:
-                    text.append(tool.result, style="rgb(130,220,100)")
+                    text.append(tool.result, style=rgb_str(pal.notify_success))
             elif tool.status == "error":
                 text.append("  ", style="dim")
-                text.append("✗ ", style="bold rgb(255,105,180)")
+                text.append("✗ ", style=f"bold {rgb_str(pal.notify_error)}")
                 if tool.result:
-                    text.append(tool.result, style="bold rgb(255,105,180)")
+                    text.append(tool.result, style=f"bold {rgb_str(pal.notify_error)}")
 
             lines.append(text)
 
@@ -143,7 +153,5 @@ class ToolStatus(Static):
 
     def _stop_spinner_timer(self) -> None:
         """Stop periodic spinner animation."""
-        try:
+        with contextlib.suppress(Exception):
             self.remove_interval("tool-spinner")
-        except Exception:
-            pass

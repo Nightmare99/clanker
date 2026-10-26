@@ -24,6 +24,7 @@ Toast.-information {
 #input-area {
     dock: bottom;
     height: auto;
+    border-top: solid rgb(60, 60, 80);
 }
 
 /* === Chat Log === */
@@ -32,7 +33,7 @@ ChatLog {
     height: 1fr;
     overflow-y: scroll;
     border: none;
-    padding: 1;
+    padding: 0 1 1 1;
 }
 
 ChatLog .msg-user {
@@ -123,6 +124,8 @@ ChatLog .msg-success {
 /* Hero section */
 ChatLog #hero-widget {
     width: 1fr;
+    margin: 0;
+    padding: 0;
 }
 
 /* Update-available banner, mounted below the hero */
@@ -134,22 +137,32 @@ ChatLog .update-banner {
     width: auto;
 }
 
-/* HR after hero — cyan */
-ChatLog > Rule {
+/* HR after hero */
+ChatLog > Rule.hero-divider,
+ChatLog Rule.hero-divider {
     color: rgb(0, 240, 240);
 }
 
-/* Turn separators — dim */
-ChatLog > Rule.dashed {
+/* Turn separators and line breaks */
+ChatLog > Rule.dashed,
+ChatLog Rule.dashed {
+    color: rgb(60, 60, 80);
+}
+
+ChatLog > Rule,
+ChatLog Rule {
     color: rgb(60, 60, 80);
 }
 
 /* === Status Bar — hidden when empty, auto-shows === */
 StatusBar {
-    height: 1;
+    height: auto;
     dock: top;
     background: rgb(15, 15, 15);
+    border: none;
+    border-bottom: tab rgb(60, 60, 80);
     visibility: hidden;
+    margin: 0;
     padding: 0 1;
 }
 

@@ -13,6 +13,7 @@ An AI-powered coding assistant CLI built with LangChain and LangGraph.
 - Easy model switching with `/model` command
 - Extended thinking support for Claude models
 - Web-based configuration UI with dedicated Models and Accounts sections
+- **Theme Customization**: Full color palette configuration for TUI elements, custom hero ASCII art, animated banner gradient controls, and curated presets
 - MCP server support for extensibility
 
 ## Quick Start

@@ -18,6 +18,7 @@ def app(monkeypatch, request):
     monkeypatch.setattr(keyboard, "is_macos", lambda: request.param)
     monkeypatch.setattr(ClankerApp, "_load_history", lambda self: [])
     monkeypatch.setattr(ClankerApp, "_save_history", lambda self: None)
+    monkeypatch.setattr(ClankerApp, "_refresh_selected_model", lambda self: None)
     application = ClankerApp(Console())
     application._play_hero = AsyncMock()
     application.action_interrupt = MagicMock()
@@ -168,8 +169,8 @@ async def test_copy_toast_is_compact_themed_and_counts_characters(app):
         assert str(toast.render()) == f"Copied {len(selected)} characters"
         assert toast.region.height == 1
         assert toast.region.width < 40
-        assert toast.styles.background == Color.parse("#0f0f0f")
-        assert toast.styles.color == Color.parse("#c8c8c8")
+        assert toast.styles.background == Color.parse(app.get_css_variables()["surface"])
+        assert toast.styles.color == Color.parse(app.get_css_variables()["foreground"])
         assert toast.styles.border_left[1] == Color.parse(app.get_css_variables()["success"])
         await pilot.pause(1.6)
         assert not app.screen.query("Toast")

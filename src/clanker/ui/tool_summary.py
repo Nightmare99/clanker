@@ -314,14 +314,33 @@ def build_todo_checklist_text(
     total = len(todos)
     completed = sum(1 for t in todos if t.get("status") == "completed")
 
+    try:
+        from clanker.config.theme import get_theme_config, rgb_str
+
+        pal = get_theme_config().palette
+        done_color = rgb_str(pal.notify_success)
+        active_color = rgb_str(pal.primary)
+    except Exception:
+        done_color = "green"
+        active_color = "cyan"
+
+    status_icons = {
+        "completed": ("✓", done_color),
+        "in_progress": ("▶", f"bold {active_color}"),
+        "pending": ("☐", "dim"),
+    }
+
     result = Text()
     result.append(f"{indent}Plan  ", style="bold")
-    result.append(f"{completed}/{total} done", style="bold green" if completed == total else "bold cyan")
+    result.append(
+        f"{completed}/{total} done",
+        style=f"bold {done_color}" if completed == total else f"bold {active_color}",
+    )
 
     shown = todos if max_items is None else todos[:max_items]
     for item in shown:
         status = item.get("status", "pending")
-        icon, icon_style = _TODO_STATUS_ICONS.get(status, _TODO_STATUS_ICONS["pending"])
+        icon, icon_style = status_icons.get(status, status_icons["pending"])
         if status == "in_progress":
             label = item.get("active_form") or item.get("content", "")
             text_style = "bold"
@@ -348,6 +367,9 @@ def build_edit_diff_text(
     new_string: str,
     max_lines: int = 20,
     max_line_len: int = 120,
+    add_color: str | None = None,
+    del_color: str | None = None,
+    hunk_color: str | None = None,
 ) -> Text | None:
     """Build a compact unified diff (changed lines + small context) as Rich Text.
 
@@ -358,6 +380,18 @@ def build_edit_diff_text(
     """
     old_lines = old_string.splitlines() or [""]
     new_lines = new_string.splitlines() or [""]
+
+    try:
+        from clanker.config.theme import get_theme_config, rgb_str
+
+        pal = get_theme_config().palette
+        add_style = add_color or rgb_str(pal.notify_success)
+        del_style = del_color or rgb_str(pal.notify_error)
+        hunk_style = hunk_color or f"dim {rgb_str(pal.secondary)}"
+    except Exception:
+        add_style = add_color or "green"
+        del_style = del_color or "rgb(255,105,180)"
+        hunk_style = hunk_color or "dim cyan"
 
     # Small context window so unchanged shared prefix/suffix (common when
     # old_string/new_string overlap heavily) is collapsed rather than shown
@@ -371,7 +405,7 @@ def build_edit_diff_text(
             continue
         if raw.startswith("@@"):
             t = Text()
-            t.append(raw, style="dim cyan")
+            t.append(raw, style=hunk_style)
             rendered.append(t)
             continue
         sign = raw[:1]
@@ -379,9 +413,9 @@ def build_edit_diff_text(
         if len(body) > max_line_len:
             body = body[:max_line_len] + "..."
         if sign == "+":
-            style, prefix = "green", "+ "
+            style, prefix = add_style, "+ "
         elif sign == "-":
-            style, prefix = "rgb(255,105,180)", "- "
+            style, prefix = del_style, "- "
         else:
             style, prefix = "dim", "  "
         t = Text()
