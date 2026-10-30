@@ -183,6 +183,45 @@ def handle_command(
             chat_log.clear()
             chat_log.add_message("Memory banks wiped. Fresh slate initialized.", MessageType.SYSTEM)
 
+    elif parts[0].lower() == "/effort":
+        from clanker.config.models import add_model
+        from clanker.config.reasoning import reasoning_capabilities, validate_reasoning_effort
+
+        active_name = session_manager.model_name if session_manager else None
+        model = (get_model_by_name(active_name) if active_name else None) or get_default_model()
+        if model is None:
+            message = "No model configured. Configure a model before changing effort."
+            console.print_warning(message)
+            _mirror(message, MessageType.WARNING)
+            return None
+        capabilities = reasoning_capabilities(model.provider, model.model, model.deployment_name)
+        if len(parts) == 1:
+            levels = ", ".join(capabilities["levels"]) or "unavailable"
+            message = (
+                f"Effort for {model.name}: {model.reasoning_effort or 'provider default'}\n"
+                f"Supported levels: {levels}\n{capabilities['description']}\n"
+                "Use /effort <level> or /effort default. Changes are saved per model."
+            )
+            console.print_info(message)
+            _mirror(message)
+        else:
+            level = parts[1].strip().lower()
+            effort = None if level == "default" else level
+            try:
+                validate_reasoning_effort(model.provider, model.model, effort, model.deployment_name)
+                add_model(model.model_copy(update={"reasoning_effort": effort}))
+            except (ValueError, OSError) as exc:
+                message = f"Cannot change effort: {exc}"
+                console.print_warning(message)
+                _mirror(message, MessageType.WARNING)
+                return None
+            message = (
+                f"Effort for {model.name}: {effort or 'provider default'}. "
+                "Saved; takes effect on the next message."
+            )
+            console.print_success(message)
+            _mirror(message, MessageType.SUCCESS)
+
     elif cmd.startswith("/model"):
         model_names = list_model_names()
         if len(parts) == 1:
@@ -656,7 +695,7 @@ class CommandCompleter:
     """Autocomplete for slash commands (used by legacy REPL and tests)."""
 
     COMMANDS = [
-        "/help", "/exit", "/quit", "/q", "/clear", "/model", "/copilot-login", "/antigravity-login", "/openai-login",
+        "/help", "/exit", "/quit", "/q", "/clear", "/model", "/effort", "/copilot-login", "/antigravity-login", "/openai-login",
         "/config", "/mcp", "/logs", "/history", "/restore", "/resume", "/import", "/compact",
         "/memories", "/remember", "/forget", "/reload", "/workflow", "/skill",
     ]
@@ -1196,13 +1235,25 @@ def run_interactive_legacy(
     history_path.parent.mkdir(parents=True, exist_ok=True)
 
     class CommandCompleter(Completer):
-        COMMANDS = ["/help", "/exit", "/quit", "/q", "/clear", "/model", "/copilot-login", "/antigravity-login", "/openai-login",
+        COMMANDS = ["/help", "/exit", "/quit", "/q", "/clear", "/model", "/effort", "/copilot-login", "/antigravity-login", "/openai-login",
                     "/config", "/mcp", "/logs", "/history", "/restore", "/resume", "/import", "/compact",
                     "/memories", "/remember", "/forget", "/reload", "/workflow", "/skill"]
 
         def get_completions(self, document, complete_event):
             text = document.text_before_cursor
             if not text.startswith("/"):
+                return
+            if text.startswith("/effort "):
+                from clanker.config.reasoning import reasoning_capabilities
+
+                active_name = session_manager.model_name
+                model = (get_model_by_name(active_name) if active_name else None) or get_default_model()
+                if model:
+                    prefix = text[len("/effort "):]
+                    levels = reasoning_capabilities(model.provider, model.model, model.deployment_name)["levels"]
+                    for level in ["default", *levels]:
+                        if level.startswith(prefix.lower()):
+                            yield Completion(level, start_position=-len(prefix))
                 return
             if text.startswith("/model "):
                 model_prefix = text[7:]

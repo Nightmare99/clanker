@@ -10,7 +10,7 @@ The recommended way to configure LLM providers is using the JSON-based models co
 - Switch between models easily with the `/model` command
 - Store API keys and connection settings per model
 - Enable extended thinking for Anthropic models
-- Enable reasoning for Azure OpenAI o1/o3 models
+- Select [model-specific reasoning effort](reasoning-effort.md) for supported providers
 
 ### Example models.json
 

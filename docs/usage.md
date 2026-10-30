@@ -54,6 +54,7 @@ Inside the interactive session:
 | `/compact` | Summarize older context with the current session model; Ctrl+C cancels in the TUI |
 | `/model` | List available models and show current |
 | `/model <name>` | Switch to a different model |
+| `/effort [level\|default]` | Show or change the active model's reasoning effort; saved per model, applies next message |
 | `/copilot-login` | Connect a GitHub Copilot subscription as a model provider |
 | `/antigravity-login` | Connect a Google account for Antigravity models (unofficial integration) |
 | `/openai-login` | Connect a ChatGPT account and discover available coding models |

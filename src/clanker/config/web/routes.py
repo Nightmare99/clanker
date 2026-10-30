@@ -32,6 +32,7 @@ from clanker.config.models import (
     remove_model,
     set_default_model,
 )
+from clanker.config.reasoning import reasoning_capabilities, validate_reasoning_effort
 from clanker.config.theme import (
     DEFAULT_ASCII_ART,
     MINIMAL_ASCII_ART,
@@ -433,10 +434,20 @@ async def get_models() -> ModelsResponse:
     )
 
 
+@router.get("/models/reasoning-capabilities")
+async def get_reasoning_capabilities(provider: str, model: str = "", deployment_name: str | None = None):
+    return reasoning_capabilities(provider, model, deployment_name)
+
+
 @router.post("/models", response_model=MessageResponse)
 async def create_model_config(request: ModelRequest) -> MessageResponse:
     """Add or update a model configuration."""
     try:
+        try:
+            validate_reasoning_effort(request.provider, request.model, request.reasoning_effort, request.deployment_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
         model = ModelConfig(
             name=request.name,
             provider=request.provider,
@@ -461,6 +472,8 @@ async def create_model_config(request: ModelRequest) -> MessageResponse:
         )
         add_model(model)
         return MessageResponse(message=f"Model '{request.name}' saved successfully", success=True)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -478,6 +491,11 @@ async def update_model_config(name: str, request: ModelRequest) -> MessageRespon
         api_key = request.api_key
         if api_key and api_key.startswith("****") or (api_key and "..." in api_key):
             api_key = existing.api_key
+
+        try:
+            validate_reasoning_effort(request.provider, request.model, request.reasoning_effort, request.deployment_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
         model = ModelConfig(
             name=request.name,

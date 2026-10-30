@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from clanker.config.reasoning import uses_adaptive_thinking, validate_reasoning_effort
 from clanker.logging import get_logger
 
 logger = get_logger("config.models")
@@ -200,8 +201,8 @@ class ModelConfig(BaseModel):
     thinking_enabled: bool = Field(default=False, description="Enable extended thinking mode")
     thinking_budget_tokens: int = Field(default=10000, description="Token budget for thinking")
 
-    # Reasoning effort (Azure OpenAI o1/o3 models)
-    reasoning_effort: str | None = Field(default=None, description="Reasoning effort: low, medium, high")
+    # Provider/model-specific reasoning effort; None preserves the provider default.
+    reasoning_effort: str | None = Field(default=None, description="Model-specific reasoning effort (unset uses provider default)")
 
     # Use OpenAI's /responses endpoint instead of /chat/completions. Optional
     # per-model toggle -- most OpenAI-compatible endpoints (OpenRouter, local
@@ -402,6 +403,7 @@ def remove_model(name: str) -> bool:
 
 def create_llm_from_config(model_config: ModelConfig):
     """Create a LangChain LLM from model configuration."""
+    validate_reasoning_effort(model_config.provider, model_config.model, model_config.reasoning_effort, model_config.deployment_name)
     provider = model_config.provider
 
     if provider == "OpenAI":
@@ -510,17 +512,19 @@ def create_llm_from_config(model_config: ModelConfig):
         if not api_key:
             raise ValueError(f"API key not set for model '{model_config.name}'")
 
+        adaptive = uses_adaptive_thinking(model_config.model)
+
         # Determine max_tokens
         if model_config.max_tokens:
             max_tokens = model_config.max_tokens
-        elif model_config.thinking_enabled:
+        elif model_config.thinking_enabled and not adaptive:
             # max_tokens must be > thinking.budget_tokens, add buffer for response
             max_tokens = model_config.thinking_budget_tokens + 16000
         else:
             max_tokens = 4096
 
         # Validate max_tokens > thinking budget when thinking is enabled
-        if model_config.thinking_enabled and max_tokens <= model_config.thinking_budget_tokens:
+        if model_config.thinking_enabled and not adaptive and max_tokens <= model_config.thinking_budget_tokens:
             raise ValueError(
                 f"max_tokens ({max_tokens}) must be greater than thinking_budget_tokens "
                 f"({model_config.thinking_budget_tokens})"
@@ -540,7 +544,7 @@ def create_llm_from_config(model_config: ModelConfig):
             kwargs["profile"] = {"max_input_tokens": model_config.max_input_tokens}
 
         # Extended thinking support
-        if model_config.thinking_enabled:
+        if model_config.thinking_enabled and not adaptive:
             kwargs["thinking"] = {
                 "type": "enabled",
                 "budget_tokens": model_config.thinking_budget_tokens,
@@ -551,6 +555,11 @@ def create_llm_from_config(model_config: ModelConfig):
                 model_config.thinking_budget_tokens,
                 max_tokens,
             )
+
+        if model_config.thinking_enabled and adaptive:
+            kwargs["thinking"] = {"type": "adaptive"}
+        if model_config.reasoning_effort is not None:
+            kwargs["model_kwargs"] = {"output_config": {"effort": model_config.reasoning_effort}}
 
         llm = ChatAnthropic(**kwargs)
         _isolate_anthropic_http_client(llm)

@@ -68,7 +68,7 @@ _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇"
 _SLASH_COMMANDS = [
     "/changes", "/tasks",
     "/clear", "/compact", "/config", "/copilot-login", "/antigravity-login", "/openai-login", "/exit", "/forget",
-    "/help", "/history", "/list_memories", "/logs", "/memories", "/model",
+    "/help", "/history", "/list_memories", "/logs", "/memories", "/model", "/effort",
     "/import", "/mcp", "/reload", "/remember", "/restore", "/resume", "/skill", "/workflow",
 ]
 
@@ -1345,7 +1345,7 @@ class ClankerApp(App):
 
         command = text.strip().lower()
         head = command.split(maxsplit=1)[0]
-        if head in ("/compact", "/clear", "/reload") and getattr(self, "_processing", False):
+        if head in ("/compact", "/clear", "/reload", "/effort") and getattr(self, "_processing", False):
             self.get_chat_log().add_message(
                 "Wait for the current operation, or press Ctrl+C to cancel it first.",
                 MessageType.WARNING,
@@ -1861,6 +1861,18 @@ class ClankerApp(App):
             if cmd == "/model":
                 from clanker.config import list_model_names
                 completions = list_model_names()
+            elif cmd == "/effort":
+                from clanker.config import get_default_model, get_model_by_name
+                from clanker.config.reasoning import reasoning_capabilities
+
+                manager = self._session_manager
+                active_name = manager.model_name if manager else None
+                model = (get_model_by_name(active_name) if active_name else None) or get_default_model()
+                completions = ["default"]
+                if model:
+                    completions.extend(reasoning_capabilities(
+                        model.provider, model.model, model.deployment_name,
+                    )["levels"])
             elif cmd == "/skill":
                 from clanker.skills import list_skills
                 completions = list(list_skills().keys())

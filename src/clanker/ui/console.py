@@ -188,6 +188,7 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("/help", "Display this help matrix"),
         ("/clear", "Wipe conversation memory banks"),
         ("/model", "Query current AI model status"),
+        ("/effort [level|default]", "Show or change the active model reasoning effort"),
         ("/copilot-login", "Connect a GitHub Copilot subscription as a model provider"),
         ("/antigravity-login", "Connect a Google account for Antigravity models"),
         ("/openai-login", "Connect a ChatGPT account for coding models"),

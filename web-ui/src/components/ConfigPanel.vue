@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, inject } from 'vue'
+import { ref, onMounted, computed, inject, watch } from 'vue'
 import AccountConnectionCard from './AccountConnectionCard.vue'
 import type { Ref } from 'vue'
 import {
@@ -273,6 +273,39 @@ const isModelFormChatGPT = computed(() => modelForm.value.provider === 'ChatGPT'
 const isModelFormAntigravity = computed(() => modelForm.value.provider === 'Antigravity')
 const isModelFormOllama = computed(() => modelForm.value.provider === 'Ollama')
 
+// Shared backend capability rules keep offered levels aligned with request validation.
+const effortCapabilities = ref<{ levels: string[]; description: string; adaptive_thinking?: boolean }>({ levels: [], description: '' })
+const loadingEffort = ref(false)
+const effortError = ref('')
+const effortOptions = computed(() => effortCapabilities.value.levels.map(value => ({
+  value, label: ({ none: 'None (no reasoning)', minimal: 'Minimal', low: 'Low', medium: 'Medium',
+    high: 'High', xhigh: 'Extra high', max: 'Maximum' } as Record<string, string>)[value] || value,
+})))
+const invalidEffort = computed(() => !!modelForm.value.reasoning_effort &&
+  !effortCapabilities.value.levels.includes(modelForm.value.reasoning_effort))
+const adaptiveThinking = computed(() => isModelFormAnthropic.value && !!effortCapabilities.value.adaptive_thinking)
+watch(() => [showModelModal.value, modelForm.value.provider, modelForm.value.model,
+  modelForm.value.deployment_name], async (_, __, onCleanup) => {
+  const controller = new AbortController()
+  onCleanup(() => controller.abort())
+  if (!showModelModal.value) return
+  loadingEffort.value = true
+  effortError.value = ''
+  effortCapabilities.value = { levels: [], description: '' }
+  try {
+    const query = new URLSearchParams({ provider: modelForm.value.provider,
+      model: modelForm.value.model || '', deployment_name: modelForm.value.deployment_name || '' })
+    const response = await fetch(`/api/models/reasoning-capabilities?${query}`, { signal: controller.signal })
+    if (!response.ok) throw new Error('Failed to load reasoning capabilities')
+    const capabilities = await response.json()
+    if (!controller.signal.aborted) effortCapabilities.value = capabilities
+  } catch {
+    if (!controller.signal.aborted) effortError.value = 'Could not load effort options. Reopen the model editor to retry.'
+  } finally {
+    if (!controller.signal.aborted) loadingEffort.value = false
+  }
+}, { immediate: true })
+
 // Get placeholder for model ID based on provider
 const modelIdPlaceholder = computed(() => {
   switch (modelForm.value.provider) {
@@ -397,6 +430,10 @@ async function saveModel() {
     return
   }
 
+  if (loadingEffort.value || effortError.value || invalidEffort.value) {
+    message.error('Choose a supported effort or clear it to use the provider default.')
+    return
+  }
   savingModel.value = true
   try {
     const url = editingModel.value
@@ -1150,33 +1187,31 @@ onMounted(() => {
                 </small>
               </NAlert>
 
-              <!-- Reasoning Effort (OpenAI o1/o3/GPT-5+ models) -->
-              <template v-if="isModelFormAzure || isModelFormOpenAI || isModelFormChatGPT">
-                <NDivider style="margin: 16px 0">Reasoning (o1/o3/GPT-5+ models)</NDivider>
+              <NDivider style="margin: 16px 0">Reasoning effort</NDivider>
+              <NFormItem label="Effort">
+                <NSelect
+                  v-model:value="modelForm.reasoning_effort"
+                  clearable
+                  :loading="loadingEffort"
+                  :disabled="loadingEffort || !!effortError || (!effortOptions.length && !modelForm.reasoning_effort)"
+                  placeholder="Provider default"
+                  :options="effortOptions"
+                />
+              </NFormItem>
+              <NAlert :type="effortError || invalidEffort ? 'warning' : 'info'" style="margin-bottom: 16px">
+                <small v-if="effortError">{{ effortError }}</small>
+                <small v-else-if="invalidEffort">
+                  The saved effort “{{ modelForm.reasoning_effort }}” is not supported for this model.
+                  Choose an available level or clear the selection to use the provider default.
+                </small>
+                <small v-else>
+                  {{ effortCapabilities.description }}
+                  Clearing the selection leaves effort unset; it does not disable reasoning.
+                  Higher effort can increase latency and token usage.
+                </small>
+              </NAlert>
 
-                <NFormItem label="Reasoning Effort">
-                  <NSelect
-                    v-model:value="modelForm.reasoning_effort"
-                    clearable
-                    placeholder="None (disabled)"
-                    :options="[
-                      { label: 'Minimal', value: 'minimal' },
-                      { label: 'Low', value: 'low' },
-                      { label: 'Medium', value: 'medium' },
-                      { label: 'High', value: 'high' },
-                      { label: 'Extra High (GPT-5.1+)', value: 'xhigh' },
-                    ]"
-                  />
-                </NFormItem>
-
-                <NAlert v-if="modelForm.reasoning_effort" type="info" style="margin-top: 8px">
-                  <small>
-                    Reasoning effort controls how much the model "thinks" before responding.
-                    Works with o1, o3, GPT-5, and newer reasoning-capable models.
-                    "xhigh" is only supported for models after GPT-5.1.
-                  </small>
-                </NAlert>
-
+              <template v-if="isModelFormAzure || isModelFormOpenAI || isModelFormChatGPT || isModelFormCopilot">
                 <NDivider style="margin: 16px 0">Streaming</NDivider>
 
                 <NFormItem label="Stream Chunk Timeout (s)">
@@ -1247,7 +1282,7 @@ onMounted(() => {
                   <NSwitch v-model:value="modelForm.thinking_enabled" />
                 </NFormItem>
 
-                <NFormItem v-if="modelForm.thinking_enabled" label="Budget Tokens">
+                <NFormItem v-if="modelForm.thinking_enabled && !adaptiveThinking" label="Budget Tokens">
                   <NInputNumber
                     v-model:value="modelForm.thinking_budget_tokens"
                     :min="1"
@@ -1260,6 +1295,7 @@ onMounted(() => {
                   <small>
                     Extended thinking allows the model to reason through complex problems.
                     <template v-if="isModelFormAntigravity">Claude thinking models use at least Budget + 8,192 output tokens.</template>
+                    <template v-else-if="adaptiveThinking">This model uses adaptive thinking. Effort controls reasoning depth; no fixed token budget is sent.</template>
                     <template v-else><strong>Max Tokens must be greater than Budget Tokens.</strong>
                     If not set, it defaults to Budget + 16,000.</template>
                   </small>
@@ -1329,7 +1365,7 @@ onMounted(() => {
             <template #footer>
               <NSpace justify="end">
                 <NButton @click="showModelModal = false">Cancel</NButton>
-                <NButton type="primary" :loading="savingModel" @click="saveModel">
+                <NButton type="primary" :loading="savingModel" :disabled="loadingEffort || !!effortError || invalidEffort" @click="saveModel">
                   {{ editingModel ? 'Update' : 'Add Model' }}
                 </NButton>
               </NSpace>
