@@ -148,16 +148,10 @@ class TaskPromptScreen(ModalScreen[dict[str, Any]]):
     def action_cancel(self) -> None:
         if not self.allow_cancel:
             return
-        if self.is_current:
-            self.dismiss({"selected": [], "cancelled": True})
-        else:
-            self._cancel_pending = True
+        self.dismiss({"selected": [], "cancelled": True})
 
     def force_cancel(self) -> None:
-        if self.is_current:
-            self.dismiss({"selected": [], "cancelled": True})
-        else:
-            self._cancel_pending = True
+        self.dismiss({"selected": [], "cancelled": True})
 
     def on_screen_resume(self) -> None:
         if self._cancel_pending:
@@ -224,6 +218,8 @@ def show_prompt_modal(
                 seen_on_stack = True
             elif seen_on_stack:
                 return {"selected": [], "cancelled": True}
+        if getattr(screen, "_dismiss_received", False) or getattr(screen, "is_dismissed", False):
+            seen_on_stack = True
         if check_cancelled and check_cancelled():
             with contextlib.suppress(Exception):
                 app.call_from_thread(screen.force_cancel)

@@ -28,6 +28,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run tests
+        timeout-minutes: 10
         run: |
           python -m pytest tests/ -v --tb=short
 
