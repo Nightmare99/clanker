@@ -1,6 +1,7 @@
 /* Cyberpunk theme for Clanker TUI */
 
 Screen {
+    layers: base menu overlay;
     background: black;
     color: rgb(200, 200, 200);
 }

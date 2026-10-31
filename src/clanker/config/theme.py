@@ -541,6 +541,7 @@ def generate_tcss(theme: UIThemeConfig) -> str:
     return f"""
 /* Generated Clanker Theme Overrides */
 Screen {{
+    layers: base menu overlay;
     background: {rgb_str(p.background)};
     color: {rgb_str(p.foreground)};
 }}
@@ -866,6 +867,12 @@ _PagedScreen ListItem.--highlight {{
 TaskPromptScreen #task-question {{
     border: round {rgb_str(p.primary)};
     background: {rgb_str(p.surface)};
+    color: {rgb_str(p.foreground)};
+}}
+
+CompletionMenu {{
+    background: {rgb_str(p.surface)};
+    border: round {rgb_str(p.primary)};
     color: {rgb_str(p.foreground)};
 }}
 """

@@ -172,14 +172,14 @@ class PromptInput(Input):
     def on_key(self, event) -> None:
         key = event.key
 
-        # Tab: activate / cycle / accept completion
-        if key == "tab":
-            self._on_tab()
+        # Tab / Shift+Tab: activate / cycle / complete
+        if key in ("tab", "s-tab"):
+            self._on_tab(reverse=(key == "s-tab"))
             event.stop()
             return
 
-        # While menu is active AND engaged (user pressed Tab to take control) …
-        if self._menu_active and self._menu_engaged and self._completion_menu:
+        # While menu is active …
+        if self._menu_active and self._completion_menu and self._completion_menu.is_open:
             if key == "enter":
                 selected = self._completion_menu.get_selected()
                 if selected:
@@ -429,76 +429,179 @@ class PromptInput(Input):
     # -- auto-show menu on "/" transition --------------------------------------
 
     def watch_value(self, value: str) -> None:
-        """Show (or re-filter) the completion menu when input starts with '/'.
+        """Keep completion menu in sync with current input.
 
-        Fires on the initial "/" transition and then keeps the menu in sync
-        whenever the menu is already open — without consuming the key event
-        so the Input widget still processes every keystroke normally.
+        Auto-shows command candidates only when typing a leading '/' command name.
+        Hides menu when input is cleared or when matches drop to 0.
         """
-        prev = self._previous_value
         self._previous_value = value
 
-        if not value.startswith("/"):
-            if self._menu_active and self._completion_menu:
-                self._hide_menu()
+        if not self._completion_menu:
             return
 
-        # Case 1: just typed "/" — open the menu
-        if not prev.startswith("/"):
-            if self._completion_menu and not self._menu_active:
-                self._completion_menu.show(value)
-                if self._completion_menu._matches:
-                    self._menu_active = True
-        # Case 2: menu already open — re-filter to match edited text
-        elif self._menu_active and self._completion_menu:
-            self._completion_menu.show(value, engaged=self._menu_engaged)
+        cursor = self.cursor_position
+        # When typing a root slash command name like '/m' or '/re', keep menu open
+        if value.startswith("/") and " " not in value[:cursor]:
+            matches = self._completion_menu.compute_matches(value, cursor)
+            if matches:
+                # Keep currently selected match stable if still present
+                curr_selected = self._completion_menu.get_selected()
+                highlight = 0
+                if curr_selected:
+                    for idx, m in enumerate(matches):
+                        if m.value == curr_selected.value:
+                            highlight = idx
+                            break
+                self._completion_menu.show(matches, highlight_index=highlight)
+                self._menu_active = True
+            else:
+                self._hide_menu()
+        elif self._menu_active:
+            # Menu was opened via Tab for arguments or paths; update filtered candidates
+            matches = self._completion_menu.compute_matches(value, cursor)
+            if matches:
+                self._completion_menu.show(matches)
+            else:
+                self._hide_menu()
 
     # -- tab completion --------------------------------------------------------
 
-    def _on_tab(self) -> None:
+    def _on_tab(self, reverse: bool = False) -> None:
+        """Handle Tab / Shift+Tab press for intelligent, natural autocomplete."""
         text = self.value
-        if not text or not text.startswith("/"):
-            return
+        cursor = self.cursor_position
 
         if not self._completion_menu:
-            # Fallback: inline completion without menu
             self._tab_inline()
             return
 
-        # Record cursor position so we can restore relative position
-        self._tab_cursor_offset = self.cursor_position
+        # 1. If menu is open with a single match: accept it immediately on Tab!
+        if self._menu_active and self._completion_menu.is_open:
+            matches = self._completion_menu.get_matches()
+            if len(matches) == 1:
+                self._accept_completion(matches[0])
+                return
 
-        if self._menu_active and self._menu_engaged:
-            # Menu already engaged — accept highlighted item
-            selected = self._completion_menu.get_selected()
-            if selected:
-                self._accept_completion(selected)
+            # If multiple matches, Tab cycles through them
+            if reverse:
+                self._completion_menu.prev_item()
+            else:
+                self._completion_menu.next_item()
             return
 
-        # Menu may already be visible (auto-shown on "/"), but not yet engaged.
-        if not self._menu_active:
-            self._completion_menu.show(text, engaged=True)
-        else:
-            self._completion_menu.set_engaged(True)
+        # 2. Menu is not yet open: compute matches for current context
+        matches = self._completion_menu.compute_matches(text, cursor)
+        if not matches:
+            return
 
-        if self._completion_menu._matches:
-            self._menu_active = True
-            self._menu_engaged = True
+        # 3. Single match: complete immediately inline without opening a menu!
+        if len(matches) == 1:
+            self._accept_completion(matches[0])
+            return
+
+        # 4. Multiple matches: check if there is a common prefix to expand first
+        from clanker.ui.completion_menu import find_common_prefix
+        text_before_cursor = text[:cursor]
+        if text_before_cursor.startswith("/"):
+            if " " in text_before_cursor:
+                cmd_part, arg_part = text_before_cursor.split(maxsplit=1)
+                match_values = [m.value.split(maxsplit=1)[1] if " " in m.value else m.value for m in matches]
+                common = find_common_prefix(match_values)
+                if common and len(common) > len(arg_part):
+                    after = text[cursor:]
+                    self.value = f"{cmd_part} {common}{after}"
+                    self.cursor_position = len(f"{cmd_part} {common}")
+                    new_matches = self._completion_menu.compute_matches(self.value, self.cursor_position)
+                    if len(new_matches) > 1:
+                        self._completion_menu.show(new_matches, highlight_index=0)
+                        self._menu_active = True
+                    return
+            else:
+                match_values = [m.value for m in matches]
+                common = find_common_prefix(match_values)
+                if common and len(common) > len(text_before_cursor):
+                    after = text[cursor:]
+                    self.value = common + after
+                    self.cursor_position = len(common)
+                    new_matches = self._completion_menu.compute_matches(self.value, self.cursor_position)
+                    if len(new_matches) > 1:
+                        self._completion_menu.show(new_matches, highlight_index=0)
+                        self._menu_active = True
+                    return
+        else:
+            # File / path completion common prefix
+            tokens = text_before_cursor.split()
+            last_token = tokens[-1] if tokens and not text_before_cursor.endswith(" ") else ""
+            if last_token:
+                match_values = [m.value for m in matches]
+                common = find_common_prefix(match_values)
+                if common and len(common) > len(last_token):
+                    before = text_before_cursor[:-len(last_token)]
+                    after = text[cursor:]
+                    self.value = before + common + after
+                    self.cursor_position = len(before + common)
+                    new_matches = self._completion_menu.compute_matches(self.value, self.cursor_position)
+                    if len(new_matches) > 1:
+                        self._completion_menu.show(new_matches, highlight_index=0)
+                        self._menu_active = True
+                    return
+
+        # 5. Open menu showing all matches with the first item highlighted
+        self._completion_menu.show(matches, highlight_index=0)
+        self._menu_active = True
 
     def _tab_inline(self) -> None:
         """Inline completion fallback when no menu is wired."""
+        from clanker.ui.completion_menu import find_common_prefix
         text = self.value
         matches = [c for c in _SLASH_COMMANDS if c.startswith(text)]
-        if matches:
-            self.value = matches[0]
-            self.cursor_position = len(matches[0])
+        if len(matches) == 1:
+            self.value = matches[0] + " "
+            self.cursor_position = len(self.value)
+        elif len(matches) > 1:
+            common = find_common_prefix(matches)
+            if common and len(common) > len(text):
+                self.value = common
+                self.cursor_position = len(common)
 
-    def _accept_completion(self, completion: str) -> None:
-        """Replace the pre-cursor text with the completion, restore cursor offset."""
-        cursor = self._tab_cursor_offset
-        after = self.value[cursor:]
-        self.value = completion + after
-        self.cursor_position = len(completion) + len(after)
+    def _accept_completion(self, item: Any) -> None:
+        """Replace the completed token/command with the selected item's value."""
+        from clanker.ui.completion_menu import CompletionItem
+        completion_val = item.value if isinstance(item, CompletionItem) else str(item)
+        text = self.value
+        cursor = self.cursor_position
+        text_before = text[:cursor]
+        text_after = text[cursor:]
+
+        if text_before.startswith("/"):
+            if " " in text_before:
+                cmd_part, _ = text_before.split(maxsplit=1)
+                if completion_val.startswith("/"):
+                    completed_line = completion_val
+                else:
+                    completed_line = f"{cmd_part} {completion_val}"
+            else:
+                completed_line = completion_val
+
+            # Add trailing space after command/argument so user can type next argument immediately
+            if not text_after.startswith(" ") and not completed_line.endswith(("/", "\\", " ")):
+                completed_line += " "
+
+            self.value = completed_line + text_after
+            self.cursor_position = len(completed_line)
+        else:
+            tokens = text_before.split()
+            last_token = tokens[-1] if tokens and not text_before.endswith(" ") else ""
+            before = text_before[:-len(last_token)] if last_token else text_before
+
+            append_space = (
+                not isinstance(item, CompletionItem) or not item.is_dir
+            ) and not text_after.startswith(" ")
+
+            completed_token = completion_val + (" " if append_space else "")
+            self.value = before + completed_token + text_after
+            self.cursor_position = len(before + completed_token)
+
         self._hide_menu()
 
     def _hide_menu(self) -> None:
@@ -813,6 +916,15 @@ class ClankerApp(App):
         menu = self.query_one("#completion-menu", CompletionMenu)
         prompt_input.set_completion_menu(menu)
         menu.set_subcommand_completer(self._complete_subcommand)
+        menu.set_working_dir(self._working_dir or getattr(self._session_manager, "_workspace_path", None) or Path.cwd())
+        p = self._theme_config.palette
+        menu.set_theme_colors(
+            primary=p.primary,
+            secondary=p.secondary,
+            surface=p.surface,
+            foreground=p.foreground,
+            dim=p.turn_separator,
+        )
 
         # Apply theme-specific TCSS overrides
         from clanker.config.theme import generate_tcss
@@ -838,6 +950,15 @@ class ClankerApp(App):
         self.refresh_css()
         with suppress(Exception):
             self.get_chat_log().set_hero_theme(self._theme_config.hero)
+        with suppress(Exception):
+            menu = self.query_one("#completion-menu", CompletionMenu)
+            menu.set_theme_colors(
+                primary=p.primary,
+                secondary=p.secondary,
+                surface=p.surface,
+                foreground=p.foreground,
+                dim=p.turn_separator,
+            )
 
     async def _play_hero(self, chat_log: ChatLog) -> None:
         """Play the hero animation inside the chat log — persists after reveal.
