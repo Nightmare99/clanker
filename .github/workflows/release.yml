@@ -32,10 +32,10 @@ jobs:
           - os: ubuntu-latest
             artifact_name: clanker
             asset_name: clanker-linux-amd64
-          - os: macos-latest
+          - os: macos-15-intel
             artifact_name: clanker
             asset_name: clanker-darwin-amd64
-          - os: macos-14
+          - os: macos-latest
             artifact_name: clanker
             asset_name: clanker-darwin-arm64
           - os: windows-latest
