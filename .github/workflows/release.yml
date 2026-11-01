@@ -115,7 +115,9 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' || inputs.version != ''
+    if: >-
+      (always() && needs.build.result == 'success') &&
+      (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' || inputs.version != '')
 
     steps:
       - name: Checkout code
