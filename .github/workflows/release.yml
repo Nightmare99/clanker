@@ -43,33 +43,39 @@ jobs:
     if: inputs.skip_tests != true
     uses: ./.github/workflows/test.yml
 
+  resolve-targets:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          TARGET="${{ inputs.target || 'all' }}"
+          python3 -c "
+          import json
+          all_targets = [
+            {'os': 'ubuntu-latest', 'artifact_name': 'clanker', 'asset_name': 'clanker-linux-amd64', 'target_key': 'linux-amd64'},
+            {'os': 'macos-15-intel', 'artifact_name': 'clanker', 'asset_name': 'clanker-darwin-amd64', 'target_key': 'darwin-amd64'},
+            {'os': 'macos-latest', 'artifact_name': 'clanker', 'asset_name': 'clanker-darwin-arm64', 'target_key': 'darwin-arm64'},
+            {'os': 'windows-latest', 'artifact_name': 'clanker.exe', 'asset_name': 'clanker-windows-amd64.exe', 'target_key': 'windows-amd64'},
+          ]
+          target = '$TARGET'.strip().lower()
+          if target in ('', 'all'):
+              selected = all_targets
+          else:
+              selected = [t for t in all_targets if t['target_key'] == target or t['asset_name'] == target]
+          print(f'matrix={json.dumps(selected)}')
+          " >> $GITHUB_OUTPUT
+
   build:
-    needs: test
+    needs: [test, resolve-targets]
+    if: always() && (needs.test.result == 'success' || needs.test.result == 'skipped' || inputs.skip_tests == true)
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            artifact_name: clanker
-            asset_name: clanker-linux-amd64
-            target_key: linux-amd64
-          - os: macos-15-intel
-            artifact_name: clanker
-            asset_name: clanker-darwin-amd64
-            target_key: darwin-amd64
-          - os: macos-latest
-            artifact_name: clanker
-            asset_name: clanker-darwin-arm64
-            target_key: darwin-arm64
-          - os: windows-latest
-            artifact_name: clanker.exe
-            asset_name: clanker-windows-amd64.exe
-            target_key: windows-amd64
+        include: ${{ fromJson(needs.resolve-targets.outputs.matrix) }}
 
     runs-on: ${{ matrix.os }}
-    if: >-
-      (always() && (needs.test.result == 'success' || needs.test.result == 'skipped' || inputs.skip_tests == true)) &&
-      (inputs.target == null || inputs.target == '' || inputs.target == 'all' || inputs.target == matrix.target_key || inputs.target == matrix.asset_name)
 
     steps:
       - name: Checkout code
