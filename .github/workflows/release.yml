@@ -9,18 +9,38 @@ on:
       version:
         description: 'Version tag (e.g., v0.1.0)'
         required: true
+      target:
+        description: 'Target architecture to build (all, linux-amd64, darwin-arm64, darwin-amd64, windows-amd64)'
+        required: false
+        default: 'all'
+      skip_tests:
+        description: 'Skip running test suite'
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       version:
         description: 'Version tag (e.g., v0.1.0)'
         required: true
         type: string
+      target:
+        description: 'Target architecture to build (all, linux-amd64, darwin-arm64, darwin-amd64, windows-amd64)'
+        required: false
+        type: string
+        default: 'all'
+      skip_tests:
+        description: 'Skip running test suite'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 jobs:
   test:
+    if: inputs.skip_tests != true
     uses: ./.github/workflows/test.yml
 
   build:
@@ -32,17 +52,24 @@ jobs:
           - os: ubuntu-latest
             artifact_name: clanker
             asset_name: clanker-linux-amd64
+            target_key: linux-amd64
           - os: macos-15-intel
             artifact_name: clanker
             asset_name: clanker-darwin-amd64
+            target_key: darwin-amd64
           - os: macos-latest
             artifact_name: clanker
             asset_name: clanker-darwin-arm64
+            target_key: darwin-arm64
           - os: windows-latest
             artifact_name: clanker.exe
             asset_name: clanker-windows-amd64.exe
+            target_key: windows-amd64
 
     runs-on: ${{ matrix.os }}
+    if: >-
+      (always() && (needs.test.result == 'success' || needs.test.result == 'skipped' || inputs.skip_tests == true)) &&
+      (inputs.target == null || inputs.target == '' || inputs.target == 'all' || inputs.target == matrix.target_key || inputs.target == matrix.asset_name)
 
     steps:
       - name: Checkout code
@@ -90,6 +117,7 @@ jobs:
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           path: artifacts
 
