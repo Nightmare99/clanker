@@ -25,10 +25,10 @@ is running; finish or cancel it first. Tab completion offers supported levels.
 |---|---|
 | OpenAI / Azure OpenAI | Model-specific OpenAI effort values, sent through Chat Completions or Responses as appropriate. |
 | ChatGPT account | Model-specific OpenAI/Codex effort values through the existing Responses adapter. |
-| GitHub Copilot | OpenAI reasoning model effort through the selected endpoint. Claude/Gemini effort is not inferred from their names. Gateway availability may differ from direct OpenAI. |
-| Anthropic | Native `output_config.effort`. Opus 4.5 supports low/medium/high; Opus/Sonnet 4.6 also support max; newer supported models can offer xhigh. |
-| Antigravity | No verified effort mapping in this transport. Existing extended-thinking budgets remain available and are not relabeled as effort. |
-| Ollama | The existing legacy ChatOllama adapter does not expose Ollama's native `think` control; effort is unavailable in this integration. |
+| GitHub Copilot | Reasoning effort supported for OpenAI, Claude (e.g. Claude 3.7 Sonnet, Claude 4), and Gemini models through Copilot's endpoint. |
+| Anthropic | Native `output_config.effort` on Claude 3.7 Sonnet (low/medium/high), Opus 4.5, Opus/Sonnet 4.6 (adds max), and newer supported models (adds xhigh). |
+| Antigravity | Reasoning effort dynamically mapped to thinking budget tokens (low=2k, medium=8k, high=16k, xhigh=24k, max=32k) for Gemini and Claude models. |
+| Ollama | Reasoning effort forwarded to local reasoning models (e.g. DeepSeek-R1, QwQ, Qwen2.5-Coder). |
 
 For example, GPT-5 offers minimal/low/medium/high, GPT-5.1 offers
 none/low/medium/high, and GPT-5.2–5.5 add xhigh. GPT-5.2/5.3 Codex instead offer

@@ -26,9 +26,13 @@ from clanker.config.web.app import create_app
     ('Anthropic', 'claude-sonnet-4-6', ['low', 'medium', 'high', 'max']),
     ('Anthropic', 'claude-opus-4-7', ['low', 'medium', 'high', 'xhigh', 'max']),
     ('Anthropic', 'claude-sonnet-4-20250514', []),
-    ('GitHubCopilot', 'claude-sonnet-4.6', []),
+    ('Anthropic', 'claude-3-7-sonnet', ['low', 'medium', 'high']),
+    ('GitHubCopilot', 'claude-sonnet-4.6', ['low', 'medium', 'high', 'max']),
+    ('GitHubCopilot', 'claude-3.7-sonnet', ['low', 'medium', 'high']),
+    ('GitHubCopilot', 'gemini-2.0-flash', ['low', 'medium', 'high']),
     ('Ollama', 'qwen3', []),
-    ('Antigravity', 'gemini-3.8-flash-tiered', []),
+    ('Ollama', 'deepseek-r1', ['low', 'medium', 'high']),
+    ('Antigravity', 'gemini-3.8-flash-tiered', ['low', 'medium', 'high']),
 ])
 def test_capabilities(provider, model, levels):
     assert reasoning_capabilities(provider, model)['levels'] == levels
@@ -79,8 +83,17 @@ def test_anthropic_payload(monkeypatch, model_id, thinking, effort, expected):
 def test_unsupported_rejected_before_provider_auth():
     with pytest.raises(ValueError, match='Unsupported reasoning_effort'):
         create_llm_from_config(ModelConfig(
-            name='test', provider='Antigravity', model='gemini', reasoning_effort='high',
+            name='test', provider='Antigravity', model='gemini-legacy-1.0', reasoning_effort='high',
         ))
+
+
+def test_antigravity_reasoning_effort_maps_to_thinking(monkeypatch):
+    monkeypatch.setattr("clanker.config.antigravity_auth.get_credentials", lambda: {"token": "dummy"})
+    model = create_llm_from_config(ModelConfig(
+        name="test-anti", provider="Antigravity", model="gemini-3.8-flash-tiered", reasoning_effort="high",
+    ))
+    assert model.thinking_enabled is True
+    assert model.thinking_budget_tokens == 16384
 
 
 def test_capability_endpoint_and_save_validation():

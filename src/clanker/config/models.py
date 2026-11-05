@@ -571,10 +571,14 @@ def create_llm_from_config(model_config: ModelConfig):
         base_url = model_config.base_url or "http://localhost:11434"
         model_name = model_config.model or "llama3"
 
-        return ChatOllama(
-            base_url=base_url,
-            model=model_name,
-        )
+        kwargs = {
+            "base_url": base_url,
+            "model": model_name,
+        }
+        if model_config.reasoning_effort:
+            kwargs["model_kwargs"] = {"reasoning_effort": model_config.reasoning_effort}
+
+        return ChatOllama(**kwargs)
 
     elif provider == "ChatGPT":
         from clanker.agent.chatgpt import create_chatgpt_model
@@ -588,11 +592,19 @@ def create_llm_from_config(model_config: ModelConfig):
         get_credentials()  # Clear login error before the first agent request.
         if not model_config.model:
             raise ValueError("Antigravity requires a model ID. Run 'clanker antigravity-login' to discover models.")
+
+        thinking_enabled = model_config.thinking_enabled
+        thinking_budget = model_config.thinking_budget_tokens
+        if model_config.reasoning_effort:
+            effort_map = {"low": 2048, "medium": 8192, "high": 16384, "xhigh": 24576, "max": 32768}
+            thinking_budget = effort_map.get(model_config.reasoning_effort, thinking_budget)
+            thinking_enabled = True
+
         return ChatAntigravity(
             model=model_config.model,
             max_tokens=model_config.max_tokens or 8192,
-            thinking_enabled=model_config.thinking_enabled,
-            thinking_budget_tokens=model_config.thinking_budget_tokens,
+            thinking_enabled=thinking_enabled,
+            thinking_budget_tokens=thinking_budget,
             timeout=_resolve_stream_chunk_timeout(model_config),
             profile={"max_input_tokens": model_config.max_input_tokens} if model_config.max_input_tokens else {},
         )
@@ -631,6 +643,7 @@ def create_llm_from_config(model_config: ModelConfig):
 
         if model_config.reasoning_effort:
             kwargs["reasoning_effort"] = model_config.reasoning_effort
+            kwargs["reasoning"] = {"effort": model_config.reasoning_effort}
         if model_config.uses_copilot_responses_api:
             from clanker.agent.responses import StreamingResponsesModel
 
