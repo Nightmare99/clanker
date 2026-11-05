@@ -540,15 +540,18 @@ class TestTaskPromptModal:
                     allow_cancel=True,
                 )
             )
-            for _ in range(50):
+            for _ in range(100):
                 await pilot.pause(0.02)
                 if isinstance(app.screen, TaskPromptScreen):
                     break
 
             # Toggle Alpha (space), navigate down to Beta, toggle Beta (space), press enter to submit
             await pilot.press("space")
+            await pilot.pause(0.02)
             await pilot.press("down")
+            await pilot.pause(0.02)
             await pilot.press("space")
+            await pilot.pause(0.02)
             await pilot.press("enter")
             result = await pending
             assert result == {"selected": ["Alpha", "Beta"], "cancelled": False}

@@ -238,6 +238,13 @@ class WorkspaceStatus(Horizontal):
         width: auto;
         margin-right: 2;
     }
+    WorkspaceStatus #status-loop {
+        color: rgb(255, 43, 214);
+        text-style: bold;
+        width: auto;
+        margin-right: 2;
+        display: none;
+    }
     WorkspaceStatus #workspace-hint {
         width: 1fr;
         height: 1;
@@ -255,6 +262,7 @@ class WorkspaceStatus(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield Label("", id="status-session", markup=False)
+        yield Label("⟳ LOOP", id="status-loop", markup=False)
         yield Label("F1 Help · F3 History · /reload to refresh", id="workspace-hint", markup=False)
         yield Label("", id="status-context")
 
@@ -263,6 +271,17 @@ class WorkspaceStatus(Horizontal):
             label = self.query_one("#status-session", Label)
             if session_id:
                 label.update(f"Session ID: {session_id}")
+                label.display = True
+            else:
+                label.update("")
+                label.display = False
+
+    def set_loop_mode(self, active: bool, goal: str = "") -> None:
+        with suppress(Exception):
+            label = self.query_one("#status-loop", Label)
+            if active:
+                display_text = f"⟳ LOOP: {goal[:25]}…" if len(goal) > 25 else (f"⟳ LOOP: {goal}" if goal else "⟳ LOOP")
+                label.update(display_text)
                 label.display = True
             else:
                 label.update("")

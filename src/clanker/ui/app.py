@@ -68,7 +68,7 @@ _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇"
 _SLASH_COMMANDS = [
     "/changes", "/tasks",
     "/clear", "/compact", "/config", "/copilot-login", "/antigravity-login", "/openai-login", "/exit", "/forget",
-    "/help", "/history", "/list_memories", "/logs", "/memories", "/model", "/effort",
+    "/help", "/history", "/list_memories", "/logs", "/memories", "/model", "/effort", "/loop",
     "/import", "/mcp", "/reload", "/remember", "/restore", "/resume", "/skill", "/workflow",
 ]
 
@@ -842,6 +842,8 @@ class ClankerApp(App):
         self.theme = "clanker"
         self.interrupt_requested = False
         self._interrupt_event = asyncio.Event()
+        self._loop_iteration = 0
+        self._loop_timer = None
         self._model_info = model_info
         self._update_info = update_info
         self._processing = False
@@ -1167,8 +1169,20 @@ class ClankerApp(App):
             await self.focused.run_action(action)
 
     def action_interrupt(self) -> None:
+        from clanker.runtime import is_loop_mode, set_loop_mode
         from clanker.tools.subagent import stop_task
         from clanker.ui.streaming import _cancel_streaming_task
+
+        if getattr(self, "_loop_timer", None) is not None:
+            self._loop_timer.stop()
+            self._loop_timer = None
+
+        if is_loop_mode():
+            set_loop_mode(False)
+            with suppress(Exception):
+                self.query_one(WorkspaceStatus).set_loop_mode(False)
+            with suppress(Exception):
+                self.get_chat_log().add_message("Loop mode stopped by user interrupt.", MessageType.WARNING)
 
         for run in self._subagent_runs:
             stop_task(run.task_id)
@@ -1553,6 +1567,22 @@ class ClankerApp(App):
             else:
                 self._session_manager.save_conversation_snapshot([], force=True)
             return "reload"
+        if result == "loop:off":
+            self._loop_iteration = 0
+            if getattr(self, "_loop_timer", None) is not None:
+                self._loop_timer.stop()
+                self._loop_timer = None
+            with suppress(Exception):
+                self.query_one(WorkspaceStatus).set_loop_mode(False)
+            return "skip"
+        if result and result.startswith("loop:start:"):
+            goal = result.split("loop:start:", 1)[1].strip()
+            self._loop_iteration = 0
+            with suppress(Exception):
+                self.query_one(WorkspaceStatus).set_loop_mode(True, goal)
+            if self._processing:
+                return "skip"
+            return goal
         if result and result.startswith("restore:"):
             self._restore_session(result.split(":", 1)[1])
             return "skip"
@@ -1815,10 +1845,40 @@ class ClankerApp(App):
         except Exception as e:
             logger.exception("Agent error: %s", e)
             chat_log.add_message(f"Agent error: {e}", MessageType.ERROR)
+            from clanker.runtime import is_loop_mode, set_loop_mode
+
+            if is_loop_mode():
+                set_loop_mode(False)
+                with suppress(Exception):
+                    self.query_one(WorkspaceStatus).set_loop_mode(False)
+                chat_log.add_message("Loop mode stopped due to agent error.", MessageType.WARNING)
         finally:
             active_journal.reset(journal_token)
             change_turn.reset(turn_token)
             self._set_processing(False)
+
+            # Continuous loop mode handling
+            from clanker.runtime import get_loop_goal, is_loop_mode
+
+            if is_loop_mode() and not self.interrupt_requested and not self._interrupt_event.is_set():
+                goal = get_loop_goal()
+                self._loop_iteration += 1
+                loop_prompt = (
+                    f"[Loop iteration {self._loop_iteration}] Continue working toward this goal:\n{goal}\n\n"
+                    "Inspect the current workspace state, verify with tests, linters, or diagnostics, and take any remaining steps. "
+                    "If the goal appears complete, run verification to be certain, or report what was verified."
+                )
+                self._loop_timer = self.set_timer(1.0, lambda: self._schedule_loop_iteration(loop_prompt))
+
+    def _schedule_loop_iteration(self, prompt: str) -> None:
+        self._loop_timer = None
+        from clanker.runtime import is_loop_mode
+
+        if not is_loop_mode() or self.interrupt_requested or self._interrupt_event.is_set():
+            return
+        self._set_processing(True)
+        self._add_user_message_to_ui(prompt)
+        self.run_worker(self._run_agent(prompt), exclusive=True)
 
     async def _chatgpt_login_flow(self) -> None:
         import webbrowser
@@ -1994,6 +2054,10 @@ class ClankerApp(App):
                     completions.extend(reasoning_capabilities(
                         model.provider, model.model, model.deployment_name,
                     )["levels"])
+            elif cmd == "/loop":
+                from clanker.runtime import is_loop_mode
+
+                completions = ["off", "stop"] if is_loop_mode() else ["on", "off"]
             elif cmd == "/skill":
                 from clanker.skills import list_skills
                 completions = list(list_skills().keys())

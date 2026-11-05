@@ -689,6 +689,10 @@ WorkspaceStatus #status-session {{
     color: {rgb_str(p.bottom_bar_session)};
 }}
 
+WorkspaceStatus #status-loop {{
+    color: {rgb_str(p.primary)};
+}}
+
 WorkspaceStatus #status-context {{
     color: {rgb_str(p.bottom_bar_context)};
 }}

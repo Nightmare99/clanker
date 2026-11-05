@@ -55,6 +55,7 @@ Inside the interactive session:
 | `/model` | List available models and show current |
 | `/model <name>` | Switch to a different model |
 | `/effort [level\|default]` | Show or change the active model's reasoning effort; saved per model, applies next message |
+| `/loop [goal\|off]` | Toggle continuous execution toward a goal until manually interrupted with Ctrl+C |
 | `/copilot-login` | Connect a GitHub Copilot subscription as a model provider |
 | `/antigravity-login` | Connect a Google account for Antigravity models (unofficial integration) |
 | `/openai-login` | Connect a ChatGPT account and discover available coding models |

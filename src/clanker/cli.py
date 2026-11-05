@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import warnings
+from typing import Any
 
 warnings.filterwarnings("ignore", message="Core Pydantic V1 functionality")
 
@@ -121,6 +122,28 @@ def sync_conversation_after_auto_compaction(
         logger.warning("Failed to sync conversation_messages after auto-compaction: %s", e)
 
 
+def _find_latest_goal(conversation_messages: list[Any] | None) -> str:
+    """Find the most recent user goal in conversation history."""
+    if not conversation_messages:
+        return ""
+    from langchain_core.messages import HumanMessage
+
+    for msg in reversed(conversation_messages):
+        if isinstance(msg, HumanMessage):
+            content = msg.content
+            if isinstance(content, str):
+                text = content.strip()
+                if text and not text.startswith("[Loop iteration") and not text.startswith("/"):
+                    return text
+            elif isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        text = item.get("text", "").strip()
+                        if text and not text.startswith("[Loop iteration") and not text.startswith("/"):
+                            return text
+    return ""
+
+
 def handle_command(
     command: str,
     console: Console,
@@ -221,6 +244,80 @@ def handle_command(
             )
             console.print_success(message)
             _mirror(message, MessageType.SUCCESS)
+
+    elif parts[0].lower() == "/loop":
+        from clanker.runtime import get_last_loop_goal, get_loop_goal, is_loop_mode, set_loop_mode
+
+        if len(parts) == 1:
+            # Query or toggle
+            if is_loop_mode():
+                set_loop_mode(False)
+                msg = "Loop mode disabled."
+                console.print_info(msg)
+                _mirror(msg, MessageType.INFO)
+                return "loop:off"
+            else:
+                goal = get_last_loop_goal() or _find_latest_goal(conversation_messages)
+                if goal:
+                    set_loop_mode(True, goal)
+                    msg = (
+                        f"Loop mode enabled! Continuous goal: {goal}\n"
+                        "Clanker will continuously iterate on this goal until you interrupt with Ctrl+C or type '/loop'."
+                    )
+                    console.print_success(msg)
+                    _mirror(msg, MessageType.SUCCESS)
+                    return f"loop:start:{goal}"
+                else:
+                    msg = (
+                        "Loop mode requires a goal to continuously execute.\n"
+                        "Usage: /loop <goal text> (e.g. /loop Run tests and fix failures until clean)\n"
+                        "Use Ctrl+C or /loop to stop."
+                    )
+                    console.print_info(msg)
+                    _mirror(msg, MessageType.INFO)
+                    return None
+        else:
+            arg = parts[1].strip()
+            if arg.lower() in ("off", "stop", "disable", "exit", "cancel"):
+                set_loop_mode(False)
+                msg = "Loop mode disabled."
+                console.print_info(msg)
+                _mirror(msg, MessageType.INFO)
+                return "loop:off"
+            elif arg.lower() in ("on", "start", "enable"):
+                if is_loop_mode():
+                    msg = f"Loop mode is already active. Current goal: {get_loop_goal()}"
+                    console.print_info(msg)
+                    _mirror(msg, MessageType.INFO)
+                    return None
+                goal = get_last_loop_goal() or _find_latest_goal(conversation_messages)
+                if goal:
+                    set_loop_mode(True, goal)
+                    msg = (
+                        f"Loop mode enabled! Continuous goal: {goal}\n"
+                        "Clanker will continuously iterate on this goal until you interrupt with Ctrl+C or type '/loop'."
+                    )
+                    console.print_success(msg)
+                    _mirror(msg, MessageType.SUCCESS)
+                    return f"loop:start:{goal}"
+                else:
+                    msg = (
+                        "Loop mode requires a goal to continuously execute.\n"
+                        "Usage: /loop <goal text> (e.g. /loop Run tests and fix failures until clean)\n"
+                        "Use Ctrl+C or /loop to stop."
+                    )
+                    console.print_info(msg)
+                    _mirror(msg, MessageType.INFO)
+                    return None
+            else:
+                set_loop_mode(True, arg)
+                msg = (
+                    f"Loop mode enabled! Continuous goal: {arg}\n"
+                    "Clanker will continuously iterate on this goal until you interrupt with Ctrl+C or type '/loop'."
+                )
+                console.print_success(msg)
+                _mirror(msg, MessageType.SUCCESS)
+                return f"loop:start:{arg}"
 
     elif cmd.startswith("/model"):
         model_names = list_model_names()
@@ -695,7 +792,7 @@ class CommandCompleter:
     """Autocomplete for slash commands (used by legacy REPL and tests)."""
 
     COMMANDS = [
-        "/help", "/exit", "/quit", "/q", "/clear", "/model", "/effort", "/copilot-login", "/antigravity-login", "/openai-login",
+        "/help", "/exit", "/quit", "/q", "/clear", "/model", "/effort", "/loop", "/copilot-login", "/antigravity-login", "/openai-login",
         "/config", "/mcp", "/logs", "/history", "/restore", "/resume", "/import", "/compact",
         "/memories", "/remember", "/forget", "/reload", "/workflow", "/skill",
     ]
@@ -1235,7 +1332,7 @@ def run_interactive_legacy(
     history_path.parent.mkdir(parents=True, exist_ok=True)
 
     class CommandCompleter(Completer):
-        COMMANDS = ["/help", "/exit", "/quit", "/q", "/clear", "/model", "/effort", "/copilot-login", "/antigravity-login", "/openai-login",
+        COMMANDS = ["/help", "/exit", "/quit", "/q", "/clear", "/model", "/effort", "/loop", "/copilot-login", "/antigravity-login", "/openai-login",
                     "/config", "/mcp", "/logs", "/history", "/restore", "/resume", "/import", "/compact",
                     "/memories", "/remember", "/forget", "/reload", "/workflow", "/skill"]
 
@@ -1289,12 +1386,25 @@ def run_interactive_legacy(
     conversation_messages = list(resumed_messages) if resumed_messages else []
     pending_restore_messages = list(resumed_messages) if resumed_messages else []
     working_dir = os.getcwd()
+    loop_iteration = 0
 
     while True:
         try:
-            user_input = prompt_session.prompt("❯ ").strip()
-            if not user_input:
-                continue
+            from clanker.runtime import get_loop_goal, is_loop_mode, set_loop_mode
+
+            if is_loop_mode():
+                loop_iteration += 1
+                user_input = (
+                    f"[Loop iteration {loop_iteration}] Continue working toward this goal:\n{get_loop_goal()}\n\n"
+                    "Inspect the current workspace state, verify with tests, linters, or diagnostics, and take any remaining steps. "
+                    "If the goal appears complete, run verification to be certain, or report what was verified."
+                )
+                console.print_info(f"\n[bold cyan]⟳ Loop iteration {loop_iteration}:[/bold cyan] Continuing goal: {get_loop_goal()[:60]}...")
+            else:
+                loop_iteration = 0
+                user_input = prompt_session.prompt("❯ ").strip()
+                if not user_input:
+                    continue
 
             if user_input.startswith("/"):
                 result = handle_command(user_input, console, session_manager, conversation_messages)
@@ -1356,7 +1466,13 @@ def run_interactive_legacy(
                                 pending_restore_messages = list(imported)
                                 console.print_info(f"Imported as session {session_manager.session_id}")
                     continue
-                if result and result.startswith("restore:"):
+                if result == "loop:off":
+                    loop_iteration = 0
+                    continue
+                elif result and result.startswith("loop:start:"):
+                    user_input = result.split("loop:start:", 1)[1].strip()
+                    loop_iteration = 0
+                elif result and result.startswith("restore:"):
                     session_id = result.split(":", 1)[1]
                     messages = session_manager.get_session_messages(session_id)
                     if messages:
@@ -1429,10 +1545,21 @@ def run_interactive_legacy(
             except Exception as e:
                 logger.exception("Agent error: %s", e)
                 console.print_error(f"Agent error: {e}")
+                from clanker.runtime import is_loop_mode, set_loop_mode
+
+                if is_loop_mode():
+                    set_loop_mode(False)
+                    console.print_warning("Loop mode stopped due to agent error.")
 
             console.rule()
 
         except KeyboardInterrupt:
+            from clanker.runtime import is_loop_mode, set_loop_mode
+
+            if is_loop_mode():
+                set_loop_mode(False)
+                loop_iteration = 0
+                console.print_warning("\nLoop mode stopped by user interrupt.")
             console.print()
             continue
         except EOFError:

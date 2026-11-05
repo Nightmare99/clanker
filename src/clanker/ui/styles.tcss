@@ -22,6 +22,14 @@ Toast.-information {
     padding: 0 1;
 }
 
+#status-loop {
+    color: rgb(255, 43, 214);
+    text-style: bold;
+    width: auto;
+    margin-right: 2;
+    display: none;
+}
+
 #input-area {
     dock: bottom;
     height: auto;

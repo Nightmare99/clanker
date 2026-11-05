@@ -30,6 +30,7 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "/clear": "Wipe conversation history & start fresh",
     "/model": "Switch model or query active status",
     "/effort": "Change reasoning effort on the fly",
+    "/loop": "Toggle continuous execution toward a goal until interrupted",
     "/compact": "Compact conversation history manually",
     "/reload": "Restart in-place preserving session & flags",
     "/history": "List past conversation sessions",
