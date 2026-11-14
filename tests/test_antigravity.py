@@ -699,3 +699,36 @@ def test_existing_transcript_tool_output_is_usable_without_call_ids():
         "claude-test",
     )
     assert contents[-1] == {"role": "user", "parts": [{"text": "old output"}]}
+
+
+def test_claude_5_5_alias_resolution():
+    model = adapter.ChatAntigravity(model="claude-sonnet-5.5")
+    assert model._resolved_model() == "claude-sonnet-5-5-high"
+
+    model2 = adapter.ChatAntigravity(model="claude-opus-5.5")
+    assert model2._resolved_model() == "claude-opus-5-5-high"
+
+    model3 = adapter.ChatAntigravity(model="claude-sonnet-5-5")
+    assert model3._resolved_model() == "claude-sonnet-5-5-high"
+
+    model4 = adapter.ChatAntigravity(model="claude-opus-5-5")
+    assert model4._resolved_model() == "claude-opus-5-5-high"
+
+    model5 = adapter.ChatAntigravity(model="claude-sonnet-5.5-medium")
+    assert model5._resolved_model() == "claude-sonnet-5-5-medium"
+
+
+def test_tool_round_trip_strips_empty_text_for_vertex_anthropic():
+    # Model chunk starting/ending with empty text during tool call
+    ai_msg = AIMessage(
+        content=[{"type": "text", "text": ""}, {"type": "text", "text": ""}],
+        tool_calls=[{"name": "test_tool", "args": {"a": 1}, "id": "call_123"}],
+    )
+    tool_msg = ToolMessage(content="Result text", tool_call_id="call_123", name="test_tool")
+    contents, _ = adapter._contents([HumanMessage("Run tool"), ai_msg, tool_msg], "claude-sonnet-5-5-high")
+
+    # The model message parts must only contain the functionCall, with NO empty text parts
+    model_parts = contents[1]["parts"]
+    assert len(model_parts) == 1
+    assert "functionCall" in model_parts[0]
+    assert "text" not in model_parts[0]

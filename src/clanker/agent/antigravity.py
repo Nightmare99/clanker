@@ -84,7 +84,10 @@ def _parts(content: str | list[Any], *, assistant: bool = False) -> list[dict[st
         elif isinstance(block, dict):
             kind = block.get("type")
             if kind == "text":
-                part: dict[str, Any] = {"text": block.get("text", "")}
+                text_val = block.get("text", "")
+                if not text_val and not block.get("signature"):
+                    continue
+                part: dict[str, Any] = {"text": text_val}
                 if assistant and block.get("signature"):
                     part["thoughtSignature"] = block["signature"]
                 parts.append(part)
@@ -187,6 +190,9 @@ def _contents(
                         # ai.google.dev/gemini-api/docs/generate-content/thought-signatures
                         function_part["thoughtSignature"] = "skip_thought_signature_validator"
                     parts.append(function_part)
+
+                # Vertex Anthropic strictly rejects empty text parts: messages.N.content.M.text.text: Field required
+                parts = [part for part in parts if not ("text" in part and not part.get("text"))]
         if not parts:
             parts = [{"text": "."}]
         if contents and contents[-1]["role"] == role:
@@ -261,6 +267,9 @@ class _Decoder:
                     additional["antigravity_signatures"] = {call_id: signature}
             elif "text" in part:
                 kind = "thinking" if part.get("thought") else "text"
+                text_val = part.get("text", "")
+                if not text_val and not signature:
+                    continue
                 if kind != self.kind or self.block_signed:
                     self.index += 1
                     self.kind = kind
@@ -268,7 +277,7 @@ class _Decoder:
                 block = {
                     "type": kind,
                     "index": self.index,
-                    "thinking" if kind == "thinking" else "text": part["text"],
+                    "thinking" if kind == "thinking" else "text": text_val,
                 }
                 if signature:
                     block["signature"] = signature
@@ -346,6 +355,22 @@ class ChatAntigravity(BaseChatModel):
     def _identifying_params(self) -> dict[str, Any]:
         return {"model_name": self.model}
 
+    def _resolved_model(self) -> str:
+        """Resolve friendly model aliases (e.g. claude-sonnet-5.5 -> claude-sonnet-5-5-high)."""
+        m = (self.model or "").strip()
+        m_norm = m.lower().replace(".", "-")
+        if m_norm in ("claude-sonnet-5-5", "sonnet-5-5"):
+            return "claude-sonnet-5-5-high"
+        if m_norm in ("claude-opus-5-5", "opus-5-5"):
+            return "claude-opus-5-5-high"
+        if m_norm.startswith("claude-sonnet-5-5-") or m_norm.startswith("claude-opus-5-5-"):
+            return m_norm
+        if m_norm.startswith("claude-sonnet-5.5-"):
+            return m_norm.replace("5.5", "5-5")
+        if m_norm.startswith("claude-opus-5.5-"):
+            return m_norm.replace("5.5", "5-5")
+        return m
+
     def bind_tools(self, tools: Sequence[Any], *, tool_choice: Any = None, **kwargs: Any) -> Any:
         declarations = []
         names: dict[str, str] = {}
@@ -369,12 +394,13 @@ class ChatAntigravity(BaseChatModel):
         stop: list[str] | None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        contents, system = _contents(messages, self.model)
+        model_name = self._resolved_model()
+        contents, system = _contents(messages, model_name)
         generation: dict[str, Any] = {"maxOutputTokens": self.max_tokens}
         if stop:
             generation["stopSequences"] = stop
-        if self.thinking_enabled or "thinking" in self.model:
-            if self.model.startswith("claude"):
+        if self.thinking_enabled or "thinking" in model_name or "5-5" in model_name:
+            if model_name.startswith("claude"):
                 generation["thinkingConfig"] = {
                     "include_thoughts": True,
                     "thinking_budget": self.thinking_budget_tokens,
@@ -400,14 +426,14 @@ class ChatAntigravity(BaseChatModel):
                 str(choice)
             )
             config: dict[str, Any] = {
-                "mode": mode or ("VALIDATED" if self.model.startswith("claude") else "AUTO")
+                "mode": mode or ("VALIDATED" if model_name.startswith("claude") else "AUTO")
             }
             if isinstance(choice, str) and choice not in {"auto", "none", "any", "required"}:
                 config = {"mode": "ANY", "allowedFunctionNames": [_wire_name(choice)]}
             request["toolConfig"] = {"functionCallingConfig": config}
         return {
             "project": credentials["project_id"],
-            "model": self.model,
+            "model": model_name,
             "request": request,
             "userAgent": "antigravity",
             "requestType": "agent",
@@ -429,7 +455,8 @@ class ChatAntigravity(BaseChatModel):
             "Accept": "text/event-stream",
             "X-Machine-Session-Id": payload["request"]["sessionId"],
         }
-        if self.model.startswith("claude-") and (self.thinking_enabled or "thinking" in self.model):
+        model_name = payload.get("model", self.model)
+        if model_name.startswith("claude-") and (self.thinking_enabled or "thinking" in model_name or "5-5" in model_name):
             headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
         return headers
 

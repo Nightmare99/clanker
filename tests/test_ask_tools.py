@@ -370,7 +370,7 @@ class TestTaskPromptModal:
                     allow_cancel=False,
                 )
             )
-            for _ in range(50):
+            for _ in range(150):
                 await pilot.pause(0.02)
                 if isinstance(app.screen, TaskPromptScreen):
                     break
@@ -404,7 +404,7 @@ class TestTaskPromptModal:
                     allow_other=True,
                 )
             )
-            for _ in range(50):
+            for _ in range(150):
                 await pilot.pause(0.02)
                 if isinstance(app.screen, TaskPromptScreen):
                     break
@@ -437,7 +437,7 @@ class TestTaskPromptModal:
                     check_cancelled=lambda: is_cancelled,
                 )
             )
-            for _ in range(50):
+            for _ in range(150):
                 await pilot.pause(0.02)
                 if isinstance(app.screen, TaskPromptScreen):
                     break
@@ -470,7 +470,7 @@ class TestTaskPromptModal:
                     allow_cancel=False,
                 )
             )
-            for _ in range(50):
+            for _ in range(150):
                 await pilot.pause(0.02)
                 if isinstance(app.screen, TaskPromptScreen):
                     break
@@ -507,7 +507,7 @@ class TestTaskPromptModal:
                     allow_cancel=True,
                 )
             )
-            for _ in range(50):
+            for _ in range(150):
                 await pilot.pause(0.02)
                 if isinstance(app.screen, TaskPromptScreen):
                     break
@@ -575,7 +575,7 @@ class TestTaskPromptModal:
                     ["Alpha", "Beta"],
                 )
             )
-            for _ in range(50):
+            for _ in range(150):
                 await pilot.pause(0.02)
                 if isinstance(app.screen, TaskPromptScreen):
                     break

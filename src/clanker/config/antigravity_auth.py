@@ -294,7 +294,33 @@ def sync_models() -> int:
                 model=model_id,
                 max_input_tokens=metadata.get("maxInputTokens") or metadata.get("inputTokenLimit"),
                 max_tokens=metadata.get("maxOutputTokens") or metadata.get("outputTokenLimit"),
-                thinking_enabled="thinking" in model_id,
+                thinking_enabled="thinking" in model_id or bool(metadata.get("supportsThinking")),
+            )
+        )
+    # Add friendly aliases for Sonnet 5.5 and Opus 5.5 if high variants exist
+    model_ids = set(data.get("models") or {})
+    if "claude-sonnet-5-5-high" in model_ids:
+        meta = (data.get("models") or {})["claude-sonnet-5-5-high"]
+        entries.append(
+            ModelConfig(
+                name=f"{MODEL_PREFIX}claude-sonnet-5-5",
+                provider="Antigravity",
+                model="claude-sonnet-5-5-high",
+                max_input_tokens=meta.get("maxInputTokens") or meta.get("inputTokenLimit"),
+                max_tokens=meta.get("maxOutputTokens") or meta.get("outputTokenLimit"),
+                thinking_enabled=True,
+            )
+        )
+    if "claude-opus-5-5-high" in model_ids:
+        meta = (data.get("models") or {})["claude-opus-5-5-high"]
+        entries.append(
+            ModelConfig(
+                name=f"{MODEL_PREFIX}claude-opus-5-5",
+                provider="Antigravity",
+                model="claude-opus-5-5-high",
+                max_input_tokens=meta.get("maxInputTokens") or meta.get("inputTokenLimit"),
+                max_tokens=meta.get("maxOutputTokens") or meta.get("outputTokenLimit"),
+                thinking_enabled=True,
             )
         )
     if not entries:
